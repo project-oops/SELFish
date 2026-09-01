@@ -1,0 +1,52 @@
+# The NID hash suffix.
+#
+# A console loader imports by NID rather than by name:
+#
+#     NID = first 8 bytes of SHA-1(name || suffix), read LITTLE-endian
+#
+# then encoded as eleven characters of a 64-symbol alphabet, two padding bits at the
+# bottom. `suffix` is the sixteen bytes at the end of this file.
+#
+# ## Provenance
+#
+# This value is public knowledge and has been for over a decade. It is described in
+# community documentation of the format, implemented in publicly available NID
+# resolver tools and IDA plugins, and carried in a hashcat mode for the same purpose.
+# It was not taken from any binary by this project.
+#
+# ## It proves itself - you do not have to trust the source
+#
+# That is the important part, and it is why the origin being community documentation
+# rather than a formal specification does not matter much.
+#
+# A published (name, identifier) pair exists:
+#
+#     sceKernelLoadStartModule  ->  wzvqT4UqKX8
+#
+# Hash that published name with the constant below, encode it, and you get that
+# published identifier. Nothing else does. A wrong suffix, a wrong byte order, a wrong
+# alphabet or wrong bit packing each produce a different eleven-character string, so
+# one pair pins the whole chain simultaneously.
+#
+# `python3 tools/nid.py selftest` runs exactly that check, and fails if any part of it
+# drifts. Reproduction needs nothing from a console: a published name, a published
+# identifier, and SHA-1.
+#
+# ## What it is not
+#
+# Not a cryptographic key. It decrypts nothing, signs nothing, authenticates nothing.
+# It is a salt on a name-mangling hash whose only effect is to make the mapping from
+# names to identifiers non-obvious. It is one constant - not per-title, not
+# per-firmware, not per-generation.
+#
+# ## Byte order is where this goes wrong
+#
+# **Little-endian.** The emulator side of this project documents it as big-endian; that
+# is incorrect, and the test vector above is the evidence. The failure mode is nasty:
+# big-endian yields an equally plausible value that encodes to a perfectly ordinary
+# symbol name and resolves nothing, so every import fails silently and the symptom
+# looks like a broken loader rather than a reversed integer.
+#
+# Override with `--suffix-file` if this ever turns out to be wrong for some module.
+
+suffix_hex = "518D64A635DED8C1E6B039B1C3E55230"

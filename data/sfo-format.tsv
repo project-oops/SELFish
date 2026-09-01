@@ -1,0 +1,62 @@
+# PARAM.SFO — the title metadata table, as two independent open-source projects read and
+# write it.
+# Columns: struct, field, offset, size, type, value, note
+#
+# read-from: pfd_sfo_tools@vendored      sfopatcher/src/sfo.{c,h}     C       READER + WRITER
+#            ps5upload@vendored          engine/crates/ps5upload-pkg  Rust    reader + writer
+#
+# Both sides of the format are covered twice, which is unusual for anything in this
+# repository and worth stating: the container needed four sources before a writer turned up,
+# and the package still has none. Here the first source found was a writer.
+#
+# The two agree on every field. They were written years apart in different languages, so the
+# agreement is evidence rather than a shared assumption.
+#
+# # Where the sources were wrong, and eleven files said so
+#
+# The C writer pads the key table so the **whole file** is a multiple of sixteen. No real file
+# does this. Eleven were checked — three PS5 packages, two PS4 toolchain samples, and six PS3
+# titles and saves — and every one pads the **key table to a multiple of four** and ends
+# exactly where its last value ends.
+#
+# All eleven now round-trip byte for byte. The layout rows below are the measured rule, not
+# the cited one; the cited one is recorded here so it cannot be re-read and re-believed.
+# (D019, principle 2)
+#
+# **No vendor binary was read to produce this table.** Real files in `titles/` are used to
+# confirm rows, never to derive them. (principle 2)
+#
+# # The version, and why it is two bytes rather than a number
+#
+# Both sources write `01 01 00 00` and call it 1.1. A reader that treats it as the integer
+# 0x00000101 gets the same bytes; one that treats it as 0x0101 and writes it back as a u16
+# does not. Recorded as the four bytes it is.
+#
+# # PS5 versus PS4
+#
+# The structure is generation-independent — the same twenty-byte header and sixteen-byte
+# index entries appear in packages for both consoles. What differs is the *keys*, and keys
+# are content rather than format, so they are not in this table. The current generation also
+# carries `param.json` alongside or instead; see the `param` module.
+#
+struct	field	offset	size	type	value	note
+header	magic	0	4	bytes	00 50 53 46	"\0PSF", little-endian 0x46535000
+header	version	4	4	bytes	01 01 00 00	1.1; both sources write exactly this
+header	key_table_offset	8	4	u32		absolute, from the start of the file
+header	data_table_offset	12	4	u32		absolute, from the start of the file
+header	entry_count	16	4	u32		number of index entries
+header	size	0	20	size		the header is twenty bytes
+index	key_offset	0	2	u16		relative to key_table_offset
+index	format	2	2	u16		see the format rows below
+index	length	4	4	u32		bytes actually used, including any terminator
+index	max_length	8	4	u32		bytes reserved; >= length, and what a writer emits
+index	data_offset	12	4	u32		relative to data_table_offset
+index	size	0	16	size		one index entry is sixteen bytes
+format	utf8_special	0	2	u16	0x0004	UTF-8, NOT null-terminated. PS3 saves use it
+format	utf8	0	2	u16	0x0204	UTF-8, null-terminated. What almost everything uses
+format	integer	0	4	u32	0x0404	a little-endian u32
+layout	key_table_start	0	0	rule		header size + entry_count * index size
+layout	data_table_start	0	0	rule		key_table_start + padded key table length
+layout	key_table_alignment	0	4	rule	4	the key table is padded to a four-byte multiple
+layout	file_alignment	0	0	rule	0	NONE. the file ends where the last value ends
+layout	refuted_rule	0	16	rule	16	pfd_sfo_tools pads the file to 16. no real file does

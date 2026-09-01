@@ -1,0 +1,164 @@
+#!/bin/sh
+# selfish - the one dev command for this repository.
+#
+# The seven verbs every OOPS project carries, so `oops test selfish` and
+# `./bin/selfish test` are one command reached two ways:
+#
+#   ./bin/selfish build     # release build of the workspace
+#   ./bin/selfish test      # the test suite
+#   ./bin/selfish lint      # clippy at -D warnings
+#   ./bin/selfish fmt       # format in place
+#   ./bin/selfish check     # everything that has to pass. What CI runs.
+#   ./bin/selfish clean     # remove build output
+#   ./bin/selfish doc       # build the API docs
+#
+# And this repository's own two:
+#
+#   ./bin/selfish provenance  # every format table names its sources, and no material is tracked
+#   ./bin/selfish links       # the linker tests really ran, rather than skipping for a missing lld
+#
+# `links` is deliberately not in `check`: it would make the local gate slower for everybody to
+# catch a thing that only goes wrong on a clean machine. CI runs it as a separate step.
+#
+# # The libraries depend on nothing outside this repository. The CLI now does.
+#
+# Being the bottom of the spine was the one property to preserve if anything was ever added
+# here, and it was stated in this comment as a fact. It has stopped being one: `selfish-cli`
+# takes `oops-build` and `oops-log` from `oops-libs` by relative path, so a clone of only this
+# repository no longer builds the whole workspace. `oops bootstrap selfish` fetches the sibling.
+#
+# The crates under `crates/` still take nothing, which is what actually matters for a consumer
+# - and it is two calls in one binary that would have to move to get the whole claim back.
+# Recorded rather than reworded, because a goal quietly restated as a smaller goal is how this
+# would be lost for good. See docs/BUILDING.md.
+#
+# # Why `check` is a script rather than a command someone types
+#
+# It was a typed command for a while, improvised per run, and it swallowed a failure twice:
+#
+#   cargo test --workspace | grep -oE '[0-9]+ passed' | awk '{s+=$1}...'
+#   cargo clippy ... | grep -E '^(warning|error)'
+#
+# A pipeline's exit status is the *last* command's, so `grep` finding nothing reported success
+# while the compiler was failing behind it. Once, the test count silently fell from 162 to 116
+# and the gate still said it was fine.
+#
+# obSCEne's `scripts/verify.sh` carries the rule this is written to: **output filtering never
+# sits between a command and its exit code.** Where filtered output is wanted, the command runs
+# into a file and the file is filtered afterwards.
+set -e
+
+cd "$(dirname "$0")/.."
+
+check() {
+    log="${TMPDIR:-/tmp}/selfish-gate.$$"
+    trap 'rm -f "$log"' EXIT
+
+    printf '=== formatting\n'
+    cargo fmt --all --check
+    printf 'formatted\n'
+
+    printf '=== lints\n'
+    # `-D warnings` because the lint set here is not decoration: a builder wrong by one byte is
+    # reported by a loader as "not a container" rather than as an offset error.
+    cargo clippy --all-targets --all-features -- -D warnings
+    printf 'clean\n'
+
+    printf '=== tests\n'
+    cargo test --workspace >"$log" 2>&1 || { tail -30 "$log"; exit 1; }
+    printf '%s passed\n' "$(grep -oE '[0-9]+ passed' "$log" | awk '{s+=$1} END {print s}')"
+
+    printf '=== docs\n'
+    # Documentation is this repository's durable product - the decision log, the provenance
+    # notes, the reasoning attached to every constant - so a doc build that fails is a broken
+    # deliverable rather than a cosmetic problem. This was not in the gate, and an audit found
+    # `cargo doc` had been failing on an ambiguous intra-doc link, which rustdoc treats as an
+    # error.
+    RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links -D rustdoc::invalid_html_tags -D rustdoc::bare_urls" \
+        cargo doc --no-deps --workspace -q >"$log" 2>&1 || { tail -30 "$log"; exit 1; }
+    printf 'documented\n'
+
+    printf '\ngate passed\n'
+}
+
+# The pieces of the gate, individually. `check` still runs all of them and remains the thing
+# that has to pass; these exist so one can be asked for on its own, and so the same word means
+# the same thing in all four projects.
+provenance() {
+    # The formats are the product; a table whose header stops naming where its rows came from
+    # has quietly become somebody's memory. And a real console file committed beside a format is
+    # principle 2's failure - an oracle mistaken for a source.
+    local status=0 table
+    for table in data/*.tsv; do
+        [ -f "$table" ] || continue
+        if ! grep -q '^# read-from:' "$table"; then
+            printf '%s has no read-from header naming where its rows came from
+' "$table"
+            status=1
+        fi
+    done
+    if git ls-files | grep -iE '\.(pkg|elf|prx|sprx|bin|self)$'; then
+        printf 'material committed - see principle 2, real files are an oracle not a source
+'
+        status=1
+    fi
+
+    # Extension is not enough, and that is not hypothetical: a 16 KB x86-64 ELF sat tracked at
+    # `src/porthole/build/porthole_selftest` in the sibling project and every extension pattern
+    # passed it, because the file has no extension at all. obSCEne's own guard missed it, and so
+    # would this one. Content is what a loader reads, so content is what this checks.
+    #
+    # Images are the only binaries any of these repositories is meant to track.
+    tracked_binaries() {
+        git ls-files | while IFS= read -r f; do
+            case "$f" in *.png|*.ico|*.svg|*.jpg|*.gif|*.woff2) continue ;; esac
+            [ -f "$f" ] || continue
+            case "$(head -c 4 "$f" | od -An -tx1 | tr -d ' ')" in
+                7f454c46*|4d5a*|cffaedfe*|cefaedfe*) printf '%s\n' "$f" ;;
+            esac
+        done
+    }
+
+    if tracked_binaries | grep .; then
+        printf 'these are executables, whatever they are named - see principle 2
+'
+        status=1
+    fi
+    return $status
+}
+
+links() {
+    # Proof the linker tests actually ran rather than skipping for a missing `ld.lld` - a skip
+    # would let this pass having verified none of the segment layout or tag conventions.
+    local log="${TMPDIR:-/tmp}/selfish-links.$$"
+    cargo test -p selfish-elf --test links -- --nocapture 2>&1 | tee "$log"
+    if grep -q 'skipped:' "$log"; then
+        rm -f "$log"
+        printf 'the linker tests skipped, so this proved nothing about the script
+' >&2
+        return 1
+    fi
+    rm -f "$log"
+}
+
+usage() {
+    last=$(( $(grep -n '^set -e$' "$0" | head -1 | cut -d: -f1) - 1 ))
+    sed -n "2,${last}p" "$0" | sed 's/^# \{0,1\}//'
+}
+
+verb="${1:-check}"
+[ "$#" -gt 0 ] && shift
+case "$verb" in
+    check) check ;;
+    provenance) provenance ;;
+    links) links ;;
+    build) cargo build --release --workspace "$@" ;;
+    test)  cargo test --workspace "$@" ;;
+    lint)  cargo clippy --all-targets --all-features "$@" -- -D warnings ;;
+    fmt)   cargo fmt --all "$@" ;;
+    clean) cargo clean "$@" ;;
+    doc)   RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links -D rustdoc::invalid_html_tags -D rustdoc::bare_urls" \
+               cargo doc --no-deps --workspace "$@" ;;
+    -h|--help|help) usage ;;
+    *) printf 'unknown verb: %s (try ./bin/selfish --help)\n' "$verb" >&2; exit 1 ;;
+esac

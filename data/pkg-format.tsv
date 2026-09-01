@@ -1,0 +1,204 @@
+# The package container, as an open-source extractor reads it and as three current-generation
+# packages actually are.
+# Columns: struct, field, offset, size, type, value, note
+#
+# read-from: prosperity@3475257  tools/pkg_extract/pkg_extract.py  Python  reader
+#            shadPS4@be21649     src/core/file_format/pfs.h        C++     reader (inner filesystem)
+#
+# confirmed-against: titles/PS5_ITEM00001_v1.14.pkg
+#                    titles/PS5_LAPY20011_v1.05.pkg
+#                    titles/Store-R2-PS5.pkg
+#
+# **Two different activities, and the order between them is the whole provenance argument.**
+# Structure comes from source that can be named. The packages then *confirm or refute* it,
+# and rows marked `measured` are ones they settled. Deriving the structure from the packages
+# would be the thing principle 6 forbids; using them to check a structure taken from source
+# is what `derive` already does to a finished module. (orbistoun#D181, orbistoun#D182)
+#
+# # Big-endian, unlike everything else here
+#
+# # The entry names come from LibOrbisPkg, and the derivations came first
+#
+# `LibOrbisPkg` (maxton) is an open-source PS4 packaging tool — a **writer**, which is what
+# unblocked the container format too. `LibOrbisPkg/PKG/Enums.cs` names every entry id and
+# `PKG/PkgBuilder.cs` says how each is produced. This repository already trusted that project
+# for the fake keyset; the names below come from the same place.
+#
+# Worth recording in this order because it happened in this order: `0x1`, `0x100`, `0x80` and
+# `0x1002` were derived from packages *before* the source was read, and the source then agreed
+# with all four — `DIGESTS`, `METAS`, `GENERAL_DIGESTS`, `PLAYGO_CHUNK_SHA`. A derivation that
+# survives meeting its source is worth more than either alone.
+#
+# # Two rows here were DERIVED rather than cited, and can be re-checked
+#
+# `entry_content` rows `0x1` and `0x100` came from no source. They were established by stating
+# a hypothesis a machine can falsify and running it against every package available, which is
+# the same method that settled the vendor dynamic tags (`RELA + RELASZ == HASH`) and a
+# current-generation tag by counting.
+#
+# **Re-run it yourself**: `selfish derive <package> <package> ...`. It reports how many samples
+# each claim survived and exits non-zero if any fails. Three packages backed both when written;
+# more packages can only strengthen or kill them, and either is worth knowing.
+#
+# Both are *computable*, which is why they were worth chasing: a writer can produce them from
+# data it already holds. The remaining four unknown entries are not, and are not guessed at.
+#
+# The SELF container is little-endian throughout. This one is not: magic, counts and offsets
+# are all big-endian. A reader that assumes one convention across both formats gets a
+# plausible-looking entry count in the tens of millions.
+#
+# # Every reference found is previous-generation, and the packages are not
+#
+# The extractor says so in its own header. That makes this table unusual for the project:
+# the *structure* is previous-generation and the *confirmation* is current, so where they
+# agree is evidence the format did not change, and any place they disagree is a finding
+# nobody here has published. So far they agree on everything checked.
+#
+# # What a package actually contains
+#
+#   .pkg  ->  header + entry table
+#         ->  PFS image at a fixed 0x700000, AES-XTS encrypted under ekpfs
+#         ->  block 11 of that holds a PFSC (zlib-compressed) inner image
+#         ->  inner PFS: the real filesystem, each executable an fSELF
+#
+# Four nested formats, not one container. Recovering `ekpfs` needs RSA-2048, SHA-256 and
+# AES-CBC before any of the above can be read, and the inner filesystem needs AES-XTS and
+# zlib on top. The keys are the public fake-package keyset; retail packages use a key
+# nobody outside the vendor has and are out of scope in the same way retail signing is.
+#
+#
+# # A row here that was wrong, and how
+#
+# `pfs_image_offset` was recorded as a fixed `0x700000` — taken from a previous-generation
+# extractor and "confirmed" by finding high-entropy data at that offset in all three samples.
+# That confirmed nothing: in an encrypted package almost every offset holds high-entropy data,
+# so the check could not have come out any other way.
+#
+# The real values are `0x80000`, `0x580000` and `0x80000`, and the offset is a header field.
+# The corrected rows are below. The lesson is recorded here rather than quietly fixed, because
+# the failure was in the method rather than the number: the search asked whether a value that
+# was already believed appeared in the header, and treated its absence as support. (D011)
+#
+# # Every container inside these packages is previous-generation
+#
+# Thirty-three of them, across all three samples, and not one carries the current generation's
+# magic — including a working homebrew store for the current console. Retail material uses the
+# newer format; community tooling emits the older one and the loader takes it. (D010)
+#
+# # Still unknown
+#
+# Most of the header. Only three fields are named below because only three are used by the
+# reader this came from, and inventing names for the rest would be worse than leaving the
+# gap visible. The body between the entry table and 0x700000 is likewise undescribed.
+#
+struct	field	offset	size	type	value	note
+entry_record	id	0x00	4	u32be	-	measured: all three
+entry_record	name_offset	0x04	4	u32be	-	offset into the name table at entry 0x200
+entry_record	flags1	0x08	4	u32be	-	bit 31 marks the entry encrypted. measured on 0x20/0x400/0x401
+entry_record	flags2	0x0C	4	u32be	-	bits 12-15 are the key index. measured: 0x20 and 0x400 declare 3, 0x401 declares 2
+entry_record	offset	0x10	4	u32be	-	measured: all three
+entry_record	size	0x14	4	u32be	-	measured: all three
+entry_record	(size)	-	0x20	size	-	the last 8 bytes are zero in every entry examined
+pkg_header	magic	0x0	4	u32be	0x7F434E54	bytes 7F 43 4E 54, ASCII \x7fCNT. measured: all three
+pkg_header	entry_count	0x10	4	u32be	-	measured: 14, 23, 14
+pkg_header	entry_table_offset	0x18	4	u32be	0x2A80	measured: identical in all three, but read rather than assumed
+pkg_entry	id	0x0	4	u32be	-	see the entry_id rows
+pkg_entry	offset	0x10	4	u32be	-	from the start of the file
+pkg_entry	size	0x14	4	u32be	-	
+pkg_entry	(size)	-	0x20	-	-	
+entry_id	0x1	-	-	value	0x1	measured: present in all three
+entry_id	0x10	-	-	value	0x10	entry keys. The reader decrypts bytes 0x400..0x500 of this
+entry_id	0x20	-	-	value	0x20	image key. Its table row is hashed with dk3 to make the AES key
+entry_id	0x80	-	-	value	0x80	measured: present in all three
+entry_id	0x100	-	-	value	0x100	measured: present in all three
+entry_id	0x200	-	-	value	0x200	measured: present in all three
+entry_id	0x400	-	-	value	0x400	measured: present in all three
+entry_id	0x401	-	-	value	0x401	measured: present in all three
+entry_id	0x409	-	-	value	0x409	measured: present in all three
+entry_id	0x1000	-	-	value	0x1000	measured: present in all three
+entry_id	0x1001	-	-	value	0x1001	measured: present in all three
+entry_id	0x1002	-	-	value	0x1002	measured: present in all three
+entry_id	0x1003	-	-	value	0x1003	measured: present in all three
+entry_id	0x1200	-	-	value	0x1200	measured: present in all three
+optional_id	0x1004	-	-	value	0x1004	measured: one of three
+optional_id	0x1005	-	-	value	0x1005	measured: one of three
+optional_id	0x1006	-	-	value	0x1006	measured: one of three
+optional_id	0x100b	-	-	value	0x100b	measured: one of three
+optional_id	0x100d	-	-	value	0x100d	measured: one of three
+optional_id	0x1220	-	-	value	0x1220	measured: one of three
+optional_id	0x1280	-	-	value	0x1280	measured: one of three
+optional_id	0x12a0	-	-	value	0x12a0	measured: one of three
+optional_id	0x12c0	-	-	value	0x12c0	measured: one of three
+pkg_header	image_offset	0x410	8	u64be	-	measured: 0x80000, 0x580000, 0x80000. NOT the 0x700000 a previous-generation extractor hardcodes
+pkg_header	image_offset_mirror_a	0x7C	4	u32be	-	the same value; three samples cannot rank the three so all are recorded
+pkg_header	image_offset_mirror_b	0x414	4	u32be	-	the low half of the u64 at 0x410
+layout	pfsc_block	-	-	value	11	the compressed inner image sits at this block of the outer filesystem
+crypto	image_key_entry	-	-	value	0x20	AES-CBC, key = sha256(entry_row || dk3)[16:32], iv = the first 16 bytes
+crypto	entry_keys_entry	-	-	value	0x10	dk3 = RSA(bytes 0x400..0x500 of this entry)
+crypto	rsa_bits	-	-	value	2048	public fake-package keyset, from LibOrbisPkg by way of the extractor
+crypto	inner_cipher	-	-	value	AES-XTS	the filesystem itself
+crypto	inner_compression	-	-	value	zlib	the PFSC layer
+pfs_superblock	mode	0x1C	2	u16	0xD	measured: identical in all three. signed | encrypted | one unnamed bit
+pfs_superblock	block_size	0x20	4	u32	0x10000	measured: identical in all three
+pfs_superblock	inode_count	0x30	8	u64	-	measured: 4 in all three
+pfs_superblock	inode_blocks	0x40	8	u64	-	measured: 1 in all three
+pfs_superblock	seed	0x370	16	bytes	-	hashed with the filesystem key to derive the XTS keys
+pfs_superblock	(size)	-	0x400	-	-	
+pfs_mode	signed	-	-	bit	0x1	inodes carry signatures, which makes them larger
+pfs_mode	is_64bit	-	-	bit	0x2	
+pfs_mode	encrypted	-	-	bit	0x4	
+pfs_inode	kind	0x0	2	u16	-	0x4000 marks a directory, 0x8000 a file, low bits are permissions
+pfs_inode	size	0x8	8	u64	-	
+pfs_inode	blocks	0x60	4	u32	-	
+pfs_inode	start_signed	0x84	4	u32	-	first block, when the mode says signed
+pfs_inode	start_plain	0x64	4	u32	-	first block, when it does not
+pfs_inode	(size_signed)	-	0x2C8	-	-	
+pfs_inode	(size_plain)	-	0xA8	-	-	
+pfs_dirent	child	0x0	4	u32	-	the inode this entry names
+pfs_dirent	kind	0x4	4	u32	-	2 is a file, 3 a directory
+pfs_dirent	name_len	0x8	4	u32	-	
+pfs_dirent	entry_size	0xC	4	u32	-	zero ends the block
+pfs_dirent	name	0x10	-	bytes	-	name_len bytes, not terminated
+pfs_const	sector_size	-	-	value	0x1000	the unit XTS works in, independent of the block size
+pfs_const	xts_key_derivation	-	-	value	hmac-sha256	over u32le(1) followed by the superblock seed
+entry_content	0x200	-	-	kind	entry-names	ENTRY_NAMES (LibOrbisPkg).	92% printable, holds "icon0.png" and others. measured
+entry_content	0x1000	-	-	kind	param.sfo	begins 00 50 53 46 - the PSF magic. shadPS4 has a reader in file_format/psf.h
+entry_content	0x1001	-	-	kind	playgo-chunk-dat	PLAYGO_CHUNK_DAT (LibOrbisPkg).	begins "plgo". shadPS4 has a reader in file_format/playgo_chunk.h
+entry_content	0x1003	-	-	kind	playgo-manifest-xml	PLAYGO_MANIFEST_XML (LibOrbisPkg).	UTF-8 BOM then "<?xml version". 93% printable. measured
+entry_content	0x1200	-	-	kind	icon0-png	ICON0_PNG (LibOrbisPkg).	begins 89 50 4E 47 - a PNG. The icon named by entry 0x200
+entry_content	0x409	-	-	kind	zeros	PSRESERVED_DAT (LibOrbisPkg). 8192 bytes, entirely zero in every sample
+entry_content	0x1	-	-	kind	digest-table	DERIVED: one SHA-256 per entry, table order, own slot zero. 3/3 packages. selfish derive
+entry_content	0x80	-	-	kind	digest-manifest	PARTLY DERIVED: sha256(image)@0x40, sha256(param.sfo)@0xc0; 0x20/0x60/0xa0 unknown. 3/3. selfish derive
+entry_content	0x100	-	-	kind	entry-table-copy	DERIVED: the entry table again, id@0x00 offset@0x10 size@0x14 big-endian. 3/3. selfish derive
+entry_content	0x400	-	-	kind	license-dat	LICENSE_DAT. RIF, 0x400, big-endian. encrypted: entry flags bit31, key index 3. DECRYPTED 3/3, magic+fields confirmed
+entry_content	0x401	-	-	kind	license-info	LICENSE_INFO. padded to 0x200. encrypted, key index 2. DECRYPTED 2/3 (third uses a non-default passcode): content id then zeros
+entry_content	0x1002	-	-	kind	playgo-chunk-sha	PLAYGO_CHUNK_SHA. DERIVED+CITED: 4 bytes of sha256 per 0x10000 block of the package. 3/3, every block from the image on. selfish derive
+#
+# # The licence structure, measured from decrypted entries
+#
+# Entry 0x400 decrypts to a RIF. The offsets below are **measured** from three real licences,
+# not taken from a summary: a published field list gave DiscKey at 0x1E8 and Signature at 0x2A8,
+# which cannot be reconciled with the bytes and would put the signature's end 0x58 short of the
+# structure. The populated region is exactly 0x260..0x400 in every sample. (D046)
+#
+# `secret_iv` is confirmed derived, not merely located: it equals the first sixteen bytes of
+# sha256 of the content id padded to 48 with NULs, in every sample.
+#
+rif	magic	0x00	4	bytes	52 49 46 00	"RIF\0". measured: all three
+rif	version	0x04	2	u16be	1	measured: all three
+rif	unknown	0x06	2	u16be	0xFFFF	measured: all three
+rif	account_id	0x08	8	u64be	0	measured: all three
+rif	start_time	0x10	8	u64be	0x51506143	1364222275. measured: all three, and the source's constructor value
+rif	end_time	0x18	8	u64be	-	i64::MAX in all three
+rif	content_id	0x20	48	ascii	-	the id, NUL padded
+rif	license_type	0x50	2	u16be	0x200	debug. measured
+rif	drm_type	0x52	2	u16be	-	
+rif	content_type	0x54	2	u16be	-	
+rif	sku_flag	0x56	2	u16be	-	
+rif	flags	0x58	4	u32be	-	
+rif	disc_key	0x240	32	bytes	-	entirely zero in all three
+rif	secret_iv	0x260	16	bytes	-	DERIVED+CONFIRMED: sha256(content id padded to 48)[0..16]. 3/3
+rif	secret	0x270	144	bytes	-	AES-CFB128 under rif_debug_key. encrypted in all three
+rif	signature	0x300	256	bytes	-	RSA-2048 over sha256 of the first 0x300 bytes, under the debug RIF keyset
+rif	(size)	-	0x400	size	-	
+entry_content	0x80	0x1c	4	u32be	0x6e	measured: identical in all three packages while every digest slot differs. Not interpreted. selfish manifest_probe

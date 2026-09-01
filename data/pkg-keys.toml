@@ -1,0 +1,207 @@
+# The public fake-package keyset.
+#
+# Three RSA-2048 keypairs as modulus and private exponent, one AES key, and seven RSA public
+# moduli. Together they read *and* write a **fake** package - one built by a community tool
+# rather than signed by the vendor.
+#
+# ## What each is for
+#
+# | key | reads | writes |
+# |---|---|---|
+# | `fake_*` | unwraps the image key | - |
+# | `dk3_*` | unwraps the key that decrypts entries | - |
+# | `debugrif_*` | checks a licence signature | signs one, saying *debug* (D047) |
+# | `rif_secret_key_hex` | decrypts a licence's secret field | encrypts it |
+# | `pkg_public_0..6` | - | wraps the per-index keys at entry `0x10` and `0x20` (D054) |
+#
+# The seven `pkg_public_*` are **public halves only**. A public key wraps and cannot unwrap, so
+# they add the ability to write a blob and no ability to read anything that was not already
+# readable.
+#
+# ## Provenance
+#
+# Published in LibOrbisPkg, an open-source packaging tool, and carried by every open-source
+# extractor since. Reached here by way of prosperity@3475257
+# (`tools/pkg_extract/pkg_extract.py`), which states the same origin in its own header.
+#
+# **Not taken from any binary by this project**, and not usable on anything that was not
+# already built with them.
+#
+# ## What they are not
+#
+# These do not open a retail package. A retail image key is encrypted under a key nobody
+# outside the vendor has, and the extractor these came from says so plainly: *"Retail pkgs
+# (Sony-signed image_key) are not supported."* That is a wall rather than a gap, in the same
+# way retail signing is, and nothing here should be made to climb it.
+#
+# ## Why committed rather than fetched
+#
+# Same reasoning as the hash suffix beside it. A build that reaches the network to compute a
+# constant is a build that behaves differently depending on where it is run, and these have
+# been public for years - the secrecy that would justify keeping them out is long gone.
+#
+# `dk3` unwraps the entry-keys blob; `fake` unwraps the image key that the first one, hashed
+# with the image-key entry's own table row, decrypts.
+
+fake_modulus_hex = """
+  c6cf71e7e59af0d12a2c458bf92a0ec143058bc37117801dcd497dde359d259ba0d7a0f27d6c087eaa5502682b23c644
+  b84418eb56cf16a24803c9e74f87eb3d30c31588bf20e79dff770cde1d241e63a94f8abf5bbe601968333bfced9f474e
+  5ff8eacb3d00bd6701f92c6dc6ac1364e76714f3dc52696ab9832c4230131bb2d8a5020d79ed96b10df8cc0cdf81954f
+  035809570e80692efeff5277ea7528a8fbc9bebf9fbbb7798e1805e180bd50349481d353c269a2d24ccf6cf4572c104a
+  3ffb22fd8b97e2c95ba62bcdd61b6bdb687f4bc2a05034c005e58def2467ff9340cf2d62a2a050b1f13aa83dfd80d1f9
+  b80522afc8354590588ee33a7cbd3e27
+"""
+fake_exponent_hex = """
+  7f76cd0ee2d4de051cc6d9a80e8dfa7bca1eaa271a40f8f1228735dddbfdeef8c2bcbd01fb8be23e63b2b1225c56496e
+  11be07440b9a2666d1492c8fd31bcfa4a1b8d1fba49ed2212883098af6a00ba3d60f9b6368ccbc0c4e145b27a4a9f42b
+  b9b87bc0e651ad1d77d46bb9ce20d126667e5e9ea2e96b90f373b8528f4411030c1397393d132258d5438249da6e7ca1
+  c58ca5b009e0ce3ddff49d3c9715e26ac72b3c509323dbba4a226644ac78bb0e1a2743b57167aff4ab48469373d042ab
+  9363e56c9ade5024c0237d99793f2207e0c148561bdf830912b42d456bc9c06885999079961ad7f54d1f3783404aec39
+  37a680927dc580c7d66ffe8a7989c6b1
+"""
+dk3_modulus_hex = """
+  d212fc335f6ddb831609628b0356273782d477853529392d526b8c4c8cfb06c1845be7d4f7bcd24e6245cd2abbd77776
+  453655273fb3f5f98eda4befaa59aeb39bea5498d206326a58312ae0d44f90b50a7decf43a9c52672d99318e0c43e682
+  fe0746e12e50d41f2d2f7ed908ba06b3bf2e203f4e3ffe44ffaa50435791699449158282e40f4c8d9d2cc95b1d64bf88
+  8bd4c594e76547841ee57910fb989347b97d8512a640982cf792bc951932ede890560d65c1aa78c62e54fd5f54a1f67e
+  e5e05f61c120b4b9b4330870e4df8956ed012946775f8cb8a9f51e2eb3b9bfe009b78d28d4a6c3b81e1f07ebb4120b95
+  b88530fddc3913d07cdc8fedf9c9a3c1
+"""
+dk3_exponent_hex = """
+  32d903908fbdb08f572b285e0b8db3ea5cd17ea890888cdd6a80bbb1dfc1f70daa32f0b77ccb88800e8b64b0be4cd60e
+  9b8c1e2a64e1f35cd77601415e935c94fedd4662c31b5ae2a0bc2debc3980aa7b7856970682b644ab31fcc7ddc7c26f4
+  77f65cf2ae5a442dd3ab16620419bafb90ffe23050896ecb56b2ebc09116925e308eaec7945dfd35e120f8ad3ebc08bf
+  c036749fd5bb5208fd0666f37ab304f475295de95faa1030b20f5a1ac12ab3fecb21ad80ec8f20091cdbc55894c29cc6
+  ce82653e5790bca98b06b4f072f677df9864f1ecfe372dbcae8c08811fc3c9891ac742824b2edc8e8d73ceb1cc01d908
+  70873c4408ec498f815ae240ff77fc0d
+"""
+
+# ## The debug RIF keyset, and the key over a licence's secret
+#
+# A third keypair and one AES key, for the licence entries a package carries. Same origin as
+# the two above - LibOrbisPkg names them `DebugRifKeyset` and `rif_debug_key` - and read from
+# `LibOrbisPkg/Util/Keys.cs` directly rather than transcribed.
+#
+# **That distinction is not pedantry.** An earlier attempt to obtain this key through a
+# summarising reader produced 519 hex characters where 512 were needed, and two further
+# attempts returned overlapping byte ranges. A key that is nearly right signs nothing and looks
+# exactly like one that is right. (D047)
+#
+# ### Confirmed against real material
+#
+# Signing `sha256` of the first `0x400` bytes of a decrypted licence with `debugrif` reproduces
+# that licence's stored signature **byte for byte, in all three packages**, under PKCS#1 v1.5
+# with a DigestInfo prefix. Re-run it with `selfish licence --verify <package>`.
+#
+# These sign nothing retail. A debug RIF is what a fake package carries and what a console
+# accepts only where fake packages are accepted at all.
+debugrif_modulus_hex = """
+  c2d244bcdd843fd9c522aff7fc888a3380ed8ee2cc81f7ecf81c79bf02bb128e6168291b15b65ec6f8bf5ae0
+  3b6a6cd9d6f575aba06f3481349a5baded31e3c6ea1ad11322bbb3dab3b253bd457987ad0a017218102949f4
+  417fd6470c72929ee9bb95a95d79ebe4307690454b9d9ccf9203608c4b6cb37a3a0539a066a935cfb9faad9c
+  abebe46a8ce93bcc72126263bd80c4ee372b3203a309f7a06157ad0dcf15989e4e49f8b5a35c27ee4504eae4
+  4bbc8f87ed191e467563c45bd5bc092f0273193c585549664c11ec0f09faa5560a5a6356ada00d8608c1e6b6
+  1322492f7cdb4c56970ec2d92e87bc0e67c01b58bc642bc26ee2932eb56b70a4429f64c1
+"""
+debugrif_exponent_hex = """
+  0161add89c0689d060c841f0b383015de3a26ba2ba9a0a58cd1aa09764ecd0311fca360e69dd40f74ec0c6a3
+  73f06984b2f44b29142a6db823d81b61d49e87b3bba9c4854af8034abffef9fe8bdd5483bae02f3fb1efa505
+  5d288babb5d0232f8acf487caabbc85b3627c516a4b661ac0c2847793f38ae5e25c6af35aebcb0f3bcbdfda4
+  870d143d90e4de5d1d4681f1286d2f2c5e972d892a51723c200259b19893051e3fa18a69300e70848bae97a1
+  0895634cc7e85d59ca782a2387ac6f0433b161b9f095da33cce04c8268821451be491c58a28b054e9837eb94
+  0b0122dcb319ca77a66e97ff8a535ac524e4af6ea82b53a4be96a57bce2256a3f1cf14a5
+"""
+
+# AES-128, over the `secret` field of a licence, in CFB128 mode with the derived IV.
+rif_secret_key_hex = "96c2268d69261c8b1e3b6bff2fe04e12"
+
+# The seven package public moduli, used to wrap the per-index entry keys.
+#
+# Public halves only. They wrap; they cannot unwrap, so nothing here gains the ability to
+# read anything it could not read before - what they add is the ability to *write* the key
+# blobs a package carries at entry 0x10 and 0x20, which is what stood between this
+# repository and a package a console could open.
+#
+# Index 3 is the same key as `dk3_modulus_hex` above, which arrived by a different route.
+# They are byte-identical, and the generator refuses to emit unless they are.
+#
+# Source: LibOrbisPkg `LibOrbisPkg/Util/Keys.cs`, `PkgPublicKeys`. Extracted by a parser
+# rather than transcribed, because transcription of key material has failed here before.
+pkg_public_0_hex = """
+  d6aa0c5c0d6dc9e5ee28f9aa8dbc7236699617b65f8a4d969c8841330cb3fba0d6332d202fe30dade07a3e4a282f7629
+  1b4f8a347436c8c940464db2beedcb723e81ffa3ac52a24513c781b2215cbe979d070e8fc846e9bba6a56ed44887bbe6
+  f60c486650109aab0f36b01f28e056e408d376629f0703263676b58eb37392665857943acfbc212ba008ba2c378118f7
+  d81ea91a456895bf16861735309a79bfa9db96c21f0d9ffc8b3b4f81eaad87f6730f709a2918398e9c369a23bc94069b
+  1b7b34a18b5f06c47965e965b3fbf6132fb7c0b54e488eb661a995d83e7f57e07b4e2125096f5f474d333c0634ae85e8
+  9d4806bdd1ee0c9cef63414c26fdc88f
+"""
+pkg_public_1_hex = """
+  b96953eea54b1eb2f715eab62172bcec4d8fd39d483609d4f632043aab2057d9510fed357af9863cc8cf652427dc86b2
+  816c480d5f30cb16c733b43ed38cc19ce21ad682c1ed9226a2408bd4c0807f9fbda64b942092f7f42dcb88e5135f92d2
+  b1b9097995ab0e42e3ca3691159deda93ac1b0a218d71e128ad2db114fbde5328b613753ea4a4ae6fdf94b4d8ede120e
+  bf414e3c76e0c9398cd92db8a5f48833f3364fa98bbb9289ecb2a8de9fd9cfeda74e55769bed39c5e1ab0c5d89075e2b
+  339c6da748aa2c5799a7d48aff910a554aaf344a07cced8c1de45c54d6b4bdda5995f16e64c6da016556254779855e4c
+  9768e7fddfd7d7df56bd173fa5ddcedd
+"""
+pkg_public_2_hex = """
+  9d2a60a2538fa218d1a636de7cce7af8950b726b52753a2419a4545ca75eccb343abae8384ca0b7ffd269d7e4d369d05
+  47aada16f33a56eb9e37657cfcd93edee62bab0978f15d99dd57ba5b17a65055d5939230d77a3bd47c5dbd1e78d6d2c7
+  c184d3bd4e7fb8927db6e6ec61d81796bd31fbdbb6ac58df6943c8a8cacf0308f46f28b8ff975a7d7331dbb362d40736
+  403c5d6597a54fd1dad91534be98c80a33741413814c51d0eee4fa5660c42f7ca6a9dd0a1110bdf498b1f1c9f81e7431
+  bdd6ce91d0abdb1ec93f0340947a6e6bf04c78df463163c3b3208da239354e6ad9a78d9fce9da46042137791524d45bf
+  c84696b87c0a7b2cfadf3943ce86dde9
+"""
+pkg_public_3_hex = """
+  d212fc335f6ddb831609628b0356273782d477853529392d526b8c4c8cfb06c1845be7d4f7bcd24e6245cd2abbd77776
+  453655273fb3f5f98eda4befaa59aeb39bea5498d206326a58312ae0d44f90b50a7decf43a9c52672d99318e0c43e682
+  fe0746e12e50d41f2d2f7ed908ba06b3bf2e203f4e3ffe44ffaa50435791699449158282e40f4c8d9d2cc95b1d64bf88
+  8bd4c594e76547841ee57910fb989347b97d8512a640982cf792bc951932ede890560d65c1aa78c62e54fd5f54a1f67e
+  e5e05f61c120b4b9b4330870e4df8956ed012946775f8cb8a9f51e2eb3b9bfe009b78d28d4a6c3b81e1f07ebb4120b95
+  b88530fddc3913d07cdc8fedf9c9a3c1
+"""
+pkg_public_4_hex = """
+  c9b2402b79556af9605e098644e865579f3df6f4800d230cd5ee4bc18d5a782a94224fd9959d863d48b3b97c6fb8939f
+  ffccc39019a464959e6bda17240be0acf6b2bbbe1ccca2e377fb410cdce3389e86a26fe5a67d9694beffc76fce4c829b
+  679108b2c3b472f4ad2f4c4ca3f4c9712e3acc1e50d19941c55097b41004e8ab4e2b897ca8e1bfea7fac3c15e5b2394c
+  449d823674bf0a84232bcabf01193f5206fb5aac28c68fbf70057033b4e6cc854e54cd181c380058056192c945a972f0
+  690089bcb2342b79f68f536e8050c38388e736838c7ddf67433f5678527c09abac80c58498716116d78c05e003e1ccba
+  a7a7416d35487ca06d5b9ec2d24395c7
+"""
+pkg_public_5_hex = """
+  e356f16b5dff3c7dff42e79a32c144e83bde58df19bb9c4a0f5aff153902de7665bf2a7162ee0d34a28d73718393ea05
+  91231743c806381a95e5806ad0acdd8c91fb1fd7a21a693d037cdd8e2db0b24cc4ab73ce65a1a3e6536341920b6e0877
+  772b9762c801df3c4b9a392cd2abde7d27e7a76a997da39e6e5a2baf172374f0e6f7d07e1af7394bb79dba813af6757e
+  020a1b86f70465b7571d50c982348f54610c0a4bb8479ffcacc40f18bc3e80bddfa92dc88c89a7df5566c2b0ee5a2386
+  00eaa4851930ece86c0b302e3e6baac8d0185ac049002b3abc754cd3586a76424fc45ab1d1d72711fd5b4cb793708299
+  de23f2c3de096c2ba7f264bf95489cd1
+"""
+pkg_public_6_hex = """
+  e9cac344b4d96a2c5c255df0f1848c800d55f87e26326c3b0c1a14462d5fd057d4a0b87c8bb6880ba9d3ac282c38c06d
+  0a30fe80d71ab481d6a17622198db04cc30f23382b1ba12b1bcb7ee0c5fc79960a537a11b3230471e63f2caeedd549b3
+  255fda807af1af91db1770a5221c5cafe606cde2118f6842e7942d8f25d23cc4af98679fcf16be701e79b8c81f704649
+  3906a1ff9e011ec0cf1dc8048061c22c7869b23b4da20fdbb764b465baae2fc69b09fb6e497ce1a0182d6662abdec3c9
+  60fa67f3505526ae0fb5e0cdd3d9b673e299a6e1badd478d546512ebe924ff26c2b8af07921a3b123171130363d0a631
+  4d559599214cec48fd09e07585465b85
+"""
+
+# The two keys behind `sce_sys/keystone`.
+#
+# Every real package carries a 96-byte `keystone` in its filesystem, and it is **derived from
+# the passcode** rather than being title content:
+#
+#     header      "keystone" 02 00 01 00, then zeros to 32 bytes
+#     fingerprint HMAC-SHA256(keystone_hmac_key, passcode)
+#     final       HMAC-SHA256(keystone_mac_data, header || fingerprint)
+#
+# So it is a format product, not something a caller supplies. `selfish-pkg::keystone` builds it
+# and the CLI puts one in every image it lays out. (D067)
+#
+# ## Provenance
+#
+# LibOrbisPkg `LibOrbisPkg/Util/Keys.cs`, `keystone_hmac_key` and `keystone_mac_data`, with the
+# construction in `Util/Crypto.cs` `CreateKeystone`. Extracted by a parser rather than
+# transcribed, for the same reason as the moduli above.
+#
+# These are MAC keys over a passcode a builder chose. They open nothing.
+keystone_hmac_key_hex = "c74405f67424ba342bc1276251bbc2f555f16025b6a1b6714780dbaec852fa2f"
+keystone_mac_data_hex = "783d6f3ae91c0e0712fcaab7950bde06855cf7a22dcdbde127e9bfcbad0ff0fe"

@@ -1,0 +1,42 @@
+[package]
+name = "selfish-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Command-line access to the console's file formats"
+
+[[bin]]
+name = "selfish"
+path = "src/main.rs"
+
+# Windows is the only one of the three that carries an icon inside the executable. A Linux ELF
+# and a macOS CLI binary have nowhere to put one - their icons live in packaging metadata, a
+# `.desktop` entry or an `.app` bundle, neither of which a bare command-line tool has. So this is
+# target-gated rather than conditional inside the build script: on Linux and macOS the dependency
+# is not built, not fetched, and not in the lockfile's way.
+[target.'cfg(windows)'.build-dependencies]
+winresource.workspace = true
+
+[dependencies]
+selfish-abi.workspace = true
+selfish-elf.workspace = true
+selfish-container.workspace = true
+selfish-nid.workspace = true
+selfish-title.workspace = true
+serde_json.workspace = true
+selfish-pfs.workspace = true
+selfish-pkg.workspace = true
+clap.workspace = true
+png.workspace = true
+oops-build.workspace = true
+oops-log.workspace = true
+tracing.workspace = true
+
+[build-dependencies]
+# The other half of `oops-build`: `emit` at build time, `line!` at run time. Not target-gated,
+# unlike the icon above - a commit is wanted on every platform.
+oops-build.workspace = true
+
+[lints]
+workspace = true

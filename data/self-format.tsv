@@ -1,0 +1,170 @@
+# The SELF container, as three independent open-source projects read or write it.
+# Columns: struct, field, offset, size, type, value, note
+#
+# read-from: shadPS4@be21649             src/core/loader/elf.h        C++       reader
+#            fpPS4@04cefd4               sys/sys_types.pas            Pascal    reader
+#            OpenOrbis-PS4-Toolchain@0a1aaf9  scripts/make_fself.py   Python    WRITER
+#            prosperity@3475257          tools/pkg_extract/pkg_extract.py  Python  reader
+#
+# The fourth arrived after the builder was written and confirms it independently, including
+# the two fields whose absence a loader rejected: `if not (flags & 0x800): continue` and
+# `idx = (flags >> 20) & 0xFFF`. It also pins something the others leave implicit — the ELF
+# begins at `0x20 + segment_count * 0x20`, immediately after the entry table with no padding,
+# which is where mkself already puts it.
+# **No vendor binary was read to produce this table**, and none may be read to extend it.
+# Derivation happens against sources that can be named; what enters the repository is text
+# with a header saying where it came from; a generator reads the text rather than the thing
+# it was derived from. `titles/` holds packages to check output against - nothing in `tool/`
+# may open them. (orbistoun#D181, orbistoun#D182)
+#
+# # THE LIMIT THAT MATTERS: this is the previous console's container
+#
+# OpenOrbis is a PS4 toolchain and both readers are PS4-generation loaders. **Nothing here is
+# confirmed for the current generation.** The container is expected to be closely related and
+# it is the only lawful starting point available, but every row is `IMPLEMENTATIONS` at PS4
+# level until something current accepts or rejects a file built from it.
+#
+# That is not a footnote. This project has been caught believing an emulator-derived fact that
+# turned out to describe a different program, and the whole reason `mkself` matters is to
+# reach the *current* system loader. A file built from this table is a hypothesis.
+#
+# # Why three sources, and what each was needed for
+#
+# A single reading is a guess with a citation. Two readers gave the shape and one constant.
+# The writer gave what neither reader could: **the blocks a loader skips**. A reader walks a
+# container to find an ELF and never looks at the metadata; a writer has to put something
+# there. Everything from `ex_info` down exists only because a packer was available.
+#
+# It also settled two things the readers left open:
+#
+#   * bytes 4..7 - shadPS4 names four fields and gives no values, fpPS4 gives `00 01 01 12`
+#     as one word, OpenOrbis names them AND gives the values. All three agree.
+#   * `0x22` at offset 26 - both readers record "always 0x22" and neither says why. It is
+#     computed: `0x2 | (signed_block_count & 0x7) << 4`, with signed_block_count = 2.
+#
+# # One genuine disagreement, recorded rather than resolved
+#
+# Bytes 8..11. shadPS4 reads `category:u8, program_type:u8, padding1:u16`; OpenOrbis writes a
+# single `key_type:u32 = 0x101`. Little-endian those are the same bytes - `01 01 00 00` - so
+# the disagreement is in naming, not in layout, and a file built either way is identical.
+# Both readings are recorded because neither can be shown wrong from here.
+#
+# # How the pieces assemble
+#
+#   [self_header 32][entry 32 x N][ELF ehdr + phdrs][pad to 16][ex_info 64][npdrm 48]   <- header_size
+#   [meta_block 80 x N][meta_footer 80][signature 256]                                  <- meta_size
+#   [segment payloads, each aligned to 16]                                              <- from header_size + meta_size
+#
+# **Two entries per segment, not one.** A digest entry carrying one 32-byte digest per
+# BLOCK_SIZE block of the segment, then a data entry carrying the segment itself. So
+# `segment_count` is twice the number of qualifying program headers, which is the single
+# thing most likely to be got wrong by reading the readers alone - neither of them says it,
+# because neither has to build one.
+#
+# Qualifying program header types: PT_LOAD, PT_SCE_RELRO, PT_SCE_DYNLIBDATA, PT_SCE_COMMENT.
+# PT_SCE_VERSION is kept aside as version_data rather than becoming an entry.
+#
+# For a fake SELF every digest and the whole signature are zero, which is the same statement
+# `meta_block` makes by being 80 zero bytes: nothing here is claiming to be signed.
+#
+#
+# # THE MAGIC DIFFERS BY GENERATION, AND EVERY SOURCE ABOVE IS THE OLD ONE
+#
+# orbistoun (`crates/orbistoun-elf/src/wrapper.rs`, decision D049, status "observed from real
+# material") records two magics for one container:
+#
+#     current generation   54 14 F5 EE
+#     previous generation  4F 15 3D 1D    <- what this table described, and what mkself emitted
+#
+# and notes that both appear inside a single title: bundled modules use the current format,
+# substituted stub libraries the older one. Its header size, segment size and layout are
+# byte-identical to the rows below, so **only the first four bytes change**.
+#
+# This was sitting in a sibling repository the whole time. The header above already said
+# "nothing here is confirmed for the current console", which was true and was treated as a
+# limit to note rather than a question to go and answer - and the answer was one directory
+# across, derived from real material rather than from an emulator. Reading the readers and
+# the writer was the right method; not checking who had already done it was not.
+#
+# Still absent
+#
+# `version_data` handling, and the auth_info path that `make_fself.py` takes when given one.
+# An absent row is visible; an invented one is not.
+#
+struct	field	offset	size	type	value	note
+self_header	magic	0	4	u32	0x1D3D154F	bytes 4F 15 3D 1D. All three sources
+self_header	version	4	1	u8	0x00	OpenOrbis VERSION; fpPS4 reads 4..7 as "always 00 01 01 12"
+self_header	mode	5	1	u8	0x01	OpenOrbis MODE
+self_header	endian	6	1	u8	0x01	OpenOrbis ENDIAN. 1 is little-endian
+self_header	attributes	7	1	u8	0x12	OpenOrbis ATTRIBS
+self_header	key_type	8	4	u32	0x101	OpenOrbis. shadPS4 splits this - see the two rows below
+self_header	category	8	1	u8	0x01	shadPS4 name; fpPS4 Content_Type, 1 on a SELF and 4 on a PUP entry
+self_header	program_type	9	1	u8	0x01	shadPS4 name. Low bytes of key_type read separately
+self_header	header_size	12	2	u16	-	offset at which the ELF payload begins
+self_header	meta_size	14	2	u16	-	fpPS4 names this Sign_Size and queries whether it is metadata
+self_header	file_size	16	8	u64	-	OpenOrbis u64; shadPS4 reads u32 + u32 padding, same bytes
+self_header	segment_count	24	2	u16	-	OpenOrbis num_entries
+self_header	flags	26	2	u16	0x0022	both readers call this unknown/always-0x22. = 0x2 | (signed_block_count << 4)
+self_header	padding3	28	4	u32	0x00000000	
+self_header	(size)	-	32	-	-	
+self_segment	flags	0	8	u64	-	see the segment_flag rows
+self_segment	file_offset	8	8	u64	-	
+self_segment	file_size	16	8	u64	-	encrypted/compressed size
+self_segment	memory_size	24	8	u64	-	decrypted/decompressed size
+self_segment	(size)	-	32	-	-	
+segment_flag	ordered	-	-	bit	0x1	shadPS4 IsOrdered, fpPS4 SF_ORDR
+segment_flag	encrypted	-	-	bit	0x2	shadPS4 IsEncrypted, fpPS4 SF_ENCR
+segment_flag	signed	-	-	bit	0x4	shadPS4 IsSigned, fpPS4 SF_SIGN
+segment_flag	compressed	-	-	bit	0x8	shadPS4 IsCompressed, fpPS4 SF_DFLG deflated
+segment_flag	blocked	-	-	bit	0x800	shadPS4 IsBlocked, fpPS4 SF_BFLG. The writer calls this bit has_blocks - same bit 11, three names
+segment_flag	id	-	-	field	bits 20..31	shadPS4 GetId masks 0xFFF, the writer masks 0xFFFF as segment_index. Only the writer says what it means
+ex_info	paid	0	8	u64	0x3100000000000002	OpenOrbis default. Program authority id
+ex_info	ptype	8	8	u64	0x1	PTYPE_FAKE. THIS is what makes a fake SELF fake
+ex_info	app_version	16	8	u64	0x0	
+ex_info	fw_version	24	8	u64	0x0	
+ex_info	digest	32	32	bytes	-	SHA-256
+ex_info	(size)	-	64	-	-	OpenOrbis FMT '<4Q32s'
+ptype	fake	-	-	value	0x1	the only one this project may produce
+ptype	npdrm_exec	-	-	value	0x4	
+ptype	npdrm_dynlib	-	-	value	0x5	
+ptype	system_exec	-	-	value	0x8	
+ptype	system_dynlib	-	-	value	0x9	OpenOrbis notes this includes Mono binaries
+ptype	host_kernel	-	-	value	0xC	
+ptype	secure_module	-	-	value	0xE	
+ptype	secure_kernel	-	-	value	0xF	
+npdrm_control	type	0	2	u16	-	SELF_CONTROL_BLOCK_TYPE_NPDRM
+npdrm_control	pad	2	14	bytes	0	
+npdrm_control	content_id	16	19	bytes	-	
+npdrm_control	random_pad	35	13	bytes	-	
+npdrm_control	(size)	-	48	-	-	OpenOrbis FMT '<H14x19s13s'
+meta_block	(zeros)	0	80	bytes	0	entirely zero. FMT '<80x' - which is what "fake" means here
+meta_block	(size)	-	80	-	-	
+meta_footer	pad	0	48	bytes	0	
+meta_footer	unk1	48	4	u32	0x10000	OpenOrbis sets this constant and does not name it
+meta_footer	pad2	52	28	bytes	0	
+meta_footer	(size)	-	80	-	-	OpenOrbis FMT '<48xI28x'
+const	digest_size	-	-	value	0x20	SHA-256, one per block in a digest entry
+const	signature_size	-	-	value	0x100	zero-filled for a fake SELF
+const	block_size	-	-	value	0x4000	digest granularity for segment data
+const	npdrm_block_type	-	-	value	0x3	SELF_CONTROL_BLOCK_TYPE_NPDRM
+const	content_id_size	-	-	value	0x13	19 bytes, zero-filled here
+const	random_pad_size	-	-	value	0xD	13 bytes, zero-filled here
+const	header_align	-	-	value	16	header_size is aligned up to this before ex_info
+const	segment_align	-	-	value	16	each payload offset is aligned up to this
+entry_prop	order_shift	-	-	value	0	bit position, mask 0x1
+entry_prop	encrypted_shift	-	-	value	1	bit position, mask 0x1
+entry_prop	signed_shift	-	-	value	2	bit position, mask 0x1
+phdr_type	pt_load	-	-	value	0x1	becomes two entries
+phdr_type	pt_sce_relro	-	-	value	0x61000010	becomes two entries
+phdr_type	pt_sce_dynlibdata	-	-	value	0x61000000	becomes two entries
+phdr_type	pt_sce_comment	-	-	value	0x6FFFFF00	becomes two entries
+phdr_type	pt_sce_version	-	-	value	0x6FFFFF01	kept as version_data, not an entry
+entry_prop	compressed_shift	-	-	value	3	mask 0x1
+entry_prop	window_bits_shift	-	-	value	8	mask 0x7
+entry_prop	has_blocks_shift	-	-	value	11	mask 0x1. The bit shadPS4 reads as IsBlocked
+entry_prop	block_size_shift	-	-	value	12	mask 0xF. Encoded as ilog2(bytes) - 12, so 0x4000 stores as 2
+entry_prop	has_digests_shift	-	-	value	16	mask 0x1
+entry_prop	has_extents_shift	-	-	value	17	mask 0x1
+entry_prop	segment_index_shift	-	-	value	20	mask 0xFFFF. The field shadPS4 reads as GetId
+generation	current_magic	0x0	4	u32	0xEEF51454	stored so little-endian writes 54 14 F5 EE on disk. THE CURRENT CONSOLE USES THIS
+generation	previous_magic	0x0	4	u32	0x1D3D154F	stored so little-endian writes 4F 15 3D 1D on disk. What every source above describes

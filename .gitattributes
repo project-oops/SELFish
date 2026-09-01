@@ -1,0 +1,15 @@
+# Line endings are pinned, not left to whoever clones this.
+#
+# `core.autocrlf` is a per-machine setting, so without this file the same commit checks out
+# differently on two developers's disks. This repository is the one where that matters most:
+# it exists so a format fact has one home, and a data table under `data/` that gains a CR on
+# one machine is a format fact that differs by platform.
+# See [OOPS conventions section 8](https://github.com/project-oops/OOPS/blob/main/docs/CONVENTIONS.md#8-gates).
+#
+# `text=auto` rather than a list of extensions: git detects binary content itself, and a list
+# only protects the extensions somebody remembered.
+#
+# **Real files used as an oracle must be marked `-text` when they arrive.** `eol=lf` would
+# rewrite one that legitimately contains 0x0D 0x0A, and a corrupted oracle reads as a reader
+# bug. There are none tracked yet, which is why there is no such line to copy.
+* text=auto eol=lf

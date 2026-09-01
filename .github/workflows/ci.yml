@@ -1,0 +1,94 @@
+name: ci
+
+# Every job begins the same three steps: check out the collection, check this repository
+# out *into* it, and ask `oops bootstrap` for the siblings this project needs. See
+# docs/BUILDING.md.
+#
+# This workflow has never executed - there is no remote yet - and until it was looked at
+# it had **no bootstrap step at all**, on the strength of a comment saying SELFish depends
+# on nothing outside itself. That stopped being true when `selfish-cli` took `oops-build`
+# and `oops-log` from `oops-libs` by relative path, and nothing noticed, because a
+# workflow nobody runs is documentation that claims to be a gate.
+#
+# The claim is worth getting back: the crates under `crates/` still take nothing, and it
+# is two calls in one binary standing between here and the old property. See
+# docs/BUILDING.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: fmt, clippy, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/OOPS
+          path: OOPS
+      - uses: actions/checkout@v4
+        with:
+          path: OOPS/selfish
+
+      # Two integration tests link a real module with this repository's own linker script
+      # and read the result back. They *skip* rather than fail without a toolchain, so
+      # leaving these out would turn the most valuable tests in the suite into a silent
+      # no-op - CI would stay green while checking nothing.
+      - name: Install clang and lld
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld
+
+      - name: Siblings this build needs
+        run: OOPS/bin/oops bootstrap selfish
+
+      # `./bin/selfish check`, reached through the shared entry point: formatting, clippy at
+      # `-D warnings`, the tests, and a doc build. `-D warnings` because the lint set here is
+      # not decoration - `arithmetic_side_effects`, `indexing_slicing` and `unwrap_used` are
+      # on deliberately, and a builder wrong by one byte is reported by a loader as "not a
+      # container" rather than as an offset error.
+      - name: oops check selfish
+        run: OOPS/bin/oops check selfish
+
+      # A front-door verb but deliberately *not* in the gate script: folding `links` into
+      # `oops check` would make the local gate slower for everybody to catch a thing that
+      # only matters on a clean machine. A verb rather than inline shell, so it is the
+      # single source of truth and a person runs the same check. The doc build is already
+      # part of `oops check selfish` above, so it is not repeated here.
+      - name: The linker tests really ran
+        run: ./bin/selfish links
+        working-directory: OOPS/selfish
+
+  # The formats are the product, and their provenance is what the product is worth. A table
+  # whose header stops naming where its rows came from is a table that has quietly become
+  # somebody's memory.
+  provenance:
+    name: every format table names its sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/OOPS
+          path: OOPS
+      - uses: actions/checkout@v4
+        with:
+          path: OOPS/selfish
+      - name: Siblings this build needs
+        run: OOPS/bin/oops bootstrap selfish
+
+      # Both provenance checks, through the front door so `./bin/selfish provenance` is the
+      # single source of truth and a person runs the same thing (principle 2).
+      #
+      # A block scalar, not a bare `run:` with a second indented line. That folds into one
+      # plain scalar - `./bin/selfish provenance echo "no material committed"` - so the
+      # verb silently swallowed the echo as an argument and the line never printed.
+      - name: format tables name their sources, and no material is committed
+        run: |
+          ./bin/selfish provenance
+          echo "no material committed"
+        working-directory: OOPS/selfish

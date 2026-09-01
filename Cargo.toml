@@ -1,0 +1,121 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/selfish-abi",
+    "crates/selfish-nid",
+    "crates/selfish-elf",
+    "crates/selfish-container",
+    "crates/selfish-title",
+    "crates/selfish-pfs",
+    "crates/selfish-pkg",
+    "selfish-cli",
+]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/project-oops/SELFish"
+rust-version = "1.85"
+publish = false
+
+# The dependency spine, in build order. Each crate depends only on those above it, and the
+# split is not organisational: it is what keeps cryptography out of a loader.
+#
+#   abi         the generation split, ABI constants. Depends on nothing.
+#   nid         the import hash. Depends on nothing either, and sits here because a module's
+#               undefined symbols are named by it - see D015.
+#   elf         the executable format.
+#   container   the signed-executable wrapper, both directions.
+#   title       what a title says about itself: PARAM.SFO and param.json.
+#   pfs         the filesystem inside a package.
+#   pkg         packages. The only crate that pulls in RSA, AES and zlib.
+#
+# An emulator loading a bare executable takes `elf` and stops there. Nothing makes it
+# compile a cipher it will never call.
+[workspace.dependencies]
+selfish-abi = { path = "crates/selfish-abi" }
+selfish-nid = { path = "crates/selfish-nid" }
+selfish-elf = { path = "crates/selfish-elf" }
+selfish-container = { path = "crates/selfish-container" }
+selfish-title = { path = "crates/selfish-title" }
+selfish-pfs = { path = "crates/selfish-pfs" }
+selfish-pkg = { path = "crates/selfish-pkg" }
+
+# Shared with the rest of the collection. `oops-build` has no dependencies at all; `oops-log` is
+# the `tracing` facade and a subscriber, with files and OTLP behind features this does not enable.
+# Paths while nothing is published - these gain a `version` when they are.
+oops-build = { path = "../oops-libs/crates/oops-build" }
+oops-log = { path = "../oops-libs/crates/oops-log" }
+# The facade itself, for the macros. `oops-log` installs the subscriber and deliberately does not
+# wrap `info!`/`debug!`. `attributes` is off: that is `#[instrument]`, unused here, and it costs a
+# proc-macro chain for a feature nobody called.
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+
+# Parsing hostile bytes without `unsafe`. Size and alignment are validated before a
+# reference exists, which is what lets `unsafe_code = "forbid"` be true rather than hopeful.
+zerocopy = { version = "0.8", features = ["derive"] }
+
+# The import hash. Hand-rolling SHA-1 to save a dependency would be a poor trade: it is
+# small, ubiquitous, and its correctness is not something to reinvent under a deadline.
+sha1 = "0.10"
+
+# The package crypto chain. Four primitives stand between a package and a filename, and each
+# is a place where a hand-rolled version would be quietly wrong rather than loudly broken.
+#
+# `num-bigint` rather than a full RSA crate: what is needed is one modular exponentiation
+# against a modulus and exponent that are already in hand, not key parsing, generation or
+# signature verification. A crate that does all four would be a larger surface for a smaller
+# job.
+num-bigint = "0.4"
+sha2 = "0.10"
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+
+# Decoding and encoding the one image format a package carries.
+#
+# A console wants `icon0.png` as 512x512 with no alpha channel, and a caller has whatever their
+# designer exported. Rejecting the difference would push the same conversion into every project
+# that builds a package - four of them here - and each would get it slightly differently. Doing it
+# once, where the requirement is known, is the whole reason this repository exists.
+#
+# `png` rather than a full imaging crate: what is needed is decode, composite and encode, not
+# filters, formats or colour management. (D073)
+png = "0.17"
+
+# The tool's own icon, on Windows only, and a build dependency rather than a real one.
+#
+# An executable's icon is not a file format and has nothing to do with what this repository
+# knows. It is here because the alternative is worse: a `.rc` file compiled by hand in a build
+# script has to find `rc.exe` or `llvm-rc`, and get it right across the MSVC and GNU toolchains,
+# to embed one 4 KB resource. This does that and nothing else, and it disappears entirely on the
+# two platforms where an executable cannot carry an icon at all.
+winresource = "0.1"
+hmac = "0.12"
+flate2 = "1"
+
+# `param.json` is JSON, and hand-rolling a parser for four fields is exactly the kind of
+# invention principle 5 forbids - a lenient one accepts a file the console would reject.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Argument parsing for the one binary. The library crates take no dependency on it.
+clap = { version = "4", features = ["derive"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# A builder is arithmetic on offsets, and a container wrong by one byte is reported by a
+# loader as "not a container" rather than as an offset error.
+arithmetic_side_effects = "warn"
+indexing_slicing = "warn"
+unwrap_used = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"

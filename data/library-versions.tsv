@@ -1,0 +1,36 @@
+# The version a module must declare for a platform library, where it is not the default.
+# Columns: library, generation, major, minor, note
+#
+# read-from: Kyty@vendored    src/lib/Core/Libs — LIB_VERSION registration tables
+#
+# # Why this is a table and not a constant
+#
+# A loader builds its lookup key from the version **the importing module declares** and
+# matches it against the version the library was registered with. Declaring the wrong one
+# does not fail: every symbol from that library silently fails to resolve. The module loads,
+# runs, and finds none of its imports.
+#
+# The default is 1.1 and almost everything uses it. One library does not, and it is the one
+# that decides whether anything appears on screen:
+#
+#   LibGen4: LIB_VERSION("VideoOut", 1, "VideoOut", 0, 0);   // twelve functions
+#   LibGen5: LIB_VERSION("VideoOut", 1, "VideoOut", 1, 1);   // three
+#
+# The **module version is the only thing separating them** — every other split library uses a
+# different *name* per generation (`GraphicsDriver` against `Graphics5`), which needs no row
+# here. Declaring 1.1 for the previous generation therefore lands a module on the current
+# generation's set, which holds no way to present a frame: a probe set up a framebuffer, had
+# nothing to submit it with, and drew a black window for an entire run. A commercial
+# previous-generation title declares 0.0 and binds all twelve.
+#
+# # Status
+#
+# `IMPLEMENTATIONS`, from one emulator's registration tables. That is why the default stays
+# 1.1 and only the case with evidence behind it gets a row — an absent row is visible, an
+# invented one is not. (principle 5)
+#
+# The generation column is the console generation as people say it — 5 current, 4 previous —
+# rather than the ABI version byte those map to.
+#
+library	generation	major	minor	note
+libSceVideoOut	4	0	0	twelve functions at 0.0; the current generation registers three at 1.1

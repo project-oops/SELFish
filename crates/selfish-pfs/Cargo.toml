@@ -1,0 +1,17 @@
+[package]
+name = "selfish-pfs"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The filesystem inside a package"
+
+[dependencies]
+selfish-abi.workspace = true
+aes.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+flate2.workspace = true
+
+[lints]
+workspace = true

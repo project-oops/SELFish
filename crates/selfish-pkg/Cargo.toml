@@ -1,0 +1,21 @@
+[package]
+name = "selfish-pkg"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Packages: the outer container and its crypto chain"
+
+[dependencies]
+selfish-abi.workspace = true
+selfish-container.workspace = true
+selfish-pfs.workspace = true
+selfish-title.workspace = true
+hmac.workspace = true
+num-bigint.workspace = true
+sha2.workspace = true
+aes.workspace = true
+cbc.workspace = true
+
+[lints]
+workspace = true

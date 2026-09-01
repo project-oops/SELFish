@@ -1,0 +1,31 @@
+# Rust build output. The workspace normally builds with CARGO_TARGET_DIR pointed
+# elsewhere, but a plain `cargo build` puts it here.
+/target/
+
+# Real packages and modules used as an oracle. Never tracked — principle 2: material
+# confirms a structure and is not committed alongside it.
+/titles/
+
+# Decrypted material dumped for analysis. Never tracked - principle 2 applies to anything
+# recovered from a package just as much as to the package.
+*.tmp.bin
+
+# The Windows build directory, for the icon-bearing executable.
+/target-win/
+
+# Claude Code's per-person overrides. `settings.json` beside it IS shared - SELFish uses it to
+# deny reads and edits of `escalation.*` - but the `.local` one is whoever is sitting here, and
+# tracking it means their overrides arrive in everybody else's clone. SELFish had it committed
+# as a byte-identical copy of the shared file, which is the shape this prevents.
+.claude/settings.local.json
+
+# Whatever the person editing this happens to run. None of it is anybody else's business,
+# and every one of these has been committed to some repository by accident at least once.
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
