@@ -3,11 +3,11 @@
 //! # It does not compress
 //!
 //! The name says compression and the reader implements zlib, so the obvious assumption is that
-//! a writer has to compress too. It does not. `LibOrbisPkg@6434772`'s writer says so in its own class
-//! comment - it writes the header "and doesn't actually do compression or anything interesting"
-//! - and the format allows it: the block map is a list of absolute offsets, and blocks laid out
-//! end to end at a fixed stride are a valid map. A reader that finds a block already the full
-//! block size hands it back as-is.
+//! a writer has to compress too. It does not. `LibOrbisPkg@6434772`'s writer says so in its own
+//! class comment - it writes the header "and doesn't actually do compression or anything
+//! interesting" - and the format allows it: the block map is a list of absolute offsets, and
+//! blocks laid out end to end at a fixed stride are a valid map. A reader that finds a block
+//! already the full block size hands it back as-is.
 //!
 //! So this is a header, a map, and the data unchanged. That is worth stating plainly because
 //! "implement zlib compression" looked like the blocker and was not one.

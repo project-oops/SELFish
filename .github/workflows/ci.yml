@@ -46,6 +46,9 @@ jobs:
 
       - name: Siblings this build needs
         run: OOPS/bin/oops bootstrap selfish
+        env:
+          # Empty unless the org secret exists, and empty is the old behaviour.
+          OOPS_CI_TOKEN: ${{ secrets.OOPS_CI_TOKEN }}
 
       # `./bin/selfish check`, reached through the shared entry point: formatting, clippy at
       # `-D warnings`, the tests, and a doc build. `-D warnings` because the lint set here is
@@ -80,6 +83,9 @@ jobs:
           path: OOPS/selfish
       - name: Siblings this build needs
         run: OOPS/bin/oops bootstrap selfish
+        env:
+          # Empty unless the org secret exists, and empty is the old behaviour.
+          OOPS_CI_TOKEN: ${{ secrets.OOPS_CI_TOKEN }}
 
       # Both provenance checks, through the front door so `./bin/selfish provenance` is the
       # single source of truth and a person runs the same thing (principle 2).

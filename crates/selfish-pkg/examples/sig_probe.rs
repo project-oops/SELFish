@@ -1,7 +1,7 @@
 //! Confirm the header-signature recipe against a real package before relying on it.
 //!
-//! LibOrbisPkg writes, at `0x1000`, `RSA2048EncryptKey(PkgPublicKeys[3], SHA256(pkg[0..0x1000]))`
-//! - a wrap under a *public* key, the same operation this crate already uses for the key blobs.
+//! LibOrbisPkg writes, at `0x1000`, `RSA2048EncryptKey(PkgPublicKeys[3], SHA256(pkg[0..0x1000]))` -
+//! a wrap under a *public* key, the same operation this crate already uses for the key blobs.
 //! This reproduces it from a real package and compares, so "the header is signed" becomes a
 //! recipe this crate can execute rather than a wall.
 //!

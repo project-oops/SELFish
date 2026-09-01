@@ -6,8 +6,8 @@
 //!
 //! This asks a sharper question of the unknown six: **do they vary between titles?** An entry
 //! byte-identical across three unrelated packages is boilerplate, and boilerplate is a very
-//! different obstacle from a field encoding something about the title. Both are still blocked
-//! - an entry that does not vary in three samples may vary in the fourth, and copying bytes
+//! different obstacle from a field encoding something about the title. Both are still blocked -
+//! an entry that does not vary in three samples may vary in the fourth, and copying bytes
 //! out of somebody's package is derivation-from-material either way - but they are blocked to
 //! different degrees and by different things.
 //!

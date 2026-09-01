@@ -23,8 +23,8 @@
 //!
 //! **The string table is declared first.** A loader walks the tags in order and resolves a
 //! name offset the moment it meets one; four of the tags below carry a name offset. Emitted
-//! before the string table is declared, they dereference a base the loader does not have yet
-//! - a fault inside the loader, before a guest instruction runs, with nothing in its log.
+//! before the string table is declared, they dereference a base the loader does not have yet -
+//! a fault inside the loader, before a guest instruction runs, with nothing in its log.
 //!
 //! **The tables are laid out end to end.** A reference module places them adjacently, which is
 //! how the tag meanings were established in the first place: `JMPREL + PLTRELSZ == RELA`, and
