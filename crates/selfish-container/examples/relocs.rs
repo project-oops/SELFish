@@ -17,6 +17,26 @@
 //! `--sym` is for the opposite question - *this* import, where is its slot - which is what you
 //! want when deciding whether an unresolved import can be repaired by writing to it.
 
+// A diagnostic probe, held to a probe's standards rather than the library's.
+//
+// These read structures whose layout is already known, at offsets the format fixes, and print
+// what they find. Indexing, slicing and plain arithmetic over those offsets is the clearest way
+// to say what is being read - a probe that wraps every field access in a fallible conversion is
+// harder to check against a hex dump, which is the only thing it will ever be checked against.
+// Nothing here ships: a wrong offset produces a wrong line on a terminal, not a wrong file.
+//
+// The library itself keeps every one of these lints. This block is the boundary between the two.
+#![allow(
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::uninlined_format_args,
+    clippy::unreadable_literal,
+    clippy::expect_used,
+    clippy::unwrap_used
+)]
+
 fn unwrap(bytes: &[u8]) -> Vec<u8> {
     match selfish_container::Container::parse(bytes) {
         Ok(container) => container.to_elf().unwrap_or_else(|_| bytes.to_vec()),

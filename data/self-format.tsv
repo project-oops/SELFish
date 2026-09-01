@@ -166,5 +166,5 @@ entry_prop	block_size_shift	-	-	value	12	mask 0xF. Encoded as ilog2(bytes) - 12,
 entry_prop	has_digests_shift	-	-	value	16	mask 0x1
 entry_prop	has_extents_shift	-	-	value	17	mask 0x1
 entry_prop	segment_index_shift	-	-	value	20	mask 0xFFFF. The field shadPS4 reads as GetId
-generation	current_magic	0x0	4	u32	0xEEF51454	stored so little-endian writes 54 14 F5 EE on disk. THE CURRENT CONSOLE USES THIS
-generation	previous_magic	0x0	4	u32	0x1D3D154F	stored so little-endian writes 4F 15 3D 1D on disk. What every source above describes
+generation	current_magic	0x0	4	u32	0xEEF51454	stored so little-endian writes 54 14 F5 EE on disk. The source pairs this with a title's *bundled modules*, NOT its eboot: a current-generation title's eboot carries previous_magic (4F 15 3D 1D), measured on hardware (obscene 048-selfaudit, PPSA02664: gen4 eboot=1, gen5=0). So for an EBOOT this magic is wrong; it belongs to bundled real modules
+generation	previous_magic	0x0	4	u32	0x1D3D154F	stored so little-endian writes 4F 15 3D 1D on disk. What every source above describes - and what a current-generation title's EBOOT actually carries (hardware-confirmed, obscene 048-selfaudit)
