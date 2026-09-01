@@ -176,6 +176,14 @@ fn read_value(name: &str) -> Option<String> {
 ///
 /// `read_value` finds the text; this is the step that turns it into bytes. Shared because more
 /// than one key in that file is a fixed-width byte string rather than a bignum.
+// `chunks_exact(2)` rather than clippy's suggested `as_chunks::<2>().0`: `as_chunks` is stable
+// since 1.88 and this workspace declares `rust-version = "1.85"`, so taking the suggestion
+// trades one denied lint for another - `incompatible_msrv` - and quietly raises the floor.
+// Revisit if the floor moves.
+// `unknown_lints` because the lint below only exists from clippy 1.98; without it an older
+// toolchain rejects the attribute itself, which is how this first went wrong.
+#[allow(unknown_lints)]
+#[allow(clippy::chunks_exact_to_as_chunks)]
 pub(crate) fn hex_value(name: &str) -> Option<Vec<u8>> {
     let text = read_value(name)?;
     if text.is_empty() || text.len() % 2 != 0 {
