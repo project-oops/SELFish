@@ -6,6 +6,13 @@ container, packages and the filesystem inside them, and the import hash. Nothing
 
 New here? The [root README](../README.md) has the pitch. Then:
 
+
+## The words
+
+- [GLOSSARY.md](GLOSSARY.md) - NID, SELF and fSELF, PFS, packages, the generation split and
+  what the four magic bytes actually distinguish. This is the vendor half of the collection's
+  vocabulary; the standard-ELF half is the collection's glossary.
+
 ## Guide
 
 - **[reading.md](features/reading.md)** - point it at a file and find out what is there.
