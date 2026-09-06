@@ -49,65 +49,18 @@ PHDRS
      * headers are not covered by any segment, and a loader that maps only what the
      * segments describe cannot read the header table it just used. */
     text      PT_LOAD FLAGS(5);   /* read + execute; headers deliberately outside every segment */
-    /* No separate read-only segment, and this was a real bug rather than tidying.
-     *
-     * There used to be one, on the reasoning recorded above that "vendor modules have
-     * exactly text, rodata and data". The control build (D097) says otherwise: an
-     * OpenOrbis module has **two** PT_LOAD segments - read-execute and read-write - and
-     * puts its read-only data in the first. The read-only region in the middle is
-     * PT_SCE_RELRO, which is not a PT_LOAD at all.
-     *
-     * The cost was total. fpPS4 maps segments by kind, and with three it listed only two:
-     *
-     *   .CODE:0000000800000000..0000000800029000
-     *   .DATA:0000000800038000..0000000800040000
-     *
-     * The read-only segment between them is simply absent - so every `.rodata` byte was
-     * unmapped, which is where the section tables, the check tables and every string in
-     * the report live. `obs_run_all` walks `obs_sections[]` as its first act and read
-     * unmapped memory, which is the EAccessViolation immediately after `Entry:`.
-     *
-     * A minimal module survived because it is small enough to have no separate read-only
-     * segment to lose, which is why the fault looked like a problem of scale. */
     data      PT_LOAD FLAGS(6);   /* read + write */
-    dynamic   PT_DYNAMIC FLAGS(6);
-    /* The interpreter. Not loadable, so it does not count against the three-segment
-     * limit above - that limit was reached with PT_LOAD headers, and this is a pointer
-     * into one of them rather than a fourth mapping.
-     *
-     * Declared here because nothing else can declare it: an explicit PHDRS block means
-     * lld emits these segments and no others, which is why neither `create-fself` nor
-     * linking `-pie` produced this header (D098). The string itself is in the consumer's runtime. */
-    interp    PT_INTERP FLAGS(4);
-    /* Vendor segments. Declared here so lld emits them with correct offsets, rather
-     * than being grafted on afterwards. */
-    procparam 0x61000001 FLAGS(4);
-    /* Declared here but filled in afterwards. The script can give the segment a header
-     * with the right type; it cannot build a string table, a symbol table with
-     * NID-encoded names, or a hash table, so the builder appends
-     * the contents and rewrites this header's offset and size. */
     dynlibdata 0x61000000 FLAGS(4);
+    dynamic   PT_DYNAMIC FLAGS(6);
+    interp    PT_INTERP FLAGS(4);
+    procparam 0x61000001 FLAGS(4);
 }
 
 SECTIONS
 {
-    /* 16 KiB is the console's allocation granularity, not the host's 4 KiB. Segments
-     * must start on it: a loader mapping whole pages cannot place one that begins
-     * part-way into a page, and the symptom is a fault inside the loader rather than a
-     * rejection. */
-    /* An eboot needs a different address here, and gets a different script.
-     *
-     * This one is for a module something else **maps**: a homebrew loader or an emulator reads
-     * the segments and places them, so these addresses are offsets and a base is added at load
-     * time. A system loader maps at the addresses the file states and refuses this layout
-     * outright; `link/eboot.ld` is that case, and it says why. Parameterising this file was
-     * tried and is the wrong shape - the two differ in the `PHDRS` block as well as here. */
     /* Based where a system loader maps it, not at zero. See the header of this file. */
     . = 0x400000;
 
-    /* The link tables share the first segment with the code. They are read-only data
-     * in an executable segment, which is harmless, and it is what keeps the count at
-     * three. */
     /* First, and in both segments deliberately.
      *
      * `:text` puts the bytes inside a mapped segment, which PT_INTERP requires - it names
@@ -163,14 +116,6 @@ SECTIONS
     .got.plt        : { *(.got.plt) }         :data
     .bss            : { *(.bss .bss.* COMMON) } :data
 
-    /* The dynamic table is rewritten after linking, and the vendor table is larger
-     * than the standard one the linker produced: three entries per imported library,
-     * on top of the fourteen describing the tables. There is no way to tell the
-     * linker to emit entries it knows nothing about, so the space is reserved here
-     * and filled in afterwards.
-     *
-     * A table that does not fit must be caught and reported by the builder rather
-     * than written over whatever follows. This only has to be large enough. */
     /* Sized for the number of libraries, which is what actually drives it.
      *
      * Every imported library costs four tags - `DT_NEEDED`, `DT_SCE_NEEDED_MODULE`,
@@ -179,19 +124,9 @@ SECTIONS
      *
      *     16 libraries    82 tags     1,312 bytes   fits in 0x800
      *    556 libraries  2,242 tags    35,872 bytes  does not
-     *
-     * 0x20000 holds about 8,000 tags, so roughly 2,000 libraries. The padding is zeroes in
-     * the writable segment and costs nothing a module of this size will notice.
-     *
-     * A table that does not fit must be caught and reported by the builder rather than
-     * written over whatever follows, so getting this wrong is a build failure and not a
-     * mystery. */
-    .dynamic        : { *(.dynamic); . += 0x20000; } :data :dynamic
-
-    /* A placeholder so the segment exists in the header table. lld drops a PHDRS entry
-     * with no section assigned to it, and a header that is absent cannot be pointed at
-     * a table later. */
+     */
     .sce_dynlibdata : { KEEP(*(.sce_dynlibdata)) } :dynlibdata
+    .dynamic        : { *(.dynamic); . += 0x20000; } :data :dynamic
 
     /* Nothing here belongs in a loaded module, and leaving them in makes the file
      * larger and the segment layout harder to read. */

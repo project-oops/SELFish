@@ -55,9 +55,11 @@ The data is the source of truth, not the code: `data/` holds one row per field w
 provenance header naming every source, and the crates read those tables rather than carrying
 their own copy of the numbers.
 
-## Standalone works here, deliberately
+## The libraries stand alone, deliberately
 
-SELFish has no dependency outside itself. A clone of this repository alone builds and tests,
-which is not true of every project in the collection - obSCEne needs its siblings by
-relative path. A format library that could only be built as part of a set would be a poor
-thing to ask anyone to depend on.
+The library crates depend on nothing outside this repository - a format library that could
+only be built as part of a set would be a poor thing to ask anyone to depend on. `selfish-cli`
+is the exception: it takes `oops-build` and `oops-log` from `oops-libs` by relative path, so a
+clone of only this repository no longer builds the whole workspace, and needs `oops bootstrap
+selfish` first. The libraries themselves inherit none of that - see
+[BUILDING.md](../BUILDING.md), which is the full account.

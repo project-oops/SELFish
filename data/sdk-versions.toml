@@ -1,0 +1,39 @@
+# Target SDK versions for PlayStation 4 and PlayStation 5 executables.
+#
+# Allows users and callers to specify human-readable versions (e.g. "2.000.009", "ps5-native")
+# rather than opaque 32-bit packed hex numbers.
+#
+# Encoded format: 0xMMmmppbb (Major, Minor, Patch, Build).
+
+[sdks."2.000.009"]
+generation = 5
+alias = "prospero, prospero-default, ps5-native"
+ps4_sdk = "08.050.001"
+ppr_sdk = "02.000.009"
+min_firmware = "2.00"
+description = "Universal safe Prospero target (measured from retail PPSA03416)"
+
+[sdks."11.600.005"]
+generation = 5
+alias = "prospero-current, ps5-current"
+ps4_sdk = "12.590.001"
+ppr_sdk = "11.600.005"
+min_firmware = "11.60"
+description = "Modern Prospero target (FW 11.xx/12.xx)"
+
+[sdks."8.008.011"]
+generation = 4
+alias = "orbis, orbis-default, ps4-compat"
+ps4_sdk = "08.008.011"
+ppr_sdk = "00.000.000"
+min_firmware = "8.00"
+description = "Orbis baseline"
+
+[sdks."0.000.000"]
+generation = 4
+alias = "zero"
+ps4_sdk = "00.000.000"
+ppr_sdk = "00.000.000"
+min_firmware = "0.00"
+description = "Zero SDK for D244 census probing"
+

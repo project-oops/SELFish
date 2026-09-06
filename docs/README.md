@@ -18,8 +18,10 @@ New here? The [root README](../README.md) has the pitch. Then:
 - **[reading.md](features/reading.md)** - point it at a file and find out what is there.
   Containers, executables, imports, relocations, packages, and what a title says about
   itself.
-- **[writing.md](features/writing.md)** - the four steps between a compiler and something
-  the hardware will install, and how to run each one on its own.
+- **[writing.md](features/writing.md)** - the steps between a compiler and something the
+  hardware will install, each runnable on its own, with the real output of each. Four steps
+  and then a fork: a package installs through the compatibility path, a title directory is a
+  current-generation home-screen entry, and a stamped module is already a payload.
 - **[library.md](features/library.md)** - taking the crates directly, the dependency spine,
   and why the split is what keeps cryptography out of a loader.
 - **[BUILDING.md](BUILDING.md)** - `bin/selfish`, what `check` runs, why it is a script rather
@@ -28,7 +30,7 @@ New here? The [root README](../README.md) has the pitch. Then:
 ## The command
 
 The binary is `selfish`. Reading commands take a path and print; writing commands are the
-four format steps.
+four format steps, plus the `build` verbs that run the whole chain in one step.
 
 ```
 nid        hash a symbol name the way a loader does
@@ -41,11 +43,14 @@ title      what a title says about itself
 pkg        list what is inside a package
 extract    extract a package's files
 derive     re-derive what a package's entries mean, from packages you supply
+audit      check a real container against the format table, and say which rows it settles
 
 stamp      the platform identity a loader checks first
-wrap       wrap an executable in a container
+wrap       wrap an executable in a container (--sdk sets the SDK version, by alias or literal)
 image      build the filesystem image from a directory
 pack       assemble the package
+build      the whole chain in one step: build pkg, build title, or build payload
+native     deprecated alias for build title
 ```
 
 `selfish <command> --help` is the authority on flags - it is generated from the code, so it

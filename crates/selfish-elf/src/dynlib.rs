@@ -749,10 +749,15 @@ pub fn install(
     init: Option<u64>,
 ) -> Result<Installed, BuildError> {
     // Appended past everything else, aligned so the segment starts somewhere a loader is
-    // comfortable with.
+    // comfortable with: legacy unmapped vendor segments use 16-byte alignment, while
+    // current-generation mapped PT_LOAD segments require page alignment (0x4000).
+    let align = match table {
+        Table::Legacy => 16,
+        Table::Current => usize::try_from(crate::layout::ALLOCATION_GRANULARITY).unwrap_or(0x4000),
+    };
     let padding = module
         .len()
-        .next_multiple_of(16)
+        .next_multiple_of(align)
         .saturating_sub(module.len());
     module.resize(module.len().saturating_add(padding), 0);
     let segment_offset = module.len() as u64;
@@ -777,20 +782,26 @@ pub fn install(
         // Where the appended tables live in the address space, or zero when they do not.
         //
         // The two conventions differ here as much as they differ in tag numbers, and the two
-        // halves go together. Legacy: the tables sit in a `PT_SCE_DYNLIBDATA` segment that is
-        // never mapped, and every table tag holds an **offset into it**. Current: no such
-        // segment appears in any retail dump - the tables are in the image and the tags hold
-        // **virtual addresses**.
         let base = match table {
             Table::Legacy => 0,
-            Table::Current => elf
-                .program_headers()
-                .iter()
-                .filter(|header| header.p_type.get() == crate::segment::LOAD)
-                .map(|header| header.vaddr.get().saturating_add(header.memsz.get()))
-                .max()
-                .unwrap_or(0)
-                .next_multiple_of(crate::layout::ALLOCATION_GRANULARITY),
+            Table::Current => {
+                let first_load_bias = elf
+                    .program_headers()
+                    .iter()
+                    .find(|header| header.p_type.get() == crate::segment::LOAD)
+                    .map_or(0, |header| {
+                        header.offset.get().saturating_sub(header.vaddr.get())
+                    });
+                let max_va = elf
+                    .program_headers()
+                    .iter()
+                    .filter(|header| header.p_type.get() == crate::segment::LOAD)
+                    .map(|header| header.vaddr.get().saturating_add(header.memsz.get()))
+                    .max()
+                    .unwrap_or(0)
+                    .next_multiple_of(crate::layout::ALLOCATION_GRANULARITY);
+                max_va.max(segment_offset.saturating_sub(first_load_bias))
+            }
         };
         // What the module says it is, rather than what the caller believes - the export
         // decision below turns on it and the file is the only thing that cannot be out of
@@ -958,7 +969,11 @@ fn place_dynamic(
         .ok_or(BuildError::NoDynamicSegment)?;
 
     put_u32(bytes, at, crate::segment::DYNAMIC)?;
-    put_u32(bytes, at.saturating_add(4), 0x4)?; // read-only
+    put_u32(
+        bytes,
+        at.saturating_add(4),
+        if vaddr != 0 { 0x6 } else { 0x4 },
+    )?;
     put_u64(bytes, at.saturating_add(8), offset)?;
     put_u64(bytes, at.saturating_add(16), vaddr)?;
     put_u64(bytes, at.saturating_add(24), vaddr)?;
@@ -1019,7 +1034,7 @@ fn repurpose_header(
             crate::segment::SCE_DYNLIBDATA
         },
     )?;
-    put_u32(bytes, at.saturating_add(4), 0x4)?; // read-only
+    put_u32(bytes, at.saturating_add(4), if mapped { 0x6 } else { 0x4 })?;
     put_u64(bytes, at.saturating_add(8), offset)?;
     put_u64(bytes, at.saturating_add(16), vaddr)?;
     put_u64(bytes, at.saturating_add(24), vaddr)?;

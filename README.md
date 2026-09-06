@@ -5,7 +5,8 @@
 # selfish
 
 **Rust libraries and a command-line tool for the platform's own file formats** - plus the
-linker script and target runtime that go with them.
+linker scripts that go with them. The target-side runtime that used to live here now lives in
+the sibling `oops-sdk`.
 
 Site: **[project-oops.github.io/SELFish](https://project-oops.github.io/SELFish/)**
 
@@ -16,7 +17,7 @@ relocations break down, what is inside a package, what a title says about itself
 the platform identity no linker sets, the signed-executable container, the filesystem image, and
 the package around it.
 
-Between a compiler and the hardware there are four format steps. This is all four, and the readers
+Between a compiler and the hardware there are a handful of format steps. This does all of them, and the readers
 that let you check each one.
 
 Named for what it mostly produces: a container that resembles a signed executable without
@@ -38,32 +39,60 @@ is not organisational - it is what keeps cryptography out of a loader.
 | `selfish-pfs` | the filesystem inside a package |
 | `selfish-pkg` | packages. The only crate that pulls in RSA, AES and zlib |
 | `selfish-cli` | one binary over the above, so the libraries can be pointed at real files |
-| `runtime/` | the shared target runtime and SDK: `crt0.c`, `escalation.c`, `include/escalation.h`, `installer.c` |
 | `data/` | the format tables - one row per field, each with a header naming where it came from |
-| `link/module.ld` | the linker script that lays out a module |
+| `link/` | the linker scripts, one per output shape |
 
 ## Try it
 
+Reading:
+
 ```
-selfish elf      <file>   describe an executable, unwrapping a container if there is one
-selfish imports  <file>   what it imports, resolved to library and module names
-selfish reloc    <file>   census its relocation tables, and join the linkage table to the imports
-selfish sections <file>   an object's sections and its link-time symbol table
-selfish stamp    <file> --generation 4|5 [--library]
-                          the header identity a loader checks first, which no linker sets
-selfish title    <file>   what a title says about itself, from a package, a .sfo or a .json
-selfish pkg      <file>   what is inside a package
-selfish derive   <file>...  re-derive what a package's entries mean, from packages you supply
-selfish image    --root <dir> -o <file> --content-id ID
-                          build the filesystem image a package carries, from a directory
-selfish pack     (--image <file> | --dir <dir>) -o <file> --content-id ID
-                 [--title-id ID] [--title NAME] [--passcode P] [--entry ID=FILE]...
-                          assemble a package; refuses to invent what it cannot account for.
-                          --dir does the whole chain from a directory of files in one step
-selfish extract  <file> <dir>
-selfish wrap     <file> --generation 4|5
-selfish nid      <name>...
+selfish elf       <file>   describe an executable, unwrapping a container if there is one
+selfish imports   <file>   what it imports, resolved to library and module names
+selfish reloc     <file>   census its relocation tables, and join the linkage table to the imports
+selfish sections  <file>   an object's sections and its link-time symbol table
+selfish container <file>   the container's entries, segment by segment
+selfish title     <file>   what a title says about itself, from a package, a .sfo or a .json
+selfish pkg       <file>   what is inside a package
+selfish extract   <file> <dir>
+selfish audit     <file>   check a real container against the format table, and say which
+                           rows it settles - a contradiction is a finding, not a new fact
+selfish derive    <file>...  re-derive what a package's entries mean, from packages you supply
+selfish nid       <name>...
 ```
+
+Building - assemble installable packages, title directories, or payloads in one step:
+
+```
+selfish build pkg     --dir <dir> -o <file> [--content-id ID] [--title-id ID] [--title NAME]
+                          assemble an Orbis-generation installable package (.pkg), wrapping
+                          eboot.bin if raw ELF, creating param.sfo and PFS filesystem
+selfish build title   --out <dir> --title-id ID --title NAME [--content-id ID] [--root <dir>]
+                          lay out a Prospero-generation title directory (<TITLE_ID>/) with
+                          param.json, icon, keystone, and staging files
+selfish build payload <file> [-o <file>] [--generation 4|5]
+                          validate and stamp a freestanding ELF binary for an elfldr payload
+```
+
+Format diagnostics - inspect and produce each layer independently:
+
+```
+selfish stamp     <file> --generation 4|5 [--library]
+                           the header identity a loader checks first, which no linker sets.
+                           A stamped module is already a payload; the rest is optional
+selfish wrap      <file> --generation 4|5 [--sdk VERSION|ALIAS] [--privilege TIER]
+                           the signed-executable container. --generation defaults to 4,
+                           which is a measurement rather than a habit
+selfish image     --root <dir> -o <file> --content-id ID
+                           build the filesystem image a package carries, from a directory
+selfish pack      (--image <file> | --dir <dir>) -o <file> --content-id ID
+                  [--title-id ID] [--title NAME] [--passcode P] [--entry ID=FILE]...
+                           assemble a package; refuses to invent what it cannot account for.
+                           --dir does the whole chain from a directory of files in one step
+```
+
+**[docs/features/writing.md](docs/features/writing.md) runs one payload through each of
+these**, with the real output of each command, including what `pack` refuses to do and why.
 
 ## What is not here
 

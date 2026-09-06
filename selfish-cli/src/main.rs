@@ -27,8 +27,92 @@ struct Cli {
     command: Command,
 }
 
+/// Category identifier for Prospero homebrew entries.
+const PROSPERO_CATEGORY: i64 = 0x10000;
+const NATIVE_CATEGORY: i64 = PROSPERO_CATEGORY;
+
+#[derive(Subcommand)]
+enum BuildTarget {
+    /// Build an Orbis-generation installable package (.pkg).
+    Pkg {
+        /// The directory containing the title files (eboot.bin, assets).
+        #[arg(long, short)]
+        dir: PathBuf,
+        /// Where to write the .pkg file.
+        #[arg(long, short)]
+        out: PathBuf,
+        /// The content id, such as `UP0000-OBSC00001_00-0000000000000000`.
+        #[arg(long, default_value = "")]
+        content_id: String,
+        /// The title id, such as `OBSC00001`.
+        #[arg(long)]
+        title_id: Option<String>,
+        /// What the title is called on the home screen.
+        #[arg(long)]
+        title: Option<String>,
+        /// The version, as `NN.NN`.
+        #[arg(long, default_value = "01.00")]
+        version: String,
+        /// The passcode. Defaults to the fake one.
+        #[arg(long)]
+        passcode: Option<String>,
+        /// An entry this crate cannot compute, as `ID=FILE` - for example `0x200=names.bin`.
+        #[arg(long = "entry", value_name = "ID=FILE")]
+        entries: Vec<String>,
+    },
+    /// Build a Prospero-generation title directory (`<TITLE_ID>/`) with `param.json`.
+    Title {
+        /// Where to write the title directory. A `<TITLE_ID>` folder is created inside it.
+        #[arg(long, short)]
+        out: PathBuf,
+        /// The title id, such as `OBSC00001`.
+        #[arg(long)]
+        title_id: String,
+        /// What the title is called on the home screen.
+        #[arg(long)]
+        title: String,
+        /// Optional content ID (such as `UP0000-PPSA01650_00-YOUTUBE000000000`).
+        #[arg(long)]
+        content_id: Option<String>,
+        /// Content version string (such as `01.00`).
+        #[arg(long)]
+        version: Option<String>,
+        /// What launching the icon should open (e.g. local payload server).
+        #[arg(long)]
+        deeplink: Option<String>,
+        /// Path to an icon. One is generated if not given.
+        #[arg(long)]
+        icon: Option<PathBuf>,
+        /// Source directory carrying application files (copied verbatim).
+        #[arg(long, short)]
+        root: Option<PathBuf>,
+        /// The category a title declares.
+        #[arg(long, default_value_t = PROSPERO_CATEGORY)]
+        category: i64,
+        /// Privilege tier: app, sysmodule, system, or root.
+        #[arg(long, default_value = "app")]
+        privilege: String,
+    },
+    /// Validate and stamp a freestanding ELF payload for elfldr.
+    Payload {
+        /// The input ELF binary.
+        input: PathBuf,
+        /// Where to write the stamped payload ELF.
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+        /// Target generation (4 = Orbis, 5 = Prospero). Defaults to 5.
+        #[arg(long, default_value_t = 5)]
+        generation: u8,
+    },
+}
+
 #[derive(Subcommand)]
 enum Command {
+    /// Build installable packages, title directories, or homebrew payloads in one step.
+    Build {
+        #[command(subcommand)]
+        target: BuildTarget,
+    },
     /// Hash a symbol name the way a loader does.
     Nid {
         /// The symbol names.
@@ -92,6 +176,15 @@ enum Command {
         /// generation's magic - thirty-three of them, including a working homebrew store.
         #[arg(long, default_value_t = 4)]
         generation: u8,
+        /// Privilege tier: app, sysmodule, system, or root.
+        #[arg(long, default_value = "app")]
+        privilege: String,
+        /// Target SDK version or alias (e.g. "2.000.009", "ps5-native", "ps4-compat").
+        #[arg(long)]
+        sdk: Option<String>,
+        /// Path to custom sdk-versions.toml file.
+        #[arg(long)]
+        sdk_table: Option<PathBuf>,
     },
     /// Show what a title says about itself.
     ///
@@ -118,23 +211,8 @@ enum Command {
         /// The container, or a dump of its header region.
         file: PathBuf,
     },
-    /// Lay out a **native title directory**, the current generation's own title format.
-    ///
-    /// # This is not a package, and it is not an executable title
-    ///
-    /// A package installs through the previous generation's compatibility path, which is why
-    /// homebrew shipped that way is badged as the older hardware. The native path is a
-    /// directory under `/user/app/<TITLE_ID>/` described by `param.json`, registered by
-    /// `sceAppInstUtilAppInstallTitleDir` - and *that* is what produces a current-generation
-    /// entry on the home screen.
-    ///
-    /// **It does not make a title that runs native code.** That would need a signed
-    /// `eboot.bin`, and no fake-signing keyset exists for this generation the way one does for
-    /// the previous. What this produces is a home-screen entry; the code behind it runs as a
-    /// payload, which is already outside the compatibility sandbox.
-    ///
-    /// Installing it needs kernel privileges, so a payload does the copying - this only lays
-    /// out the bytes.
+    /// (Deprecated: use 'selfish build title') Lay out a Prospero-generation title directory.
+    #[command(hide = true)]
     Native {
         /// Where to write the title directory. A `<TITLE_ID>` folder is created inside it.
         #[arg(long, short)]
@@ -163,6 +241,9 @@ enum Command {
         /// The category a title declares. Defaults to what a native homebrew entry uses.
         #[arg(long, default_value_t = NATIVE_CATEGORY)]
         category: i64,
+        /// Privilege tier: app, sysmodule, system, or root.
+        #[arg(long, default_value = "app")]
+        privilege: String,
     },
     /// Build a filesystem image from a directory of files.
     ///
@@ -278,6 +359,7 @@ macro_rules! say {
 
 mod icon;
 
+#[allow(clippy::too_many_lines)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Held for the whole of `main`: the guard keeps the writers alive, and `let _` would drop
     // it here.
@@ -285,6 +367,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build(oops_build::line!())
         .init();
     match Cli::parse().command {
+        Command::Build { target } => match target {
+            BuildTarget::Pkg {
+                dir,
+                out,
+                content_id,
+                title_id,
+                title,
+                version,
+                passcode,
+                entries,
+            } => build_pkg(
+                &dir,
+                &out,
+                &content_id,
+                title_id.as_deref(),
+                title.as_deref(),
+                &version,
+                passcode.as_deref(),
+                &entries,
+            ),
+            BuildTarget::Title {
+                out,
+                title_id,
+                title: title_name,
+                content_id,
+                version,
+                deeplink,
+                icon,
+                root,
+                category,
+                privilege,
+            } => {
+                let priv_tier: selfish_container::Privilege =
+                    privilege.parse().map_err(|e: &str| e.to_owned())?;
+                build_title(
+                    &out,
+                    &title_id,
+                    &title_name,
+                    content_id.as_deref(),
+                    version.as_deref(),
+                    deeplink.as_deref(),
+                    icon.as_deref(),
+                    root.as_deref(),
+                    category,
+                    priv_tier,
+                )
+            }
+            BuildTarget::Payload {
+                input,
+                out,
+                generation,
+            } => build_payload(&input, out.as_deref(), generation),
+        },
         Command::Nid { names } => nid(&names),
         Command::Elf { file } => elf(&file),
         Command::Imports { file, all } => imports(&file, all),
@@ -300,7 +435,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             file,
             out,
             generation,
-        } => wrap(&file, out.as_deref(), generation),
+            privilege,
+            sdk,
+            sdk_table,
+        } => {
+            let priv_tier: selfish_container::Privilege =
+                privilege.parse().map_err(|e: &str| e.to_owned())?;
+            wrap(
+                &file,
+                out.as_deref(),
+                generation,
+                priv_tier,
+                sdk.as_deref(),
+                sdk_table.as_deref(),
+            )
+        }
         Command::Title { file, round_trip } => title(&file, round_trip),
         Command::Audit { file } => audit_cmd(&file),
         Command::Native {
@@ -313,17 +462,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             icon,
             root,
             category,
-        } => native(
-            &out,
-            &title_id,
-            &title,
-            content_id.as_deref(),
-            version.as_deref(),
-            deeplink.as_deref(),
-            icon.as_deref(),
-            root.as_deref(),
-            category,
-        ),
+            privilege,
+        } => {
+            eprintln!("warning: 'selfish native' is deprecated; use 'selfish build title' instead");
+            let priv_tier: selfish_container::Privilege =
+                privilege.parse().map_err(|e: &str| e.to_owned())?;
+            build_title(
+                &out,
+                &title_id,
+                &title,
+                content_id.as_deref(),
+                version.as_deref(),
+                deeplink.as_deref(),
+                icon.as_deref(),
+                root.as_deref(),
+                category,
+                priv_tier,
+            )
+        }
         Command::Image {
             root,
             out,
@@ -780,21 +936,160 @@ fn audit_cmd(file: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// The category a native homebrew entry declares.
-///
-/// `0x10000`. Measured from a shipping native homebrew entry rather than chosen - the value a
-/// package carries is a different number in a different field, and the two are not related.
-const NATIVE_CATEGORY: i64 = 0x10000;
-
 /// The language a title falls back to when it declares only one.
 const DEFAULT_LANGUAGE: &str = "en-US";
 
-/// Lay out a native title directory.
+/// Ensure an eboot.bin in the target directory is stamped and wrapped in a SELF container.
+fn ensure_wrapped_eboot(
+    dir: &Path,
+    generation: Generation,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let eboot_bin = dir.join("eboot.bin");
+    let candidate = if eboot_bin.exists() {
+        eboot_bin.clone()
+    } else {
+        let eboot_elf = dir.join("eboot.elf");
+        if eboot_elf.exists() {
+            eboot_elf
+        } else {
+            let mut found = None;
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().is_some_and(|ext| ext == "elf") {
+                        found = Some(path);
+                        break;
+                    }
+                }
+            }
+            match found {
+                Some(f) => f,
+                None => return Ok(eboot_bin),
+            }
+        }
+    };
+
+    let bytes = std::fs::read(&candidate)?;
+    if selfish_container::Container::parse(&bytes).is_ok() {
+        say!("eboot.bin: already a SELF container");
+        if candidate != eboot_bin {
+            std::fs::copy(&candidate, &eboot_bin)?;
+        }
+        return Ok(eboot_bin);
+    }
+
+    // It's a raw ELF: stamp it first, then wrap into a SELF container
+    let mut elf_bytes = bytes;
+    let kind = selfish_elf::ObjectType::Executable;
+    let _ = selfish_elf::identity::stamp(&mut elf_bytes, kind, generation);
+    let target_sdk = selfish_container::TargetSdk::default_for(generation);
+    let container = selfish_container::build_with_options(
+        &elf_bytes,
+        generation,
+        selfish_container::Privilege::App,
+        Some(target_sdk),
+    )?;
+    std::fs::write(&eboot_bin, &container)?;
+    say!(
+        "eboot.bin: stamped and wrapped into {} byte {generation} container",
+        container.len()
+    );
+    Ok(eboot_bin)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_pkg(
+    dir: &Path,
+    out: &Path,
+    content_id: &str,
+    title_id: Option<&str>,
+    title: Option<&str>,
+    version: &str,
+    passcode: Option<&str>,
+    entries: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
+    say!("building Orbis package from {}", dir.display());
+    let _ = ensure_wrapped_eboot(dir, Generation::Previous);
+    pack(
+        None,
+        Some(dir),
+        passcode,
+        out,
+        content_id,
+        entries,
+        title_id,
+        title,
+        version,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_title(
+    out: &Path,
+    title_id: &str,
+    title_name: &str,
+    content_id: Option<&str>,
+    version: Option<&str>,
+    deeplink: Option<&str>,
+    icon: Option<&Path>,
+    root: Option<&Path>,
+    category: i64,
+    privilege: selfish_container::Privilege,
+) -> Result<(), Box<dyn std::error::Error>> {
+    say!("building Prospero title directory in {}", out.display());
+    if let Some(src_dir) = root {
+        let _ = ensure_wrapped_eboot(src_dir, Generation::Current);
+    }
+    title_dir(
+        out, title_id, title_name, content_id, version, deeplink, icon, root, category, privilege,
+    )
+}
+
+fn build_payload(
+    input: &Path,
+    out: Option<&Path>,
+    generation: u8,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let target_gen = match generation {
+        5 => Generation::Current,
+        4 => Generation::Previous,
+        other => return Err(format!("generation {other} is neither 4 nor 5").into()),
+    };
+
+    let target = out.unwrap_or(input);
+    let mut bytes = std::fs::read(input)?;
+    let elf = selfish_elf::Elf::parse(&bytes)?;
+    say!(
+        "validating payload ELF: {} program header(s), entry {:#x}",
+        elf.program_headers().len(),
+        elf.entry()
+    );
+
+    let kind = selfish_elf::ObjectType::Executable;
+    let changes = selfish_elf::identity::stamp(&mut bytes, kind, target_gen)?;
+    if changes.is_empty() {
+        say!("payload already stamped for {target_gen}");
+    } else {
+        for change in &changes {
+            say!(
+                "  {:<14} {:#x} -> {:#x}",
+                change.field,
+                change.from,
+                change.to
+            );
+        }
+    }
+    std::fs::write(target, &bytes)?;
+    say!("payload ready: written to {}", target.display());
+    Ok(())
+}
+
+/// Lay out a Prospero title directory.
 #[allow(
     clippy::too_many_arguments,
     reason = "a command-line command takes what the command line offers"
 )]
-fn native(
+fn title_dir(
     out: &Path,
     title_id: &str,
     title: &str,
@@ -804,6 +1099,7 @@ fn native(
     icon: Option<&Path>,
     root: Option<&Path>,
     category: i64,
+    privilege: selfish_container::Privilege,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let base = out.join(title_id);
     let sce_sys = base.join("sce_sys");
@@ -817,7 +1113,12 @@ fn native(
     }
 
     let mut param = selfish_title::Param::new();
-    param.set_native_ps5(
+    let category = match privilege {
+        selfish_container::Privilege::System => 0x20000,
+        _ => category,
+    };
+    say!("privilege: {privilege:?}");
+    param.set_prospero(
         title_id,
         title,
         DEFAULT_LANGUAGE,
@@ -847,6 +1148,38 @@ fn native(
     } else {
         std::fs::write(&icon_path, icon::default_icon()?)?;
         say!("{} (generated)", icon_path.display());
+    }
+
+    let keystone_path = sce_sys.join("keystone");
+    if !keystone_path.exists() {
+        let keystone = selfish_pkg::keystone::create(selfish_pkg::keys::FAKE_PASSCODE)?;
+        std::fs::write(&keystone_path, keystone)?;
+        say!("{} (generated)", keystone_path.display());
+    }
+
+    let pfs_ver_path = sce_sys.join("pfs-version.dat");
+    if !pfs_ver_path.exists() {
+        std::fs::write(&pfs_ver_path, b"01.004.000")?;
+        say!("{} (generated)", pfs_ver_path.display());
+    }
+
+    let nptitle_path = sce_sys.join("nptitle.dat");
+    if !nptitle_path.exists() {
+        let mut nptd = vec![0_u8; 160];
+        if let Some(prefix) = nptd.get_mut(..4) {
+            prefix.copy_from_slice(b"NPTD");
+        }
+        if let Some(flag) = nptd.get_mut(7) {
+            *flag = 0x80;
+        }
+        let np_id = format!("{title_id}_00");
+        let len = np_id.len().min(16);
+        let end = 16usize.saturating_add(len);
+        if let (Some(dst), Some(src)) = (nptd.get_mut(16..end), np_id.as_bytes().get(..len)) {
+            dst.copy_from_slice(src);
+        }
+        std::fs::write(&nptitle_path, nptd)?;
+        say!("{} (generated)", nptitle_path.display());
     }
 
     say!("");
@@ -1308,18 +1641,35 @@ fn container(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn wrap(path: &Path, out: Option<&Path>, generation: u8) -> Result<(), Box<dyn std::error::Error>> {
+fn wrap(
+    path: &Path,
+    out: Option<&Path>,
+    generation: u8,
+    privilege: selfish_container::Privilege,
+    sdk_str: Option<&str>,
+    sdk_table: Option<&Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let generation = Generation::from_number(generation)
         .ok_or("generation must be 4 or 5; anything else is a typo rather than a generation")?;
     let payload = std::fs::read(path)?;
-    let container = selfish_container::build(&payload, generation)?;
+    let dict = selfish_container::SdkDictionary::load_or_embedded(sdk_table);
+    let target_sdk = match sdk_str {
+        Some(s) => dict
+            .resolve(s, generation)
+            .map_err(Box::<dyn std::error::Error>::from)?,
+        None => selfish_container::TargetSdk::default_for(generation),
+    };
+    let container =
+        selfish_container::build_with_options(&payload, generation, privilege, Some(target_sdk))?;
     let target = out.map_or_else(|| path.with_file_name("eboot.bin"), PathBuf::from);
     std::fs::write(&target, &container)?;
     say!(
-        "{}: {} bytes from a {} byte payload, {generation}",
+        "{}: {} bytes from a {} byte payload, {generation} (privilege: {privilege:?}, sdk: 0x{:08x}/0x{:08x})",
         target.display(),
         container.len(),
-        payload.len()
+        payload.len(),
+        target_sdk.ps4_sdk,
+        target_sdk.ppr_sdk,
     );
     Ok(())
 }

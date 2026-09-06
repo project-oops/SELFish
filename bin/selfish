@@ -47,6 +47,8 @@
 # sits between a command and its exit code.** Where filtered output is wanted, the command runs
 # into a file and the file is filtered afterwards.
 set -e
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+export PATH="$HOME/.cargo/bin:$PATH"
 
 cd "$(dirname "$0")/.."
 

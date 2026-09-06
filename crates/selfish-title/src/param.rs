@@ -247,8 +247,8 @@ impl Param {
         }
     }
 
-    /// Configure a full native PS5 title descriptor.
-    pub fn set_native_ps5(
+    /// Configure a full Prospero-generation title descriptor.
+    pub fn set_prospero(
         &mut self,
         title_id: &str,
         title_name: &str,
@@ -264,6 +264,21 @@ impl Param {
         if let Some(link) = deeplink {
             self.set_deeplink_uri(link);
         }
+    }
+
+    /// Backward-compatible alias for [`Self::set_prospero`].
+    pub fn set_native_ps5(
+        &mut self,
+        title_id: &str,
+        title_name: &str,
+        language: &str,
+        category: i64,
+        content_id: Option<&str>,
+        deeplink: Option<&str>,
+    ) {
+        self.set_prospero(
+            title_id, title_name, language, category, content_id, deeplink,
+        );
     }
 
     fn localized(&self) -> Option<&Map<String, Value>> {

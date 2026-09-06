@@ -70,6 +70,11 @@ PHDRS
      * A minimal module survived because it is small enough to have no separate read-only
      * segment to lose, which is why the fault looked like a problem of scale. */
     data      PT_LOAD FLAGS(6);   /* read + write */
+    /* Declared here but filled in afterwards. The script can give the segment a header
+     * with the right type; it cannot build a string table, a symbol table with
+     * NID-encoded names, or a hash table, so the builder appends
+     * the contents and rewrites this header's offset and size. */
+    dynlibdata 0x61000000 FLAGS(4);
     dynamic   PT_DYNAMIC FLAGS(6);
     /* The interpreter. Not loadable, so it does not count against the three-segment
      * limit above - that limit was reached with PT_LOAD headers, and this is a pointer
@@ -82,11 +87,6 @@ PHDRS
     /* Vendor segments. Declared here so lld emits them with correct offsets, rather
      * than being grafted on afterwards. */
     procparam 0x61000001 FLAGS(4);
-    /* Declared here but filled in afterwards. The script can give the segment a header
-     * with the right type; it cannot build a string table, a symbol table with
-     * NID-encoded names, or a hash table, so the builder appends
-     * the contents and rewrites this header's offset and size. */
-    dynlibdata 0x61000000 FLAGS(4);
 }
 
 SECTIONS

@@ -32,10 +32,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod sdk;
 pub mod table;
 
 use core::fmt;
 
+pub use sdk::{SdkDictionary, SdkEntry, TargetSdk, patch_elf_procparam};
 use selfish_abi::Generation;
 use selfish_elf::{Elf, ElfError};
 
@@ -566,6 +568,51 @@ fn read_at(bytes: &[u8], offset: usize, size: usize) -> Option<u64> {
     Some(value)
 }
 
+/// The privilege tier for an executable container.
+///
+/// Dictates the `paid` (Program Authentication ID) stamped into `self_ex_info`:
+/// - `App`: Standard title sandbox (`0x3800000000000000` or format default).
+/// - `Sysmodule`: Title sandbox with dynamic sysmodule access.
+/// - `System`: Extended system application (`0x3800000000000001`).
+/// - `Root`: Root / kernel superuser access (`0x8000000000000001`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Privilege {
+    /// Standard title sandbox (Tier 1).
+    #[default]
+    App,
+    /// Title sandbox with dynamic sysmodule access (Tier 2).
+    Sysmodule,
+    /// Extended system application (Tier 3, `/system_ex` access).
+    System,
+    /// Root / kernel superuser access (Tier 4, `/system/priv` access).
+    Root,
+}
+
+impl Privilege {
+    /// Compute the Program Authentication ID (`paid`) for this privilege tier.
+    #[must_use]
+    pub const fn paid(self, default_paid: u64) -> u64 {
+        match self {
+            Self::App | Self::Sysmodule => default_paid,
+            Self::System => 0x3800_0000_0000_0001,
+            Self::Root => 0x8000_0000_0000_0001,
+        }
+    }
+}
+
+impl core::str::FromStr for Privilege {
+    type Err = &'static str;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "app" | "game" | "unprivileged" => Ok(Self::App),
+            "sysmodule" => Ok(Self::Sysmodule),
+            "system" | "sys" => Ok(Self::System),
+            "root" | "admin" | "kernel" => Ok(Self::Root),
+            _ => Err("unknown privilege tier: expected app, sysmodule, system, or root"),
+        }
+    }
+}
+
 /// Wrap an executable in a fake container for a given generation.
 ///
 /// # Errors
@@ -573,8 +620,50 @@ fn read_at(bytes: &[u8], offset: usize, size: usize) -> Option<u64> {
 /// If the payload is not a usable executable, no segment qualifies as an entry, a size
 /// computation overflows, or the format table is missing a constant.
 pub fn build(payload: &[u8], generation: Generation) -> Result<Vec<u8>, ContainerError> {
-    let constants = Constants::load()?;
-    let elf = Elf::parse(payload)?;
+    build_with_options(payload, generation, Privilege::App, None)
+}
+
+/// Wrap an executable in a fake container with explicit privilege tier.
+///
+/// # Errors
+///
+/// If the payload is not a usable executable, no segment qualifies as an entry, a size
+/// computation overflows, or the format table is missing a constant.
+pub fn build_with_privilege(
+    payload: &[u8],
+    generation: Generation,
+    privilege: Privilege,
+) -> Result<Vec<u8>, ContainerError> {
+    build_with_options(payload, generation, privilege, None)
+}
+
+/// Wrap an executable in a fake container with explicit privilege tier and target SDK version.
+///
+/// When an SDK target is provided, any `PT_SCE_PROCPARAM` segment in the ELF is stamped
+/// with the validated PS4 and PPR SDK versions.
+///
+/// # Errors
+///
+/// If the payload is not a usable executable, no segment qualifies as an entry, a size
+/// computation overflows, or the format table is missing a constant.
+pub fn build_with_options(
+    payload: &[u8],
+    generation: Generation,
+    privilege: Privilege,
+    sdk: Option<TargetSdk>,
+) -> Result<Vec<u8>, ContainerError> {
+    let mut payload_buf;
+    let payload_ref = if let Some(target_sdk) = sdk {
+        payload_buf = payload.to_vec();
+        patch_elf_procparam(&mut payload_buf, target_sdk);
+        &payload_buf[..]
+    } else {
+        payload
+    };
+
+    let mut constants = Constants::load()?;
+    constants.paid = privilege.paid(constants.paid);
+    let elf = Elf::parse(payload_ref)?;
     let types = entry_segment_types();
 
     let chosen: Vec<_> = elf
@@ -624,7 +713,7 @@ pub fn build(payload: &[u8], generation: Generation) -> Result<Vec<u8>, Containe
         out.u64(entry.memsz);
     }
     let span = usize::try_from(ehdr_span).map_err(|_| ContainerError::Arithmetic("header span"))?;
-    out.raw(payload.get(..span).ok_or(ContainerError::Arithmetic(
+    out.raw(payload_ref.get(..span).ok_or(ContainerError::Arithmetic(
         "payload shorter than its headers",
     ))?);
     out.pad_to(prefix_end(&constants, entry_count, ehdr_span)?);
@@ -632,7 +721,7 @@ pub fn build(payload: &[u8], generation: Generation) -> Result<Vec<u8>, Containe
     write_npdrm(&mut out, &constants);
     out.pad_to(usize::try_from(header_size).map_err(|_| ContainerError::Arithmetic("header"))?);
     write_metadata(&mut out, &constants, entry_count)?;
-    write_payloads(&mut out, payload, &chosen, &entries)?;
+    write_payloads(&mut out, payload_ref, &chosen, &entries)?;
     out.pad_to(usize::try_from(total).map_err(|_| ContainerError::Arithmetic("total"))?);
     Ok(out.bytes)
 }

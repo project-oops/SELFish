@@ -72,23 +72,9 @@ PHDRS
      * A minimal module survived because it is small enough to have no separate read-only
      * segment to lose, which is why the fault looked like a problem of scale. */
     data      PT_LOAD FLAGS(6);   /* read + write */
-    dynamic   PT_DYNAMIC FLAGS(6);
-    /* **No `PT_INTERP` and no process parameters**, unlike the two executable scripts.
-     *
-     * A library is loaded by an executable that already has both. It has neither an
-     * interpreter of its own nor a process to parametrise, and a real bundled library carries
-     * neither header - where it does carry one the other two do not, `PT_SCE_MODULE_PARAM`
-     * (`0x61000002`), which describes the module rather than the process.
-     *
-     * Left in, they appear as headers of size zero: an interpreter whose path is the empty
-     * string, and process parameters that are not there. Declaring a structure and then
-     * declaring it empty is worse than not declaring it, which is the same argument the
-     * process-parameter block itself lost in obSCEne D219. (D078) */
-    /* Declared here but filled in afterwards. The script can give the segment a header
-     * with the right type; it cannot build a string table, a symbol table with
-     * NID-encoded names, or a hash table, so the builder appends
-     * the contents and rewrites this header's offset and size. */
+    modparam  0x61000002 FLAGS(4);
     dynlibdata 0x61000000 FLAGS(4);
+    dynamic   PT_DYNAMIC FLAGS(6);
 }
 
 SECTIONS
@@ -119,35 +105,15 @@ SECTIONS
      * offset past the headers. (D078) */
     . = 0;
 
-    /* The link tables share the first segment with the code. They are read-only data
-     * in an executable segment, which is harmless, and it is what keeps the count at
-     * three. */
-    /* No interpreter section: the PHDRS block above declares no PT_INTERP for a library,
-     * and a section with no segment to sit in is a section lld places nowhere useful. */
-
-    .hash           : { *(.hash) }            :text
-    .gnu.hash       : { *(.gnu.hash) }        :text
-    .dynsym         : { *(.dynsym) }          :text
-    .dynstr         : { *(.dynstr) }          :text
-    .rela.dyn       : { *(.rela.dyn) }        :text
-    .rela.plt       : { *(.rela.plt) }        :text
-
-    . = ALIGN(0x4000);
     .text           : { *(.text .text.*) }    :text
     .plt            : { *(.plt .plt.*) }      :text
 
     . = ALIGN(0x4000);
-    /* In the executable segment, with the code and the link tables.
-     *
-     * Read-only data in an executable mapping is harmless - the tables above are already
-     * there for the same reason - and it is what the control build does. What is not
-     * harmless is a third PT_LOAD, which one loader silently declines to map at all. */
-    .rodata         : { *(.rodata .rodata.*) } :text
-
-    . = ALIGN(0x4000);
-    /* The process-parameter structure. the consumer's runtime defines it and this places it in its own
-     * segment, which is the only way a loader finds it. */
-
+    .sce_module_param : {
+        *(.data.sce_module_param)
+        *(.data.sce_module_param.*)
+    } :modparam :data
+    .rodata         : { *(.rodata .rodata.*) } :data
     .data           : { *(.data .data.*) }    :data
     /* Two sections, not one.
      *
@@ -194,9 +160,12 @@ SECTIONS
      * mystery. */
     .dynamic        : { *(.dynamic); . += 0x20000; } :data :dynamic
 
-    /* A placeholder so the segment exists in the header table. lld drops a PHDRS entry
-     * with no section assigned to it, and a header that is absent cannot be pointed at
-     * a table later. */
+    .hash           : { *(.hash) }            :data
+    .gnu.hash       : { *(.gnu.hash) }        :data
+    .dynsym         : { *(.dynsym) }          :data
+    .dynstr         : { *(.dynstr) }          :data
+    .rela.dyn       : { *(.rela.dyn) }        :data
+    .rela.plt       : { *(.rela.plt) }        :data
     .sce_dynlibdata : { KEEP(*(.sce_dynlibdata)) } :dynlibdata
 
     /* Nothing here belongs in a loaded module, and leaving them in makes the file
