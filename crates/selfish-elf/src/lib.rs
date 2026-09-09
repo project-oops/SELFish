@@ -415,7 +415,11 @@ impl<'a> Elf<'a> {
         };
         let bytes = self
             .segment_bytes(phdr)
-            .ok_or(ElfError::ProgramHeadersOutOfBounds)?;
+            .ok_or_else(|| ElfError::SegmentNotInFile {
+                p_type: phdr.p_type.get(),
+                offset: phdr.offset.get(),
+                size: phdr.filesz.get(),
+            })?;
         let mut out = Vec::new();
         let mut at = 0_usize;
         while let Some(entry) = bytes.get(at..at.saturating_add(16)) {
@@ -457,6 +461,20 @@ impl<'a> Elf<'a> {
     ///
     /// The returned [`dynamic::Info`] has its table offsets rebased, so everything in
     /// [`dynamic`] reads either convention without knowing which it was handed.
+    ///
+    /// # The unit, stated plainly, because two readers already disagreed about it
+    ///
+    /// The offsets in the returned `Info` are **relative to the returned byte slice**, not
+    /// virtual addresses. `strtab` `0x18` means eighteen bytes into the `&[u8]` handed back
+    /// beside it. Under the current convention the tags hold virtual addresses, so this
+    /// subtracts the holding segment's `vaddr` on the way out; under the legacy convention they
+    /// are already offsets and nothing moves.
+    ///
+    /// That is the whole of a disagreement worth recording. A differential against orbistoun's
+    /// reader over 29 modules found every table address on one eboot differing by exactly
+    /// `0x6bc000` - not a parse difference but a units difference: their reader answers in
+    /// virtual addresses, this one in offsets into the slice it returns. Both are right, and
+    /// neither said so. Add the holding segment's `vaddr` to compare. (D095)
     ///
     /// # How far the current-convention path has been checked
     ///
@@ -571,6 +589,26 @@ pub enum ElfError {
     NotLittleEndian,
     /// A program header entry is not the size the format defines.
     UnexpectedProgramHeaderSize(usize),
+    /// A segment's **contents** are not inside these bytes, though its header is.
+    ///
+    /// Distinct from [`Self::ProgramHeadersOutOfBounds`], which is about the header *table*.
+    /// Reusing that one for this cost a second reader a wrong diagnosis: the message says the
+    /// program header table runs past the end, the table was fine, and the real condition was
+    /// that a segment's payload lives somewhere this slice does not reach.
+    ///
+    /// **That is normal, not a malformed file.** The executable inside a signed container is a
+    /// *view*: `ehdr` and the program headers, with every segment's bytes held in the
+    /// container's own entry list. Handed that view on its own, this crate cannot read through
+    /// a segment and says so. Read it through [`crate`]'s container instead of extracting the
+    /// inner ELF first. (D095)
+    SegmentNotInFile {
+        /// The segment's `p_type`.
+        p_type: u32,
+        /// Where its contents claim to start.
+        offset: u64,
+        /// How many bytes they claim to occupy.
+        size: u64,
+    },
     /// The program header table runs past the end of the file.
     ProgramHeadersOutOfBounds,
     /// `e_type` is neither what a linker produces nor one of the two the platform accepts.
@@ -605,6 +643,16 @@ impl fmt::Display for ElfError {
                     "a program header is {PROGRAM_HEADER_SIZE} bytes, this says {n}"
                 )
             }
+            Self::SegmentNotInFile {
+                p_type,
+                offset,
+                size,
+            } => write!(
+                f,
+                "the {p_type:#x} segment's contents ({size} bytes at {offset:#x}) are not in \
+                 these bytes - an executable taken out of a container is a view, and its \
+                 segment payloads stay behind in the container"
+            ),
             Self::ProgramHeadersOutOfBounds => {
                 write!(f, "the program header table runs past the end of the file")
             }
@@ -739,5 +787,46 @@ mod tests {
         let elf = Elf::parse(&bytes).expect("parses");
         // 64-byte header plus one 56-byte entry at offset 64.
         assert_eq!(elf.header_span(), 120);
+    }
+
+    #[test]
+    fn a_segment_whose_contents_are_elsewhere_says_so_rather_than_blaming_the_header_table() {
+        // The executable inside a signed container is a view: ehdr and program headers, with
+        // every segment's bytes held in the container's entry list. Handed that view alone,
+        // `dynamic_entries` cannot read through `PT_DYNAMIC` - and it used to report
+        // `ProgramHeadersOutOfBounds`, whose message says the header *table* runs past the end
+        // of the file. The table was fine. A differential reader took that at face value and
+        // reported 22 of 29 modules as a header-table disagreement. (D095)
+        let mut bytes = sample(ObjectType::EXECUTABLE, 1);
+        // Point the one segment's contents past the end while leaving its header in place.
+        let phoff = usize::try_from(u64::from_le_bytes(
+            bytes[32..40].try_into().expect("eight bytes"),
+        ))
+        .expect("fits");
+        bytes[phoff + 8..phoff + 16].copy_from_slice(&0x0010_0000_u64.to_le_bytes());
+        bytes[phoff..phoff + 4].copy_from_slice(&segment::DYNAMIC.to_le_bytes());
+
+        let elf = Elf::parse(&bytes).expect("the header table itself is intact");
+        assert_eq!(elf.program_headers().len(), 1, "and it parsed");
+
+        match elf.dynamic_entries().unwrap_err() {
+            ElfError::SegmentNotInFile { p_type, offset, .. } => {
+                assert_eq!(p_type, segment::DYNAMIC);
+                assert_eq!(offset, 0x0010_0000);
+            }
+            other => panic!("expected the segment to be blamed, not the table: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_two_out_of_bounds_conditions_do_not_share_an_error() {
+        // The header table past the end is still its own answer, and still reported as such -
+        // the fix was to stop *one* condition wearing the other's name, not to soften either.
+        let mut bytes = sample(ObjectType::EXECUTABLE, 2);
+        bytes[56..58].copy_from_slice(&40_u16.to_le_bytes());
+        assert_eq!(
+            Elf::parse(&bytes).unwrap_err(),
+            ElfError::ProgramHeadersOutOfBounds
+        );
     }
 }

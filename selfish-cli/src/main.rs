@@ -359,8 +359,22 @@ macro_rules! say {
 
 mod icon;
 
+/// Print the error, not its `Debug`, and exit non-zero.
+///
+/// Returning `Result` from `main` makes Rust print `Error: {:?}`, so every `Display` in these
+/// crates - the ones that say what a reader should do about a failure - was written for nobody.
+/// `SegmentNotInFile` is the case that made it obvious: its `Debug` is three numbers, and its
+/// `Display` explains that an executable taken out of a container is a view. (D095)
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("selfish: {error}");
+        std::process::exit(1);
+    }
+}
+
+/// Dispatch, which is one arm per subcommand and long for that reason alone.
 #[allow(clippy::too_many_lines)]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Held for the whole of `main`: the guard keeps the writers alive, and `let _` would drop
     // it here.
     let _logging = oops_log::Logging::new("selfish")
