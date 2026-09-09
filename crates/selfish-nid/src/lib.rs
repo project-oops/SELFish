@@ -5,7 +5,8 @@
 //! reads or writes one of these formats needs it.
 //!
 //! ```text
-//! NID = first 8 bytes of SHA-1(name || suffix), read little-endian
+//! NID = first 8 bytes of SHA-1(name || suffix), packed so `digest[0]` is the LEAST
+//!       significant byte of the `u64`
 //! ```
 //!
 //! then encoded as eleven characters of a 64-symbol alphabet with two padding bits at the
@@ -123,8 +124,16 @@ impl Nid {
         if let Some(head) = digest.get(..8) {
             first.copy_from_slice(head);
         }
-        // Little-endian, and this is one of the four things a fixture is protecting.
-        // Big-endian produces an equally plausible value matching nothing.
+        // `digest[0]` becomes the **least** significant byte of the `u64`, and this is one of
+        // the four things a fixture is protecting: the other packing produces an equally
+        // plausible value matching nothing.
+        //
+        // Said that way on purpose. This read "little-endian" and orbistoun's read
+        // "big-endian", each describing its own packing of the same eight bytes, and each
+        // called the other incorrect in a committed file. An endian word describes the
+        // packing - which is the thing that differs - so it mirrors, and two mirrored
+        // warnings look like a disagreement about a fact. Naming which end of the *digest*
+        // cannot mirror. (D096, worklog 056)
         Self(u64::from_le_bytes(first))
     }
 
