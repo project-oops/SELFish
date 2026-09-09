@@ -59,3 +59,38 @@ The citation was `obscene 048-selfaudit, PPSA02664` - a real probe, a real sweep
 container id. Everything about it looked like evidence, and the one thing nobody checked was
 *what that container is*. Reading a name as a fact, again: a candidate label, a verdict headline,
 a field name, a doc comment, and now a title id in a citation.
+
+---
+
+## Settled, 2026-09-09: refuted, and the default still does not move
+
+REQ-20260909T2020Z-8a17 asked for the magic keyed by `ptype`. The 2x2 across all 32 containers
+(sweep `20260909-184538`):
+
+|  | current magic | previous magic |
+|---|---|---|
+| `ptype 0x0` (genuine) | **23** | **0** |
+| `ptype 0x1` (fake) | 7 | 2 |
+
+**The withdrawn claim is refuted rather than merely unsupported.** Every genuine container
+carries the *current* magic; none carries the previous one. And its evidence, `PPSA02664`, is one
+of the two containers on the box carrying the previous magic - both of which are `ptype 0x1`.
+
+**Here the confound really is broken**, which is worth stating because the five header rows are
+still stuck behind theirs. The bottom row is the control group: the fake population spans both
+values, so carrying the current magic is not something the console imposes on whatever is
+installed. Genuine 23/0 against fake 7/2 is a correlation that survives having a comparison.
+
+## And the default stays 4, which is the same discipline as the entry above
+
+The entry above removed a population claim from the justification. Accepting a different
+population claim now would be that error in reverse.
+
+Nothing measured says whether a file built with the *current* magic would be **accepted**. What
+is measured is that a package built with the previous one installs, mounts, loads and executes
+(worklog 040). Acceptance is the property the default exists to secure; what other people's files
+contain is not, in either direction.
+
+That 7 fakes carry one value and 2 carry the other says the console tolerates both from a fake
+container - which is consistent with the default being a free choice and is not evidence that it
+is. The thing that would move it is a file built here with the current magic, run.

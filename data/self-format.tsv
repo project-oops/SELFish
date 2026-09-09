@@ -91,6 +91,46 @@
 #            rows, and that all nine fixed rows hold for fake ones. Does NOT settle whether the
 #            five track authenticity or container kind - the sample confounds them.
 #
+# ## The magic: settled, and here the confound really is broken
+#
+# The five rows above are stuck behind a confound. The **magic** is not, and it is worth being
+# clear about why, because it is the one place on this console where the sample separates the two
+# things it was asked to.
+#
+# A 2x2 cross-census of all 32 containers, magic against `ex_info.ptype`
+# (obscene 048-selfaudit, sweep 20260909-184538):
+#
+#                     current magic (54 14 F5 EE)   previous magic (4F 15 3D 1D)
+#   ptype 0x0                    23                             0
+#   ptype 0x1                     7                             2
+#
+# **Every genuine container carries the current magic, and none carries the previous one.** The
+# reason that is not just "everything on this console is current-generation" is the bottom row:
+# the fake population spans **both** values, so carrying the current magic is not something the
+# console imposes on whatever is installed. Genuine is 23/0; fake is 7/2. The correlation
+# survives having a control group, which is exactly what the five header rows lack.
+#
+# So the claim this file used to carry - that a current-generation title's eboot carries the
+# *previous* magic, "hardware-confirmed" - is **refuted**, not merely unsupported. Its evidence
+# was PPSA02664, which is one of the two gen-4 containers and is `ptype 0x1`: fake.
+#
+# ### And the default does not move on it either
+#
+# `selfish wrap` still defaults to the previous generation's magic. That is deliberate and it is
+# the same discipline that removed the old justification: **the default rests on acceptance, not
+# on population.** A package built with it installs, mounts, loads and executes on current
+# hardware (worklog 040). Nothing above measures whether a file built with the *current* magic
+# would be accepted, and swapping a proven default for an unproven one on the strength of what
+# other people's files contain is the error D097 was written about, run in reverse.
+#
+# The console accepts both from a fake container, incidentally - 7 fakes carry one and 2 carry
+# the other, and all of them are installed and enumerable. That is consistent with the default
+# being a free choice and is not evidence that it is.
+#
+#   measured-by: obscene 048-selfaudit, sweep 20260909-184538, payload leg (REQ-20260909T2020Z-8a17)
+#   settles: that genuine current-generation containers carry the current magic, 23 of 23, with
+#            fakes present on both sides as a control. Does NOT settle what a loader accepts.
+#
 # ## The tail: `header_size - 0x70` survived its first contact with material we did not write
 #
 # The layout `[... ex_info 64][npdrm 48]` ending at `header_size` comes from OpenOrbis, a **PS4
@@ -271,5 +311,5 @@ entry_prop	block_size_shift	-	-	value	12	mask 0xF. Encoded as ilog2(bytes) - 12,
 entry_prop	has_digests_shift	-	-	value	16	mask 0x1
 entry_prop	has_extents_shift	-	-	value	17	mask 0x1
 entry_prop	segment_index_shift	-	-	value	20	mask 0xFFFF. The field shadPS4 reads as GetId
-generation	current_magic	0x0	4	u32	0xEEF51454	stored so little-endian writes 54 14 F5 EE on disk. The source pairs this with a title's *bundled modules*, NOT its eboot. UNDER REVIEW: the note here said a current-generation title's eboot carries previous_magic instead, citing obscene 048-selfaudit on PPSA02664 - but the 20260909-175052 census measures PPSA02664 at ptype 0x1, a FAKE container, so that citation confirms it for a fake eboot only. The same probe's census counts 38 eboots with THIS magic against 2 with previous_magic, which points the other way for the population. Neither row's value changes on that; what changed is that the eboot claim is not hardware-confirmed. (D097)
-generation	previous_magic	0x0	4	u32	0x1D3D154F	stored so little-endian writes 4F 15 3D 1D on disk. What every source above describes. The claim that a current-generation title's EBOOT carries this, marked hardware-confirmed, is WITHDRAWN: its evidence was PPSA02664, which the 20260909-175052 census measures at ptype 0x1 (fake). What is still true is that a container written with this magic installs, mounts, loads and executes on current hardware (worklog 040) - which justifies the wrap default without needing the population claim. (D097)
+generation	current_magic	0x0	4	u32	0xEEF51454	stored so little-endian writes 54 14 F5 EE on disk. SETTLED: every genuine container measured carries THIS magic - 23 of 23 with ex_info.ptype 0x0, and 0 with previous_magic (obscene 048-selfaudit 2x2 cross-census, sweep 20260909-184538). Fakes carry both: 7 gen-5, 2 gen-4. The earlier note claiming a current-generation eboot carries previous_magic is refuted; its evidence was PPSA02664, one of the two gen-4 fakes. (D097)
+generation	previous_magic	0x0	4	u32	0x1D3D154F	stored so little-endian writes 4F 15 3D 1D on disk. What every source above describes, and what this repository writes by default. The only containers measured carrying it are 2 FAKE ones (PPSA02664, PPSA21564); no genuine container does. `selfish wrap` still defaults to it, on the evidence that a package built with it installs, mounts, loads and executes on current hardware (worklog 040) - a measurement of acceptance, which a population of what others write cannot replace in either direction. (D097)
