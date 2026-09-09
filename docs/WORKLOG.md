@@ -58,3 +58,4 @@ otherwise rediscover the hard way.
 | 2026-09-09 | [A label in a candidate list is not provenance](worklog/048-a-label-in-a-candidate-list-is-not.md) |
 | 2026-09-09 | [The confirmation was circular, and the entry that caught it had just written the rule](worklog/049-the-confirmation-was-circular-and-the.md) |
 | 2026-09-09 | [The lesson put in the tool, and the reversal made airtight](worklog/050-the-lesson-put-in-the-tool-and-the.md) |
+| 2026-09-09 | [The tail held, and the instinct about it was wrong the other way](worklog/051-the-tail-held-and-the-instinct-was.md) |

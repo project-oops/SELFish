@@ -70,6 +70,43 @@
 #            table round-trips through a current-generation console's own reader, and that six
 #            vendor system apps differ from it in five named fields.
 #
+# ## The tail: `header_size - 0x70` survived its first contact with material we did not write
+#
+# The layout `[... ex_info 64][npdrm 48]` ending at `header_size` comes from OpenOrbis, a **PS4
+# writer**, and is the part of this table no reader could have supplied. On 2026-09-09 the probe
+# was changed to report the four `ex_info` scalars unconditionally instead of hiding them behind
+# a known-`ptype` test, and read seven containers that were demonstrably not written from this
+# table (six system apps under `/system/vsh/app/`, plus `/system_ex/app/FAKE00000/`):
+#
+#   paid       0x1bac98  0x7ce04  0x20a0a0  0x176144  0x219d74  0xa36c4  0x8e7a34
+#   ptype      0x0       0x0      0x0       0x0       0x0       0x0      0x0
+#   app_version 0x0      0x0      0x0       0x0       0x0       0x0      0x0
+#   fw_version 0x48      0x48     0x48      0x48      0x48      0x48     0x48
+#   npdrm.type 0x0       0x0      0x0       0x0       0x0       0x0      0x0
+#
+# **Seven files of different sizes agreeing exactly on three of four fields is not what a
+# misaligned read produces.** Reading the wrong bytes of seven unrelated files gives seven
+# unrelated answers; this gives one answer with a single field varying. So the offset is very
+# probably right, and what these containers carry is simply a *kind this table does not
+# describe*. That is a real result and the first one from material this repository could not
+# have produced.
+#
+# It is stated as *consistent with* rather than proven, because the alternative was not ruled
+# out by measurement - only by argument. `paid` varying per application is what a program
+# authority id does; it is also what an offset does.
+#
+# Recorded as observed, and **not named**: `ptype` `0x0` is not one of the eight values the
+# `ptype` group below lists, and `npdrm.type` `0x0` where the table pins `0x3` reads as *no
+# npdrm control block*, which a system container plausibly has no use for. Neither gets a row
+# here. Principle 5 - an unexplained value is named `unknown` and left alone, and inventing
+# `ptype system = 0x0` from one console's system apps is exactly the guess that principle
+# exists to stop.
+#
+#   measured-by: obscene 048-selfaudit, sweep 20260909-155928, payload leg (REQ-20260909T1545Z-2d84)
+#   settles: nothing about what the values mean. Records that the tail is where this table says
+#            it is for seven containers this repository did not write, and that they carry
+#            `ptype` 0x0 and no npdrm block.
+#
 # # Why three sources, and what each was needed for
 #
 # A single reading is a guess with a citation. Two readers gave the shape and one constant.
