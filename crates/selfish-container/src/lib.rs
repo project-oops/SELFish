@@ -1506,4 +1506,39 @@ mod tests {
         assert!(result.tail.is_empty());
         assert_eq!(result.declared, Declared::Unreachable);
     }
+
+    #[test]
+    fn the_elf_a_container_gives_back_carries_its_segment_payloads() {
+        // The property a second reader's whole differential turned on, and it had no test.
+        //
+        // The executable inside a container is a *view*: ehdr and program headers, with every
+        // segment's bytes held in the container's own entry list. Extract that view on its own
+        // and nothing can be read through it - which is what happened to 22 of 29 modules in
+        // orbistoun's run, because their harness unwrapped with their own reader first.
+        //
+        // `to_elf` splices the payloads back. It is used by the CLI and nine examples and was
+        // asserted nowhere, so the one behaviour that makes a container readable end to end
+        // was resting on those nine examples being run by hand. (D095)
+        for generation in [Generation::Current, Generation::Previous] {
+            let original = payload();
+            let built = build(&original, generation).expect("builds");
+            let inner = Container::parse(&built)
+                .expect("parses")
+                .to_elf()
+                .expect("splices");
+
+            let elf = selfish_elf::Elf::parse(&inner).expect("the spliced ELF parses");
+            let phdr = elf.program_headers().first().expect("one segment");
+            let bytes = elf
+                .segment_bytes(phdr)
+                .expect("and its contents are present, which is the whole point");
+
+            // 64 + 56: the fixture puts its payload immediately after ehdr and one phdr.
+            assert_eq!(
+                bytes,
+                &original[120..],
+                "{generation:?}: the payload came back byte for byte",
+            );
+        }
+    }
 }
