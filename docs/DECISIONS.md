@@ -108,6 +108,7 @@ and a per-entry date would not be. Entries from D067 on carry one.
 | 🟢 | D095 | [A second reader found three disagreements, and only one of them was about the format](decisions/D095-a-second-reader-found-three-and-one.md) | decided | 2026-09-09 |
 | 🟢 | D096 | [Two answers to the symbol count, and the divergence is kept rather than reconciled](decisions/D096-two-answers-to-the-symbol-count-and.md) | decided | 2026-09-09 |
 | 🟢 | D097 | [The wrap default was justified by a population counted in the wrong place, and the default is right anyway](decisions/D097-the-wrap-default-was-justified-by-a.md) | decided | 2026-09-09 |
+| 🟢 | D098 | [Measured vendor values are recorded against the rows they refute, never as a profile a writer could reach for](decisions/D098-measured-vendor-values-are-recorded.md) | measured | 2026-09-09 |
 
 | | meaning |
 |---|---|
