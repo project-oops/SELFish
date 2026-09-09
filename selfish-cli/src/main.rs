@@ -847,6 +847,9 @@ fn show_sfo(sfo: &selfish_title::Sfo, original: Option<&[u8]>) {
             selfish_title::sfo::Value::Text(text) => text.clone(),
             selfish_title::sfo::Value::TextUnterminated(text) => format!("{text} (unterminated)"),
             selfish_title::sfo::Value::Integer(number) => format!("{number} ({number:#x})"),
+            selfish_title::sfo::Value::Binary(bytes) => {
+                format!("<{} bytes, unterminated>", bytes.len())
+            }
             selfish_title::sfo::Value::Unknown(code, bytes) => {
                 format!("<format {code:#06x}, {} bytes>", bytes.len())
             }

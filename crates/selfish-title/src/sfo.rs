@@ -90,6 +90,18 @@ pub enum Value {
     /// unterminated field into a terminated one - a file one byte longer than it went in,
     /// differing in a format code fifty-five bytes in. (D020)
     TextUnterminated(String),
+    /// Bytes in the unterminated format, which is not always text.
+    ///
+    /// `utf8_special` is a length and no terminator; PS3 saves put text in it, and the
+    /// current generation puts `ACCOUNT_ID` - eight bytes of user id - in it too. So the
+    /// format code alone does not say whether a value is readable, and a reader that
+    /// assumed it did **failed the whole file** on one key it was not asked for.
+    ///
+    /// The variant still determines the format code, which is what D020 is about: this and
+    /// [`Self::TextUnterminated`] both write `utf8_special`, and which one a parse produces
+    /// depends only on whether the bytes decode. Use [`Self::as_bytes`] when the bytes are
+    /// what you want - it answers for both, so a caller never has to care which it got.
+    Binary(Vec<u8>),
     /// A number.
     Integer(u32),
     /// A format this crate does not interpret, kept as bytes.
@@ -107,6 +119,26 @@ impl Value {
         match self {
             Self::Text(text) | Self::TextUnterminated(text) => Some(text),
             _ => None,
+        }
+    }
+
+    /// The value as the file holds it, for everything except a number.
+    ///
+    /// The terminator is not included: it belongs to the format rather than to the value, and
+    /// [`Self::Text`] is the variant that puts it back on the way out.
+    ///
+    /// This exists so that a caller after raw bytes never has to know which variant a parse
+    /// chose. `ACCOUNT_ID` is eight bytes of user id in the unterminated format, and some
+    /// small fraction of those decode as UTF-8 by luck - so a reader matching on
+    /// [`Self::Binary`] alone would work on most saves and silently miss on the rest, which
+    /// is worse than never working. `None` for a number, where [`Self::as_integer`] is the
+    /// accessor and the endianness has already been decided.
+    #[must_use]
+    pub fn as_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Self::Text(text) | Self::TextUnterminated(text) => Some(text.as_bytes()),
+            Self::Binary(bytes) | Self::Unknown(_, bytes) => Some(bytes),
+            Self::Integer(_) => None,
         }
     }
 
@@ -175,7 +207,7 @@ impl Entry {
     pub fn format(&self) -> Format {
         match &self.value {
             Value::Text(_) => Format::Utf8,
-            Value::TextUnterminated(_) => Format::Utf8Special,
+            Value::TextUnterminated(_) | Value::Binary(_) => Format::Utf8Special,
             Value::Integer(_) => Format::Integer,
             Value::Unknown(code, _) => Format::Other(*code),
         }
@@ -190,8 +222,9 @@ impl Entry {
                 bytes
             }
             Value::TextUnterminated(text) => text.as_bytes().to_vec(),
+
             Value::Integer(value) => value.to_le_bytes().to_vec(),
-            Value::Unknown(_, bytes) => bytes.clone(),
+            Value::Binary(bytes) | Value::Unknown(_, bytes) => bytes.clone(),
         };
         out.resize(
             out.len().max(usize::try_from(self.reserved).unwrap_or(0)),
@@ -205,8 +238,11 @@ impl Entry {
         match &self.value {
             Value::Text(text) => u32::try_from(text.len().saturating_add(1)).unwrap_or(u32::MAX),
             Value::TextUnterminated(text) => u32::try_from(text.len()).unwrap_or(u32::MAX),
+
             Value::Integer(_) => 4,
-            Value::Unknown(_, bytes) => u32::try_from(bytes.len()).unwrap_or(u32::MAX),
+            Value::Binary(bytes) | Value::Unknown(_, bytes) => {
+                u32::try_from(bytes.len()).unwrap_or(u32::MAX)
+            }
         }
     }
 }
@@ -256,6 +292,19 @@ impl Sfo {
     #[must_use]
     pub fn text(&self, key: &str) -> Option<&str> {
         self.get(key).and_then(Value::as_text)
+    }
+
+    /// Look a key up as the bytes the file holds, whatever kind of value it is.
+    ///
+    /// For `ACCOUNT_ID` this is its eight bytes exactly: not endian-swapped, not rendered as
+    /// a number, not shortened by a trailing zero. The endianness of a user id is the
+    /// consumer's question and this crate does not have an opinion about it - what it can
+    /// promise is that the bytes come back as they were written.
+    ///
+    /// `None` for an integer parameter, where [`Value::as_integer`] is the accessor. (D090)
+    #[must_use]
+    pub fn bytes(&self, key: &str) -> Option<&[u8]> {
+        self.get(key).and_then(Value::as_bytes)
     }
 
     /// Read one.
@@ -373,10 +422,10 @@ impl Sfo {
 
 fn value_of(format: Format, raw: &[u8]) -> Result<Value, SfoError> {
     Ok(match format {
-        Format::Utf8 | Format::Utf8Special => {
-            // The stated length includes the terminator when the format has one. Trimming
-            // trailing zeroes rather than exactly one also covers a writer that reserved more
-            // than it used, which real files do.
+        Format::Utf8 => {
+            // The stated length includes the terminator, so trailing zeroes are the format
+            // rather than the value. Trimming all of them rather than exactly one also covers
+            // a writer that reserved more than it used, which real files do.
             let end = raw
                 .iter()
                 .rposition(|byte| *byte != 0)
@@ -384,12 +433,25 @@ fn value_of(format: Format, raw: &[u8]) -> Result<Value, SfoError> {
             let text = core::str::from_utf8(raw.get(..end).unwrap_or_default())
                 .map_err(|_| SfoError::NotUtf8)?
                 .to_owned();
-            if format == Format::Utf8Special {
-                Value::TextUnterminated(text)
-            } else {
-                Value::Text(text)
-            }
+            Value::Text(text)
         }
+        // The unterminated format is a length and nothing else, so **nothing is trimmed** and
+        // nothing is refused. Two things were wrong here and both were invisible until a
+        // current-generation save arrived:
+        //
+        // Trailing zeroes are content in this format, not padding - the length is exact
+        // because there is no terminator to exclude - and trimming them shortened a value
+        // that a byte-for-byte round trip then wrote back one byte lighter.
+        //
+        // And it is not always text. `ACCOUNT_ID` is eight bytes of user id in this format,
+        // so a `from_utf8` that returns `Err` was failing an entire file over one key the
+        // caller had not asked for. `Unknown` already carries the argument for keeping bytes
+        // rather than refusing them; this format needed the same treatment and had a
+        // different variant only because the first material to reach it happened to be text.
+        Format::Utf8Special => core::str::from_utf8(raw).map_or_else(
+            |_| Value::Binary(raw.to_vec()),
+            |text| Value::TextUnterminated(text.to_owned()),
+        ),
         Format::Integer => {
             let mut out = [0_u8; 4];
             let bytes = raw.get(..4).ok_or(SfoError::OutOfRange)?;
@@ -612,5 +674,105 @@ mod tests {
         assert_eq!(Format::Integer.code(), 0x0404);
         assert_eq!(Format::from_code(0x0204), Format::Utf8);
         assert_eq!(Format::from_code(0x9999), Format::Other(0x9999));
+    }
+
+    /// Eight bytes that are not valid UTF-8, which is what a user id usually is.
+    ///
+    /// `0xff` cannot begin a UTF-8 sequence, so this is guaranteed to take the binary path
+    /// rather than depending on luck - the point being tested is what happens when text
+    /// decoding fails, and a fixture that sometimes decoded would sometimes test nothing.
+    const ACCOUNT_ID: [u8; 8] = [0xff, 0x01, 0x00, 0x9a, 0x2b, 0x00, 0x7c, 0xd3];
+
+    #[test]
+    fn an_account_id_reads_back_as_its_exact_eight_bytes() {
+        // The parameter a save carries for the user it belongs to. It lives in the
+        // unterminated format beside PS3 text, and before D090 this crate ran it through
+        // `from_utf8` and returned `NotUtf8` - failing the entire file over one key.
+        let mut sfo = Sfo::new();
+        sfo.set(Entry::text("TITLE_ID", "CUSA00001"));
+        sfo.set(Entry {
+            key: "ACCOUNT_ID".to_owned(),
+            value: Value::Binary(ACCOUNT_ID.to_vec()),
+            reserved: 8,
+        });
+        let bytes = sfo.to_bytes();
+
+        let parsed = Sfo::parse(&bytes).expect("a file with a binary parameter still parses");
+        assert_eq!(parsed.bytes("ACCOUNT_ID"), Some(ACCOUNT_ID.as_slice()));
+        assert_eq!(parsed.text("TITLE_ID"), Some("CUSA00001"));
+        assert_eq!(parsed.entries()[1].format(), Format::Utf8Special);
+        assert_eq!(parsed.to_bytes(), bytes, "and writes back identically");
+    }
+
+    #[test]
+    fn bytes_answers_for_a_value_that_decoded_as_text_too() {
+        // The trap this accessor exists to close. Some eight-byte ids decode as UTF-8 by
+        // luck, and a caller matching on `Value::Binary` alone would work on most saves and
+        // silently miss on those - a failure that looks like a bad save rather than a bad
+        // reader. `bytes` answers whichever variant the parse chose.
+        let readable = *b"abcdefgh";
+        let mut sfo = Sfo::new();
+        sfo.set(Entry {
+            key: "ACCOUNT_ID".to_owned(),
+            value: Value::Binary(readable.to_vec()),
+            reserved: 8,
+        });
+        let parsed = Sfo::parse(&sfo.to_bytes()).expect("a table");
+
+        assert_eq!(
+            parsed.entries()[0].value,
+            Value::TextUnterminated("abcdefgh".to_owned()),
+            "it decoded, so it came back as text"
+        );
+        assert_eq!(
+            parsed.bytes("ACCOUNT_ID"),
+            Some(readable.as_slice()),
+            "and the bytes are reachable anyway"
+        );
+    }
+
+    #[test]
+    fn a_trailing_zero_in_the_unterminated_format_is_content() {
+        // There is no terminator in this format, so the stated length is exact and a zero at
+        // the end is a byte of the value. Trimming it shortened an id and wrote the file back
+        // a byte lighter, which a round trip against real material is what catches.
+        let ending_in_zero = [0xd3, 0x2b, 0x9a, 0x01, 0x7c, 0x00, 0xff, 0x00];
+        let mut sfo = Sfo::new();
+        sfo.set(Entry {
+            key: "ACCOUNT_ID".to_owned(),
+            value: Value::Binary(ending_in_zero.to_vec()),
+            reserved: 8,
+        });
+        let bytes = sfo.to_bytes();
+        let parsed = Sfo::parse(&bytes).expect("a table");
+
+        assert_eq!(parsed.bytes("ACCOUNT_ID"), Some(ending_in_zero.as_slice()));
+        assert_eq!(parsed.to_bytes(), bytes);
+    }
+
+    #[test]
+    fn a_terminated_text_value_still_loses_its_terminator() {
+        // The other half of the same rule: `utf8` states a length that *includes* the
+        // terminator, so trimming there is right and stopping it would have been the fix
+        // applied one variant too widely.
+        let mut sfo = Sfo::new();
+        sfo.set(Entry::text_reserving("TITLE", "Name", 32));
+        let parsed = Sfo::parse(&sfo.to_bytes()).expect("a table");
+
+        assert_eq!(parsed.text("TITLE"), Some("Name"));
+        assert_eq!(parsed.bytes("TITLE"), Some(b"Name".as_slice()));
+    }
+
+    #[test]
+    fn an_integer_has_no_bytes_because_its_endianness_is_already_decided() {
+        let mut sfo = Sfo::new();
+        sfo.set(Entry::integer("ATTRIBUTE", 0x1234));
+        let parsed = Sfo::parse(&sfo.to_bytes()).expect("a table");
+
+        assert_eq!(
+            parsed.get("ATTRIBUTE").and_then(Value::as_integer),
+            Some(0x1234)
+        );
+        assert_eq!(parsed.bytes("ATTRIBUTE"), None);
     }
 }

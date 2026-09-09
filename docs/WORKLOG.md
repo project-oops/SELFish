@@ -52,3 +52,4 @@ otherwise rediscover the hard way.
 | 2026-08-31 | [`libkernel_vaddrs` example](worklog/042-libkernel-vaddrs-example.md) |
 | 2026-08-31 | [Native PS5 Title Generation & obSCEne Self-Resolver Oracle](worklog/043-native-ps5-title-generation-obscene.md) |
 | 2026-09-09 | [Three unnameable imports, and one of them was never a name](worklog/044-three-unnameable-imports-and-one-was.md) |
+| 2026-09-09 | [`ACCOUNT_ID` was not text, and the reader refused the file rather than the key](worklog/045-account-id-was-not-text-and-the-reader.md) |

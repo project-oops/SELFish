@@ -905,7 +905,9 @@ fn major_param_string(sfo: &selfish_title::sfo::Sfo) -> String {
         match value {
             Value::Text(text) | Value::TextUnterminated(text) => text.clone(),
             Value::Integer(number) => format!("0x{number:08x}"),
-            Value::Unknown(..) => String::new(),
+            // Bytes are not a display string. A major-parameter line that rendered them
+            // would put a save id into a package field, so both byte kinds are empty here.
+            Value::Binary(_) | Value::Unknown(..) => String::new(),
         }
     }
     let mut out = String::new();
