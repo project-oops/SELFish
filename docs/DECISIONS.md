@@ -88,17 +88,18 @@ and a per-entry date would not be. Entries from D067 on carry one.
 | 🟢 | D075 | [A container entry's `memsz` is its data's size, not the segment's memory size](decisions/D075-a-container-entry-s-memsz-is-its-data-s.md) | decided | 2026-08-29 |
 | 🟢 | D076 | [The dynamic table lives at the tail of the vendor segment, not in the image](decisions/D076-the-dynamic-table-lives-at-the-tail-of.md) | decided | 2026-08-29 |
 | 🟢 | D077 | [The vendor segment begins with a fingerprint region, and leaving it out moves everything](decisions/D077-the-vendor-segment-begins-with-a.md) | decided | 2026-08-29 |
-| ⚪ | D078 | [A bundled library is a third layout, and it needs a third linker script](decisions/D078-a-bundled-library-is-a-third-layout-and.md) | unrecorded | ~>2026-08-29 |
-| ⚪ | D079 | [`DT_SCE_ORIGINAL_FILENAME` is required, and holds the module's own name](decisions/D079-dt-sce-original-filename-is-required.md) | unrecorded | ~>2026-08-29 |
-| 🟢 | D080 | [The keystone is derived, not supplied, and every package this crate built was missing one](decisions/D080-the-keystone-is-derived-not-supplied.md) | derived | ~>2026-08-29 |
-| ⚪ | D081 | [`param.json` does not belong in a package, and its presence there was mixing two routes](decisions/D081-param-json-does-not-belong-in-a-package.md) | unrecorded | ~>2026-08-29 |
-| ⚪ | D082 | [A package cannot produce a current-generation title, so `native` is a second delivery route rather than a second package format](decisions/D082-a-package-cannot-produce-a-current.md) | unrecorded | ~>2026-08-29 |
-| ⚪ | D083 | [A comment in the keyset file broke the licence, because the reader matched prose](decisions/D083-a-comment-in-the-keyset-file-broke-the.md) | unrecorded | ~>2026-08-29 |
-| 🟢 | D084 | [A real container can be audited against the format table - the oracle step, as a command](decisions/D084-a-real-container-can-be-audited-against.md) | derived | ~>2026-08-29 |
-| ⚪ | D085 | [Getting a real current-generation SELF is a measurement obSCEne runs, not a file this repo holds - and the sandbox makes it conditional](decisions/D085-getting-a-real-current-generation-self.md) | unrecorded | ~>2026-08-29 |
-| ⚪ | D086 | [Confirm the format on the console and report the verdict - do not carry the bytes off](decisions/D086-confirm-the-format-on-the-console-and.md) | unrecorded | ~>2026-08-29 |
-| ⚪ | D087 | [Native PS5 title manifests (`param.json`) and differential measurement over fake-signed packaging](decisions/D087-native-ps5-title-manifests-param-json.md) | unrecorded | ~>2026-08-29 |
-| 🔴 | D088 | [`libkernel_vaddrs` example: exports as `name vaddr`, and why the names are not ours](decisions/D088-libkernel-vaddrs-example-exports-as.md) | superseded | ~>2026-08-29 |
+| ⚪ | D078 | [A bundled library is a third layout, and it needs a third linker script](decisions/D078-a-bundled-library-is-a-third-layout-and.md) | unrecorded | ~2026-08-29..09-09 |
+| ⚪ | D079 | [`DT_SCE_ORIGINAL_FILENAME` is required, and holds the module's own name](decisions/D079-dt-sce-original-filename-is-required.md) | unrecorded | ~2026-08-29..09-09 |
+| 🟢 | D080 | [The keystone is derived, not supplied, and every package this crate built was missing one](decisions/D080-the-keystone-is-derived-not-supplied.md) | derived | ~2026-08-29..09-09 |
+| ⚪ | D081 | [`param.json` does not belong in a package, and its presence there was mixing two routes](decisions/D081-param-json-does-not-belong-in-a-package.md) | unrecorded | ~2026-08-29..09-09 |
+| ⚪ | D082 | [A package cannot produce a current-generation title, so `native` is a second delivery route rather than a second package format](decisions/D082-a-package-cannot-produce-a-current.md) | unrecorded | ~2026-08-29..09-09 |
+| ⚪ | D083 | [A comment in the keyset file broke the licence, because the reader matched prose](decisions/D083-a-comment-in-the-keyset-file-broke-the.md) | unrecorded | ~2026-08-29..09-09 |
+| 🟢 | D084 | [A real container can be audited against the format table - the oracle step, as a command](decisions/D084-a-real-container-can-be-audited-against.md) | derived | ~2026-08-29..09-09 |
+| ⚪ | D085 | [Getting a real current-generation SELF is a measurement obSCEne runs, not a file this repo holds - and the sandbox makes it conditional](decisions/D085-getting-a-real-current-generation-self.md) | unrecorded | ~2026-08-29..09-09 |
+| ⚪ | D086 | [Confirm the format on the console and report the verdict - do not carry the bytes off](decisions/D086-confirm-the-format-on-the-console-and.md) | unrecorded | ~2026-08-29..09-09 |
+| ⚪ | D087 | [Native PS5 title manifests (`param.json`) and differential measurement over fake-signed packaging](decisions/D087-native-ps5-title-manifests-param-json.md) | unrecorded | ~2026-08-29..09-09 |
+| 🔴 | D088 | [`libkernel_vaddrs` example: exports as `name vaddr`, and why the names are not ours](decisions/D088-libkernel-vaddrs-example-exports-as.md) | superseded | ~2026-08-29..09-09 |
+| 🟢 | D089 | [Naming a hash backwards is a search over somebody else's vocabulary, so the vocabulary is an argument](decisions/D089-naming-a-hash-backwards-is-a-search.md) | decided | 2026-09-09 |
 
 | | meaning |
 |---|---|

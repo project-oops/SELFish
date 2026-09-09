@@ -77,6 +77,22 @@ that actually ships, used here as an oracle rather than a source: it confirmed t
 independently (written out in the project file), and its `param.sfo` files are what made the
 generation split in the metadata table visible. See D061.
 
+## Name vocabularies, consulted but not held
+
+Naming an identifier backwards is a search over a word list, and this repository owns no word
+list - the admission test in `CLAUDE.md` keeps a mined corpus with the project that mined it.
+`name_nid` takes one by path instead, so what follows is a record of what was *pointed at*,
+never of what was taken in.
+
+| project | what it gave | how it was used |
+|---|---|---|
+| **obSCEne** | `data/mined-names.txt` (166,971 names), `data/nid-corpus.txt`, `data/unnamed-nids.txt` (1,130,757 identifiers observed with no name) - its own mining output, itself citing ChonkyStation4, GPCS4, PS5PCEM, SharpEMU, aerolib, craziiEmu, fpPS4, ps4_module_loader, ps4libdoc and shadPS4 | the vocabulary for REQ-20260909T1250Z-1f74. Named one of three identifiers, and bounded the other two by exhausting it. Nothing was copied here: the findings are in D089 and the worklog, and the corpus stays over there |
+
+The one attribution it produced is recorded as **somebody else's evidence, not a derivation**:
+the name those five sources give does not hash to the identifier they give it against, so it is
+not self-verifying the way a reproduced pair is. D089 says why that distinction is the whole
+value of the answer.
+
 ## How a source is cited here
 
 **By project and commit**, so that "where did this come from" has an answer somebody else can
