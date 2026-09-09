@@ -107,6 +107,7 @@ and a per-entry date would not be. Entries from D067 on carry one.
 | 🟢 | D094 | [The audit checks the tail it pins, and reports it apart from the header](decisions/D094-the-audit-checks-the-tail-it-pins.md) | decided | 2026-09-09 |
 | 🟢 | D095 | [A second reader found three disagreements, and only one of them was about the format](decisions/D095-a-second-reader-found-three-and-one.md) | decided | 2026-09-09 |
 | 🟢 | D096 | [Two answers to the symbol count, and the divergence is kept rather than reconciled](decisions/D096-two-answers-to-the-symbol-count-and.md) | decided | 2026-09-09 |
+| 🟢 | D097 | [The wrap default was justified by a population counted in the wrong place, and the default is right anyway](decisions/D097-the-wrap-default-was-justified-by-a.md) | decided | 2026-09-09 |
 
 | | meaning |
 |---|---|

@@ -64,3 +64,4 @@ otherwise rediscover the hard way.
 | 2026-09-09 | [Thirty-two containers, a clean split, and a confound I had already glossed](worklog/054-thirty-two-containers-and-a-confound.md) |
 | 2026-09-09 | [The symbol level agreed, and the question about it found something](worklog/055-the-symbol-level-agreed-and-the.md) |
 | 2026-09-09 | [The accusation in the suffix file was made from a label](worklog/056-the-accusation-in-the-suffix-file-was.md) |
+| 2026-09-09 | [A title id in a citation, read as a fact](worklog/057-a-title-id-in-a-citation-read-as-a-fact.md) |

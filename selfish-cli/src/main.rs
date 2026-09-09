@@ -171,9 +171,17 @@ enum Command {
         out: Option<PathBuf>,
         /// Console generation: 5 for the current one, 4 for the previous.
         ///
-        /// **4 is the default, and that is a measurement rather than a habit.** Every
-        /// container found inside real packages for the current console carries the previous
-        /// generation's magic - thirty-three of them, including a working homebrew store.
+        /// **4 is the default because a file built with it runs**, which is the evidence that
+        /// survived. A package this repository builds with the previous generation's magic
+        /// installs, mounts, loads and executes on current hardware (worklog 040).
+        ///
+        /// The justification used to be a population claim - "every container found inside real
+        /// packages for the current console carries the previous generation's magic, thirty-three
+        /// of them, including a working homebrew store". That is **withdrawn**: those thirty-three
+        /// came from packages, which on this evidence means containers of homebrew lineage, and a
+        /// census of forty installed eboots counts **38 carrying the current magic against 2
+        /// carrying the previous one**. The default is unchanged, because "it executes" is a
+        /// better reason than a population that was counted in the wrong place. (D097)
         #[arg(long, default_value_t = 4)]
         generation: u8,
         /// Privilege tier: app, sysmodule, system, or root.
