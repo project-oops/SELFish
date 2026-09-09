@@ -106,6 +106,7 @@ and a per-entry date would not be. Entries from D067 on carry one.
 | 🟢 | D093 | [The audit reports what kind of container it just agreed with, before it reports how many rows agreed](decisions/D093-the-audit-reports-what-kind-of.md) | decided | 2026-09-09 |
 | 🟢 | D094 | [The audit checks the tail it pins, and reports it apart from the header](decisions/D094-the-audit-checks-the-tail-it-pins.md) | decided | 2026-09-09 |
 | 🟢 | D095 | [A second reader found three disagreements, and only one of them was about the format](decisions/D095-a-second-reader-found-three-and-one.md) | decided | 2026-09-09 |
+| 🟢 | D096 | [Two answers to the symbol count, and the divergence is kept rather than reconciled](decisions/D096-two-answers-to-the-symbol-count-and.md) | decided | 2026-09-09 |
 
 | | meaning |
 |---|---|

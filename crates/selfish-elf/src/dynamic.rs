@@ -468,6 +468,25 @@ impl Symbol {
 /// Offsets in the dynamic table are relative to the segment, not to the file, which is the
 /// distinction that makes reading these tables from a file offset produce plausible garbage.
 ///
+/// # This does **not** agree with [`Info::symbol_count`] when `symtabsz` is absent
+///
+/// `symbol_count` answers `None` there, and says why in its own doc: a count inferred from a
+/// table's extent silently changes when something else moves. **This function makes exactly
+/// that inference** - with no `symtabsz` it walks to the end of the segment, so its length is
+/// bounded by the segment rather than by the table, and anything trailing the symbols is
+/// decoded as more of them.
+///
+/// The two are deliberately not reconciled, because they are on opposite sides of the line
+/// D091 drew. `symbol_count` is a *claim about the file* and refuses to guess; this is a
+/// *reader* and a reader that stops dead on a missing size field reads nothing at all where it
+/// could read almost everything. What was wrong was that neither said so, so a caller comparing
+/// them had no way to know which of the two answers it was holding.
+///
+/// A caller that needs the exact count rather than a best effort should ask `symbol_count`
+/// first and treat `None` as "this module does not state one". Orbistoun's differential found
+/// `symtabsz` present on all 29 modules of its corpus, so the divergence is latent rather than
+/// observed. (D096)
+///
 /// # Errors
 ///
 /// If the table runs past the end of the segment.
@@ -890,6 +909,29 @@ mod tests {
         assert_eq!(unstated.symbol_count(), None);
     }
 
+    #[test]
+    fn without_a_stated_size_the_reader_infers_a_count_the_info_refuses_to() {
+        // The two answer the same question differently, and until orbistoun's differential
+        // asked about it neither said so. `symbol_count` refuses to infer; `symbols` infers,
+        // because it is a reader and a reader that stops dead on a missing size field reads
+        // nothing where it could read almost everything (D091's line, D096's application).
+        //
+        // Pinned so the divergence stays deliberate. If a caller ever needs them to agree, it
+        // is `symbol_count` that says "this module does not state one".
+        let segment = vec![0_u8; SYMBOL_SIZE * 4];
+        let unstated = Info {
+            syment: SYMBOL_SIZE as u64,
+            symtab: 0,
+            ..Info::default()
+        };
+
+        assert_eq!(unstated.symbol_count(), None, "the Info will not guess");
+        assert_eq!(
+            symbols(&segment, &unstated).expect("reads").len(),
+            4,
+            "the reader does, from the segment's extent",
+        );
+    }
     #[test]
     fn strings_are_read_only_where_they_are_actually_terminated() {
         let table = b"\0libSceNet\0libkernel\0";

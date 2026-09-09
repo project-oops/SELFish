@@ -62,3 +62,4 @@ otherwise rediscover the hard way.
 | 2026-09-09 | [The second reader, and the error that pointed at the wrong thing](worklog/052-the-second-reader-and-the-error-that.md) |
 | 2026-09-09 | [Two readers agree on every field, and the third failure of the day was agreeing](worklog/053-two-readers-agree-on-every-field-and.md) |
 | 2026-09-09 | [Thirty-two containers, a clean split, and a confound I had already glossed](worklog/054-thirty-two-containers-and-a-confound.md) |
+| 2026-09-09 | [The symbol level agreed, and the question about it found something](worklog/055-the-symbol-level-agreed-and-the.md) |
