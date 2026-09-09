@@ -544,7 +544,7 @@ fn rebuild_symbols(
         let offset = if name_offset == 0 {
             0
         } else {
-            let plain = string_at(linked.names, name_offset);
+            let plain = string_at(linked.names, name_offset)?;
             // Undefined symbols are the imports, and are what a loader resolves by hash.
             // Anything defined here keeps its plain name: nothing looks it up.
             let undefined = read_u16(entry, 6)? == 0 && !plain.is_empty();
@@ -595,7 +595,7 @@ fn build_hash(symbols: &[u8], strings: &[u8]) -> Result<Vec<u8>, BuildError> {
         let entry = symbols
             .get(at..at.saturating_add(SYMBOL_SIZE))
             .ok_or(BuildError::MalformedSymbolTable)?;
-        let name = string_at(strings, read_u32(entry, 0)?);
+        let name = string_at(strings, read_u32(entry, 0)?)?;
         let slot = (elf_hash(name.as_bytes()) as usize)
             .checked_rem(buckets)
             .unwrap_or(0);
@@ -674,16 +674,41 @@ fn set_binding(entry: &mut [u8], binding: u8) -> Result<(), BuildError> {
     Ok(())
 }
 
-fn string_at(table: &[u8], at: u32) -> String {
-    let Ok(at) = usize::try_from(at) else {
-        return String::new();
-    };
-    let rest = table.get(at..).unwrap_or_default();
+/// A name from the string table this builder was handed.
+///
+/// **Strict, and deliberately stricter than the reader.** `dynamic::string_at` reads a module
+/// somebody else wrote and can only report what it finds; this reads a name that is about to
+/// be *written back*, and there the two ways of being permissive are both worse than an error:
+///
+/// - a lossy conversion replaces a byte with `U+FFFD` and writes a **different symbol name**,
+///   three bytes where one was, into the table a loader resolves against;
+/// - an out-of-range offset read as an empty name makes an undefined symbol look defined
+///   (`build` tests `!plain.is_empty()`), so it never reaches `resolve`, is never reported
+///   `Unclaimed`, and is written back as a nameless local. The module builds, loads, and jumps
+///   to a slot nothing filled in. That is the failure `Unclaimed` exists to make impossible,
+///   arriving through the one path that skipped it.
+///
+/// The second is the reachable one: `Linked::names` is supplied by the caller, this crate has
+/// two string tables to confuse (`.strtab` and `.dynstr`), and passing the wrong one puts every
+/// offset out of range. Silently emitting a module of nameless symbols is the worst available
+/// answer to that mistake. (D091)
+///
+/// # Errors
+///
+/// If the offset is past the end of the table, if the name has no terminator inside it, or if
+/// it is not UTF-8.
+fn string_at(table: &[u8], at: u32) -> Result<String, BuildError> {
+    let at = usize::try_from(at).map_err(|_| BuildError::SymbolName(at))?;
+    let rest = table
+        .get(at..)
+        .ok_or_else(|| BuildError::SymbolName(u32::try_from(at).unwrap_or(u32::MAX)))?;
     let end = rest
         .iter()
         .position(|byte| *byte == 0)
-        .unwrap_or(rest.len());
-    String::from_utf8_lossy(rest.get(..end).unwrap_or_default()).into_owned()
+        .ok_or_else(|| BuildError::SymbolName(u32::try_from(at).unwrap_or(u32::MAX)))?;
+    core::str::from_utf8(rest.get(..end).unwrap_or_default())
+        .map(str::to_owned)
+        .map_err(|_| BuildError::SymbolName(u32::try_from(at).unwrap_or(u32::MAX)))
 }
 
 fn read_u16(bytes: &[u8], at: usize) -> Result<u16, BuildError> {
@@ -1101,6 +1126,13 @@ pub enum BuildError {
     /// Named rather than counted, because the answer is always "add these to the manifest"
     /// and a count does not say which.
     Unclaimed(Vec<String>),
+    /// A symbol name could not be read from the string table it points into.
+    ///
+    /// Carries the offset. Out of range, unterminated, or not UTF-8 - all three mean a name
+    /// this builder would have to invent, and inventing one writes a module that names a
+    /// symbol nobody asked for. The usual cause is the wrong string table: `.strtab` where
+    /// `.dynstr` was wanted puts every offset somewhere meaningless. (D091)
+    SymbolName(u32),
     /// A table grew past what a 32-bit offset can address.
     TooLarge,
     /// The bytes handed to [`install`] are not a readable module.
@@ -1129,6 +1161,10 @@ impl core::fmt::Display for BuildError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::MalformedSymbolTable => write!(f, "the symbol table is malformed"),
+            Self::SymbolName(at) => write!(
+                f,
+                "the symbol name at {at:#x} is out of range, unterminated or not UTF-8"
+            ),
             Self::Unclaimed(names) => {
                 write!(f, "no library claims {} symbol(s):", names.len())?;
                 for name in names.iter().take(8) {
@@ -1725,6 +1761,103 @@ mod tests {
         assert_eq!(
             entry[4], 0x12,
             "GLOBAL FUNC, as a launching title writes it"
+        );
+    }
+
+    /// The same fixture, but a name is raw bytes and its offset can be forced out of range.
+    ///
+    /// `linked_symbols` takes `&str`, which is exactly the shape that cannot express either
+    /// case below - so the two defects were unreachable from the existing harness rather than
+    /// untested by choice.
+    fn linked_raw(names: &[(&[u8], u16, Option<u32>)]) -> (Vec<u8>, Vec<u8>) {
+        let mut strings = vec![0_u8];
+        let mut symbols = vec![0_u8; 24];
+        for (name, section, forced) in names {
+            let at = forced.unwrap_or_else(|| u32::try_from(strings.len()).unwrap());
+            if forced.is_none() {
+                strings.extend_from_slice(name);
+                strings.push(0);
+            }
+            symbols.extend_from_slice(&at.to_le_bytes());
+            symbols.push(0x10); // global binding, NOTYPE - what a linker leaves
+            symbols.push(0);
+            symbols.extend_from_slice(&section.to_le_bytes());
+            symbols.extend_from_slice(&0_u64.to_le_bytes());
+            symbols.extend_from_slice(&0_u64.to_le_bytes());
+        }
+        (symbols, strings)
+    }
+
+    fn build_raw(names: &[(&[u8], u16, Option<u32>)]) -> Result<super::Segment, BuildError> {
+        let (symbols, strings) = linked_raw(names);
+        build(
+            Linked {
+                symbols: &symbols,
+                names: &strings,
+                jmprel: &[],
+                rela: &[],
+                pltgot: 0x1000,
+            },
+            "probe",
+            &libraries(),
+            &resolve_all,
+        )
+    }
+
+    #[test]
+    fn a_symbol_name_that_is_not_utf8_is_refused_rather_than_rewritten() {
+        // It used to be read lossily and written back. Measured before the fix: the name
+        // `6c 6f ff 63` came out of the rebuilt string table as `6c 6f ef bf bd 63` - a
+        // different symbol, two bytes longer, in the table a loader resolves against. A
+        // writer has no business being lossy; refusing is the only answer that cannot be
+        // wrong. (D091)
+        let refused = build_raw(&[(&[0x6c, 0x6f, 0xff, 0x63], 1, None)]);
+        assert!(
+            matches!(refused, Err(BuildError::SymbolName(_))),
+            "expected a refusal, got {refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_name_offset_past_the_end_is_refused_rather_than_read_as_no_name() {
+        // The worse of the two, because it defeats `Unclaimed`. An out-of-range offset read
+        // as `""` made `rebuild_symbols` test `!plain.is_empty()` and conclude the symbol was
+        // *defined* - so an undefined symbol never reached `resolve`, was never reported
+        // unclaimed, and was written back as a nameless local. Measured before the fix:
+        // `build` returned `Ok` with `encoded == 0`. The module would load and jump to a slot
+        // nothing filled in, which is precisely what `Unclaimed` exists to prevent.
+        //
+        // Reachable, not theoretical: `Linked::names` comes from the caller and this crate
+        // has two string tables to confuse. Handing it `.strtab` where `.dynstr` was wanted
+        // puts every offset out of range at once.
+        let refused = build_raw(&[(b"whatever", 0, Some(9999))]);
+        assert!(
+            matches!(refused, Err(BuildError::SymbolName(_))),
+            "expected a refusal, got {:?}",
+            refused.map(|segment| segment.encoded)
+        );
+    }
+
+    #[test]
+    fn an_unterminated_name_is_refused_rather_than_swallowing_the_rest_of_the_table() {
+        // The third way the old reader could invent a name: no terminator, so it returned
+        // everything from the offset to the end of the table as one symbol name.
+        let (symbols, _) = linked_raw(&[(b"tail", 1, Some(1))]);
+        let refused = build(
+            Linked {
+                symbols: &symbols,
+                names: b"\0unterminated",
+                jmprel: &[],
+                rela: &[],
+                pltgot: 0x1000,
+            },
+            "probe",
+            &libraries(),
+            &resolve_all,
+        );
+        assert!(
+            matches!(refused, Err(BuildError::SymbolName(_))),
+            "expected a refusal, got {refused:?}"
         );
     }
 }

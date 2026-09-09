@@ -101,6 +101,7 @@ and a per-entry date would not be. Entries from D067 on carry one.
 | 🔴 | D088 | [`libkernel_vaddrs` example: exports as `name vaddr`, and why the names are not ours](decisions/D088-libkernel-vaddrs-example-exports-as.md) | superseded | ~2026-08-29..09-09 |
 | 🟢 | D089 | [Naming a hash backwards is a search over somebody else's vocabulary, so the vocabulary is an argument](decisions/D089-naming-a-hash-backwards-is-a-search.md) | decided | 2026-09-09 |
 | 🟢 | D090 | [The unterminated SFO format is a length, not a promise of text, and reading it as text failed whole files](decisions/D090-the-unterminated-sfo-format-is-a.md) | decided | 2026-09-09 |
+| 🟢 | D091 | [A writer must refuse where a reader may guess, and this crate had them the wrong way round](decisions/D091-a-writer-must-refuse-where-a-reader.md) | decided | 2026-09-09 |
 
 | | meaning |
 |---|---|
