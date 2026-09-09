@@ -65,3 +65,4 @@ otherwise rediscover the hard way.
 | 2026-09-09 | [The symbol level agreed, and the question about it found something](worklog/055-the-symbol-level-agreed-and-the.md) |
 | 2026-09-09 | [The accusation in the suffix file was made from a label](worklog/056-the-accusation-in-the-suffix-file-was.md) |
 | 2026-09-09 | [A title id in a citation, read as a fact](worklog/057-a-title-id-in-a-citation-read-as-a-fact.md) |
+| 2026-09-09 | [The audit closed, and the test that makes it cheap next time](worklog/058-the-audit-closed-and-the-test-that.md) |
