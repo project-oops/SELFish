@@ -25,5 +25,5 @@ pub mod param;
 pub mod sfo;
 mod table;
 
-pub use param::{category, Param};
+pub use param::{Param, category};
 pub use sfo::Sfo;

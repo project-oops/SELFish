@@ -143,7 +143,6 @@ pub mod category {
 }
 
 impl Param {
-
     /// The locale named as the default, if the file names one.
     #[must_use]
     pub fn default_language(&self) -> Option<&str> {
@@ -343,7 +342,7 @@ impl Default for Param {
     reason = "a panic in a test is the test failing"
 )]
 mod tests {
-    use super::{category, Param};
+    use super::{Param, category};
 
     const REAL_SHAPE: &str = r#"{
         "titleId": "PPSA01650",

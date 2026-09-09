@@ -68,3 +68,4 @@ otherwise rediscover the hard way.
 | 2026-09-09 | [The audit closed, and the test that makes it cheap next time](worklog/058-the-audit-closed-and-the-test-that.md) |
 | 2026-09-09 | [The magic, settled by the row nobody asked for](worklog/059-the-magic-settled-by-the-row-nobody.md) |
 | 2026-09-09 | [Both magics are accepted, and the cross-census already contained our own file](worklog/060-both-magics-are-accepted-and-the.md) |
+| 2026-09-10 | [A green gate that was never checked, and a commit that took somebody else's work](worklog/061-a-green-gate-that-was-never-checked.md) |
