@@ -880,6 +880,52 @@ fn show_sfo(sfo: &selfish_title::Sfo, original: Option<&[u8]>) {
 }
 
 /// Check a real container against the format table.
+/// The `ex_info` rows, reported separately from the header on purpose.
+///
+/// A header row differing is a claim about the container format; a tail row differing usually
+/// just means "not a fake container", because these values came from a writer that made no
+/// other kind. One combined count would mean neither.
+fn show_tail(result: &selfish_container::Audit) {
+    let Some(first) = result.tail.first() else {
+        say!("");
+        say!("ex_info     not reachable at `header_size - 0x70`, so the tail was not checked.");
+        return;
+    };
+
+    say!("");
+    say!("ex_info     the tail, at {:#x}", first.offset);
+    for row in &result.tail {
+        let mark = if row.matched { "  ok  " } else { " DIFF " };
+        if let Some(found) = row.found {
+            say!(
+                "{mark} {:<14} @{:#06x}  table {:#x}  file {:#x}",
+                row.field,
+                row.offset,
+                row.expected,
+                found
+            );
+        } else {
+            say!(
+                "{mark} {:<14} @{:#06x}  table {:#x}  file (past the dump)",
+                row.field,
+                row.offset,
+                row.expected
+            );
+        }
+    }
+
+    let differing = result.tail_differing();
+    if !differing.is_empty() {
+        say!("");
+        say!(
+            "{} tail row(s) differ. These are what a *fake* container carries, so this",
+            differing.len()
+        );
+        say!("is expected of anything this project did not write - and it is not evidence");
+        say!("that the layout is wrong. Read it with the `kind` line above.");
+    }
+}
+
 fn audit_cmd(file: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = std::fs::read(file)?;
     let result = match selfish_container::audit(&bytes) {
@@ -954,6 +1000,8 @@ fn audit_cmd(file: &Path) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+
+    show_tail(&result);
     Ok(())
 }
 

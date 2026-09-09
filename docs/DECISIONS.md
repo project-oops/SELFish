@@ -104,6 +104,7 @@ and a per-entry date would not be. Entries from D067 on carry one.
 | 🟢 | D091 | [A writer must refuse where a reader may guess, and this crate had them the wrong way round](decisions/D091-a-writer-must-refuse-where-a-reader.md) | decided | 2026-09-09 |
 | 🔴 | D092 | [The container that matched this table was one this table could have written](decisions/D092-the-container-that-matched-this.md) | reversed | 2026-09-09 |
 | 🟢 | D093 | [The audit reports what kind of container it just agreed with, before it reports how many rows agreed](decisions/D093-the-audit-reports-what-kind-of.md) | decided | 2026-09-09 |
+| 🟢 | D094 | [The audit checks the tail it pins, and reports it apart from the header](decisions/D094-the-audit-checks-the-tail-it-pins.md) | decided | 2026-09-09 |
 
 | | meaning |
 |---|---|

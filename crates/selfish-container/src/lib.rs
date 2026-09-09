@@ -551,20 +551,26 @@ impl Declared {
 }
 
 /// Read the `ptype` where the table pins it, without deciding whether the answer is plausible.
+/// Where `ex_info` starts, by the layout this table pins.
+///
+/// `[self_header 32][entry 32 x N][ELF ehdr + phdrs][pad to 16][ex_info 64][npdrm 48]` ends at
+/// `header_size`, so the two tail blocks are the last `0x70` bytes of the header.
+///
+/// This is the **only** place that arithmetic is written. It was written twice for one commit -
+/// once for the `ptype` read and once for the tail rows - and two copies of a layout offset is
+/// the shape of defect this repository's whole `data/` discipline exists to prevent.
+fn ex_info_at(bytes: &[u8]) -> Option<usize> {
+    let header_size = read_at(bytes, 12, 2)?;
+    let at = usize::try_from(header_size).ok()?.checked_sub(0x70)?;
+    // The tail has to be inside the file for either caller to read a field out of it.
+    (at.checked_add(0x70)? <= bytes.len()).then_some(at)
+}
+
 fn declared_kind(bytes: &[u8]) -> Declared {
-    // `[... ex_info 64][npdrm 48]` ends at `header_size`, so `ex_info` starts 0x70 before it
-    // and `ptype` is eight bytes into that.
-    let Some(header_size) = read_at(bytes, 12, 2) else {
-        return Declared::Unreachable;
-    };
-    let Some(at) = usize::try_from(header_size)
-        .ok()
-        .and_then(|size| size.checked_sub(0x70))
+    let Some(value) = ex_info_at(bytes)
         .and_then(|ex| ex.checked_add(8))
+        .and_then(|at| read_at(bytes, at, 8))
     else {
-        return Declared::Unreachable;
-    };
-    let Some(value) = read_at(bytes, at, 8) else {
         return Declared::Unreachable;
     };
     let known = table::group("ptype")
@@ -572,6 +578,36 @@ fn declared_kind(bytes: &[u8]) -> Declared {
         .find(|(_, candidate)| *candidate == value)
         .map(|(name, _)| name);
     Declared::Ptype { value, known }
+}
+
+/// Check the `ex_info` rows the table pins, rebased onto the file.
+///
+/// Empty when the tail is not reachable - the same condition [`Declared::Unreachable`] reports,
+/// so the two never disagree about whether there was anything to read.
+///
+/// **These rows are the values a *fake* container carries**, because the writer they came from
+/// only ever wrote fake ones. A vendor container differing here is the table meeting a kind it
+/// does not describe, not the file being wrong - the same reading the five header rows needed,
+/// and the reason a verdict is reported per row rather than as one pass or fail.
+fn tail_rows(bytes: &[u8]) -> Vec<RowVerdict> {
+    let Some(base) = ex_info_at(bytes) else {
+        return Vec::new();
+    };
+    table::fixed_fields("ex_info")
+        .into_iter()
+        .filter_map(|row| {
+            let at = base.checked_add(row.offset)?;
+            let found = read_at(bytes, at, row.size);
+            Some(RowVerdict {
+                matched: found == Some(row.value),
+                field: row.field,
+                offset: at,
+                expected: row.value,
+                found,
+                note: row.note,
+            })
+        })
+        .collect()
 }
 
 /// The result of checking a real container against the table.
@@ -593,6 +629,12 @@ pub struct Audit {
     pub generation: Generation,
     /// One verdict per fixed row in the header.
     pub header: Vec<RowVerdict>,
+    /// One verdict per fixed row of `ex_info`, rebased onto the file.
+    ///
+    /// Empty when the tail is not reachable. These are the values a **fake** container
+    /// carries - the writer they came from wrote no other kind - so a vendor container
+    /// differing here is the table meeting something it does not describe.
+    pub tail: Vec<RowVerdict>,
     /// What the container says its own kind is - the guard against reading a round trip as
     /// a confirmation. See [`Declared`].
     pub declared: Declared,
@@ -603,6 +645,17 @@ impl Audit {
     #[must_use]
     pub fn confirmed(&self) -> usize {
         self.header.iter().filter(|row| row.matched).count()
+    }
+
+    /// The `ex_info` rows the file contradicted.
+    ///
+    /// Separate from [`Self::differing`] rather than folded into it, because the two answer
+    /// different questions: a header row differing is a claim about the container format, and
+    /// a tail row differing is usually just "this is not a fake container". Summing them would
+    /// produce a single number that means neither.
+    #[must_use]
+    pub fn tail_differing(&self) -> Vec<&RowVerdict> {
+        self.tail.iter().filter(|row| !row.matched).collect()
     }
 
     /// The rows the file contradicted - the ones a new generation may have changed.
@@ -646,6 +699,7 @@ pub fn audit(bytes: &[u8]) -> Result<Audit, ContainerError> {
     Ok(Audit {
         generation,
         header,
+        tail: tail_rows(bytes),
         declared: declared_kind(bytes),
     })
 }
@@ -1398,5 +1452,58 @@ mod tests {
         assert_eq!(result.declared, Declared::Unreachable);
         assert!(!result.declared.is_round_trip());
         assert!(result.declared.caveat().is_some());
+    }
+
+    #[test]
+    fn a_container_this_crate_builds_confirms_the_tail_rows_as_well() {
+        // The header half of this has been asserted since D084. The tail was pinned by the
+        // same table and never checked, which is how `selfish audit` came to have nothing to
+        // say about the block a whole sweep was reporting as "not located".
+        for generation in [Generation::Current, Generation::Previous] {
+            let built = build(&payload(), generation).expect("builds");
+            let result = audit(&built).expect("audits");
+
+            assert_eq!(
+                result.tail.len(),
+                4,
+                "{generation:?}: paid, ptype, app_version, fw_version"
+            );
+            assert!(
+                result.tail_differing().is_empty(),
+                "{generation:?}: tail rows this crate wrote and then failed to confirm: {:?}",
+                result.tail_differing(),
+            );
+        }
+    }
+
+    #[test]
+    fn a_tail_row_that_differs_reports_the_value_the_file_holds() {
+        // The point of the row rather than a pass/fail: a vendor container differs here by
+        // construction, and "differs" without the value is not something anybody can act on.
+        // Six system apps came back with `paid` values this table has never seen, and the
+        // values are the whole of what that measurement was worth.
+        let mut built = build(&payload(), Generation::Current).expect("builds");
+        let base = usize::from(u16::from_le_bytes([built[12], built[13]])) - 0x70;
+        built[base..base + 8].copy_from_slice(&0x1b_ac98_u64.to_le_bytes());
+
+        let result = audit(&built).expect("audits");
+        let differing = result.tail_differing();
+        assert_eq!(differing.len(), 1, "one row changed, one row differs");
+        assert_eq!(differing[0].field, "paid");
+        assert_eq!(differing[0].found, Some(0x1b_ac98));
+        assert_eq!(differing[0].expected, 0x3100_0000_0000_0002);
+    }
+
+    #[test]
+    fn an_unreachable_tail_yields_no_rows_rather_than_rows_read_from_nowhere() {
+        // `tail` and `declared` must agree about whether there was anything to read. If the
+        // tail could be read while the kind could not, an audit could report four confirmed
+        // rows from bytes it never located.
+        let mut built = build(&payload(), Generation::Current).expect("builds");
+        built[12..14].copy_from_slice(&u16::MAX.to_le_bytes());
+
+        let result = audit(&built).expect("audits");
+        assert!(result.tail.is_empty());
+        assert_eq!(result.declared, Declared::Unreachable);
     }
 }
