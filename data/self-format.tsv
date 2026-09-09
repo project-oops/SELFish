@@ -186,18 +186,18 @@
 #
 struct	field	offset	size	type	value	note
 self_header	magic	0	4	u32	0x1D3D154F	bytes 4F 15 3D 1D. All three sources
-self_header	version	4	1	u8	0x00	OpenOrbis VERSION; fpPS4 reads 4..7 as "always 00 01 01 12"
+self_header	version	4	1	u8	0x00	OpenOrbis VERSION; fpPS4 reads 4..7 as "always 00 01 01 12" [genuine: 0x10 on 23/23, sweep 20260909-175052]
 self_header	mode	5	1	u8	0x01	OpenOrbis MODE
 self_header	endian	6	1	u8	0x01	OpenOrbis ENDIAN. 1 is little-endian
-self_header	attributes	7	1	u8	0x12	OpenOrbis ATTRIBS
-self_header	key_type	8	4	u32	0x101	OpenOrbis. shadPS4 splits this - see the two rows below
+self_header	attributes	7	1	u8	0x12	OpenOrbis ATTRIBS [genuine: 0x32 on 23/23, sweep 20260909-175052]
+self_header	key_type	8	4	u32	0x101	OpenOrbis. shadPS4 splits this - see the two rows below [genuine: 0x10000301 on 23/23, sweep 20260909-175052]
 self_header	category	8	1	u8	0x01	shadPS4 name; fpPS4 Content_Type, 1 on a SELF and 4 on a PUP entry
-self_header	program_type	9	1	u8	0x01	shadPS4 name. Low bytes of key_type read separately
+self_header	program_type	9	1	u8	0x01	shadPS4 name. Low bytes of key_type read separately [genuine: 0x03 on 23/23, sweep 20260909-175052]
 self_header	header_size	12	2	u16	-	offset at which the ELF payload begins
 self_header	meta_size	14	2	u16	-	fpPS4 names this Sign_Size and queries whether it is metadata
 self_header	file_size	16	8	u64	-	OpenOrbis u64; shadPS4 reads u32 + u32 padding, same bytes
 self_header	segment_count	24	2	u16	-	OpenOrbis num_entries
-self_header	flags	26	2	u16	0x0022	both readers call this unknown/always-0x22. = 0x2 | (signed_block_count << 4)
+self_header	flags	26	2	u16	0x0022	both readers call this unknown/always-0x22. = 0x2 | (signed_block_count << 4) [genuine: 0x0052 on 23/23 = five signed blocks, sweep 20260909-175052]
 self_header	padding3	28	4	u32	0x00000000	
 self_header	(size)	-	32	-	-	
 self_segment	flags	0	8	u64	-	see the segment_flag rows
