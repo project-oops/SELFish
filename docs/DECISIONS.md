@@ -102,7 +102,7 @@ and a per-entry date would not be. Entries from D067 on carry one.
 | 🟢 | D089 | [Naming a hash backwards is a search over somebody else's vocabulary, so the vocabulary is an argument](decisions/D089-naming-a-hash-backwards-is-a-search.md) | decided | 2026-09-09 |
 | 🟢 | D090 | [The unterminated SFO format is a length, not a promise of text, and reading it as text failed whole files](decisions/D090-the-unterminated-sfo-format-is-a.md) | decided | 2026-09-09 |
 | 🟢 | D091 | [A writer must refuse where a reader may guess, and this crate had them the wrong way round](decisions/D091-a-writer-must-refuse-where-a-reader.md) | decided | 2026-09-09 |
-| 🟢 | D092 | [The container header is confirmed at the current generation, and the limit it replaces is categorical rather than generational](decisions/D092-the-container-header-is-confirmed-at.md) | confirmed | 2026-09-09 |
+| 🔴 | D092 | [The container that matched this table was one this table could have written](decisions/D092-the-container-that-matched-this.md) | reversed | 2026-09-09 |
 
 | | meaning |
 |---|---|

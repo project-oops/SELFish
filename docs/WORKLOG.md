@@ -56,3 +56,4 @@ otherwise rediscover the hard way.
 | 2026-09-09 | [The same function twice, written to opposite standards](worklog/046-the-same-function-twice-to-opposite.md) |
 | 2026-09-09 | [The table was right, and the limit was the wrong shape](worklog/047-the-table-was-right-and-the-limit-was.md) |
 | 2026-09-09 | [A label in a candidate list is not provenance](worklog/048-a-label-in-a-candidate-list-is-not.md) |
+| 2026-09-09 | [The confirmation was circular, and the entry that caught it had just written the rule](worklog/049-the-confirmation-was-circular-and-the.md) |

@@ -17,58 +17,58 @@
 # it was derived from. `titles/` holds packages to check output against - nothing in `tool/`
 # may open them. (orbistoun#D181, orbistoun#D182)
 #
-# # THE LIMIT THAT MATTERED, AND WHAT SETTLED IT
+# # THE LIMIT THAT MATTERS: this is still the previous console's container
 #
-# OpenOrbis is a PS4 toolchain and both readers are PS4-generation loaders, so every row here
-# was derived from previous-generation material and this section used to say, in bold, that
-# nothing in it was confirmed for the current generation. A file built from this table was a
-# hypothesis.
+# OpenOrbis is a PS4 toolchain and both readers are PS4-generation loaders. **Nothing here is
+# confirmed against current-generation vendor material.** The container is expected to be
+# closely related and it is the only lawful starting point available, but every row is
+# `IMPLEMENTATIONS` at PS4 level until something current accepts or rejects a file built from it.
 #
-# **The nine fixed rows of `self_header` are confirmed at the current generation.** On
-# 2026-09-09 obSCEne's `048-selfaudit` read a real current-generation **retail vendor game**
-# container on the console - `/system_ex/app/PPSA03416/eboot.bin` - and compared each fixed
-# field against the value this table pins. All nine matched: `version` 0x0, `mode` 0x1,
-# `endian` 0x1, `attributes` 0x12, `key_type` 0x101, `category` 0x1, `program_type` 0x1,
-# `flags` 0x22, `padding3` 0x0. Verdict `confirmed`.
+# That is not a footnote. This project has been caught believing an emulator-derived fact that
+# turned out to describe a different program, and the whole reason `mkself` matters is to
+# reach the *current* system loader. A file built from this table is a hypothesis.
 #
-# That is principle 2 working in the direction it is usually not: derived from citable
-# previous-generation sources, then confirmed - not refuted - by current-generation material.
-# The header bytes never left the console; only the verdict did (D086).
+# ## What was measured on hardware, and why it does not lift that limit
 #
-#   measured-by: obscene 048-selfaudit, sweep 20260909-144348, payload leg
-#   settles: self_header rows version, mode, endian, attributes, key_type, category,
-#            program_type, flags, padding3 - at the current generation, for an application
-#            container
+# On 2026-09-09 obSCEne's `048-selfaudit` audited nine containers on a current-generation
+# console. One matched all nine fixed `self_header` rows -
+# `/system_ex/app/PPSA03416/eboot.bin`, verdict `confirmed`. It was reported as a retail vendor
+# game, and this table said so for one commit.
 #
-# ## The five rows that differ on a system container, and the limit that replaces the old one
+# **It is a fake container, and the confirmation is circular.** The same sweep read its
+# `ex_info`, and every field is this table's own default: `ptype` 0x1 - which the row below
+# calls the thing that makes a fake SELF fake - `paid` 0x3100000000000002, the OpenOrbis
+# default, `app_version` 0x0, `fw_version` 0x0, and `npdrm/type` 0x3. A container written from
+# this table agreeing with this table is a round-trip check, not evidence about the vendor.
 #
-# The same sweep read `/system/vsh/app/NPXS40038/eboot.bin`, a vendor **system app**, and five
-# of the nine differ there: `version` 0x10, `attributes` 0x32, `key_type` 0x10000301,
-# `program_type` 0x3, `flags` 0x52. A second container the probe classed as fake,
-# `/system_ex/app/FAKE00000/eboot.bin`, carries exactly those five values too.
+# The `vendor` beside that path is a **hardcoded label** in the probe's candidate array
+# (`obs_audit_candidates[]` in obSCEne's `src/probe/sections/selfaudit.c`), naming what the
+# probe hoped to find at a path. The same array labels another path `fake`, and that label was
+# read as provenance once already. Neither label is a measurement. (D092)
 #
-# So the honest limit is no longer generational, it is **categorical**: these five rows are
-# pinned for an *application* container and are not invariants of the format. `program_type`
-# says so in its own name. `flags` is computed rather than constant - the note below gives
-# `0x2 | (signed_block_count & 0x7) << 4`, and 0x52 is that same formula with five signed
-# blocks where 0x22 is two - so a row of the table that reads like a constant is really a
-# default. The other three are unexplained and are recorded as observed, not derived: what a
-# system container's `version` 0x10 or `attributes` 0x32 *mean* still needs a citable source,
-# and principle 5 says an unexplained value is named and left alone rather than guessed at.
+# ## What the measurement is worth, which is not nothing
 #
-# **This is not what `mkself` writes for a privileged tier, and that is worth knowing.**
-# `Privilege` in `selfish-container` alters only `paid` in `self_ex_info`, and `write_header`
-# uses `generation` for the four magic bytes alone. The five fields above come from this table
-# for every tier and both generations, so a root-tier gen-5 container built here carries the
-# *application* values - and would audit as `confirmed`, the way the retail game did.
+#   * The current-generation loader **accepts** a container carrying these values: a package
+#     built from this table installs, mounts, loads and executes (worklog 040). That was
+#     already known and this is consistent with it.
+#   * The containers most plausibly *genuine* vendor material - six system apps under
+#     `/system/vsh/app/` - all **diverge** on five rows: `version` 0x10, `attributes` 0x32,
+#     `key_type` 0x10000301, `program_type` 0x3, `flags` 0x52. Their `ex_info` could not be
+#     located at `header_size - 0x70` at all, so the tail layout is unconfirmed for them too.
+#   * So the honest reading of the sweep is the opposite of the first one: **every container
+#     that matched this table is one this table could have produced, and every container that
+#     could not have been is different.** Whether that difference is the generation or the kind
+#     of container is exactly what a genuine, non-fake application container would settle, and
+#     none has been read yet.
 #
-# `FAKE00000` is **not** a container this collection built: the path is a hardcoded candidate
-# in obSCEne's probe (`src/probe/sections/selfaudit.c`), a place to *look* for a pre-existing
-# third-party container, and its `fake` label describes what the probe hoped to find rather
-# than what produced the file. Two sweep resolutions reported it as ours before anyone checked.
-# So it counts as a **second, independent producer** of the non-application values, which is
-# worth more than the puzzle it looked like: whatever wrote it is not this repository, and it
-# agrees with the vendor system app on all five. (D092)
+# `flags` is worth one more line, because it is not a constant whichever way that goes. The
+# note below derives it as `0x2 | (signed_block_count & 0x7) << 4`; `0x22` is two signed blocks
+# and the measured `0x52` is five. A row that reads like a constant is a default.
+#
+#   measured-by: obscene 048-selfaudit, sweeps 20260909-144348 and 20260909-151910, payload leg
+#   settles: nothing about vendor material. Records that a fake container built from this
+#            table round-trips through a current-generation console's own reader, and that six
+#            vendor system apps differ from it in five named fields.
 #
 # # Why three sources, and what each was needed for
 #

@@ -1,6 +1,10 @@
 # 2026-09-09 - The table was right, and the limit was the wrong shape
 
 
+**Withdrawn by [worklog 049](049-the-confirmation-was-circular-and-the.md), the same day.** The
+container this entry calls a retail vendor game is a fake one, so the confirmation below is
+circular. Kept unchanged: how it went wrong is the useful part, and 049 says how.
+
 `data/self-format.tsv` has carried a bold warning since it was written: derived from a PS4
 toolchain and two PS4-generation readers, so **nothing in it is confirmed for the current
 generation**, and a file built from it is a hypothesis. D084 built the audit to check it, D085

@@ -1,6 +1,8 @@
-# D092 - The container header is confirmed at the current generation, and the limit it replaces is categorical rather than generational
+# D092 - The container that matched this table was one this table could have written
 
-**Status: decided. 2026-09-09.**
+**Status: reversed, 2026-09-09, by its own method.** The original claim - a retail vendor game
+confirms the header at the current generation - is withdrawn: the container was fake, so the
+match was circular. The text below is kept unchanged, because how it went wrong is the point.
 
 
 **A real current-generation retail vendor game confirms all nine fixed `self_header` rows. The
@@ -92,3 +94,59 @@ repository wrote a container agreeing with a vendor system app on all five non-a
 values. That makes it a *second, independent producer* of those values rather than a loose end -
 weak evidence, because nothing here knows what wrote it, but evidence pointing the same way as
 the vendor container rather than at us.
+
+---
+
+## Reversed, 2026-09-09: the confirming container is fake, and this entry made its own mistake
+
+**The headline claim above is withdrawn.** `/system_ex/app/PPSA03416/eboot.bin` is not retail
+vendor material. The same sweep read its `ex_info`, and every field is this repository's own
+default:
+
+| field | measured | what `data/self-format.tsv` pins |
+|---|---|---|
+| `ptype` | `0x1` | `0x1` - *"PTYPE_FAKE. THIS is what makes a fake SELF fake"* |
+| `paid` | `0x3100000000000002` | `0x3100000000000002` - "OpenOrbis default" |
+| `app_version` | `0x0` | `0x0` |
+| `fw_version` | `0x0` | `0x0` |
+| `npdrm/type` | `0x3` | `0x3` |
+
+A container written from this table agreeing with this table is a round-trip check. It is not
+evidence about the vendor, and "the nine fixed rows are confirmed at the current generation" does
+not follow from it. The limit the table used to carry is restored.
+
+## The part that stings
+
+The `vendor` label on that path is a **hardcoded string in the probe's candidate array** -
+`{"vendor", "/system_ex/app/PPSA03416/eboot.bin"}` in obSCEne's `src/probe/sections/selfaudit.c`
+- naming what the probe hoped to find at a path.
+
+The array immediately above it is `{"fake", "/system_ex/app/FAKE00000/eboot.bin"}`. **This entry
+already caught that exact defect**, in the section above and in worklog 048: a label in a
+candidate list is not provenance, and it had reached two resolutions as a fact about a builder.
+The lesson was written down, and then the *neighbouring row of the same array* was believed
+without applying it - because that one was convenient, and the one that was checked was not.
+
+"An attribution that happens to be convenient deserves the same check as one that is not" is
+what this entry says four paragraphs up. It failed its own test in the same hour it wrote it.
+The check that would have caught it is the one that caught `FAKE00000`: ask what the file
+*measures* as, not what the label calls it - and `ptype` is the field that answers, which is why
+the table gives it that note.
+
+## What the sweep is actually worth
+
+Not nothing, and the honest reading is close to the opposite of the first one:
+
+- The current-generation loader **accepts** these values - already known from worklog 040, where
+  a package built here installs, mounts, loads and executes. Consistent, not new.
+- The containers most plausibly genuine vendor material - six system apps under
+  `/system/vsh/app/` - **all diverge** on the same five rows, and none of their `ex_info` blocks
+  could be located at `header_size - 0x70` either.
+- So: every container that matched is one this table could have produced, and every container
+  that could not have been produced here is different. Whether that difference is generational
+  or categorical is still open, and a genuine non-fake application container is what would
+  settle it. None has been read.
+
+Filed as a new request rather than a reopening. The five `ptype`/`paid` fields are also the
+reason REQ-20260909T1545Z-2d84 was worth filing before any of this was known: asking for the
+tail to be *reported* rather than *tested* is what surfaced it.
