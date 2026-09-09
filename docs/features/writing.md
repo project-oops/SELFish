@@ -194,7 +194,33 @@ call is not one a host-side program can make, so it names the call rather than a
 
 `--deeplink` makes an entry that launches something else instead of carrying its own
 executable, which is the shape to use when the code is already running as a payload.
-`--category` and `--privilege` default to what a Prospero homebrew entry uses.
+`--category` and `--privilege` default to what a Prospero homebrew entry uses (`category: 65536`, `privilege: app`).
+
+### Choosing `--category` and `--privilege`
+
+Execution on PlayStation systems is governed by two orthogonal axes:
+
+1. **Privilege Tier (`paid` / Authority ID in the SELF header)**:
+   - `app` (`0x3800000000000000`): Standard sandboxed execution.
+   - `sysmodule` (`0x3800000000000001`): Dynamic system module privileges.
+   - `system` (`0x3800000000000001`): Unsandboxed system service privileges.
+   - `root` (`0x8000000000000001`): Full kernel root authority (jailbreak syscalls, arbitrary `/dev/*` nodes).
+
+2. **Application Category (`applicationCategoryType` in `param.json`)**:
+   Controls Direct Memory (DMEM) hardware allocation, HDMI video scanout ownership (`SceSysAvControl`), and process lifecycle:
+
+| Category Value | Constant / Name | Memory (DMEM) | HDMI Video Out | Multi-Tasking Behavior | Requirements / Gotchas |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`0`** (`0x00000000`) | **`BIG_APP`** (`native_game`) | **Full Budget**<br>~12.5 GB (PS5)<br>~5.5 GB (PS4) | **Exclusive Primary**<br>(Bus 0 / `OBS_VIDEO_BUS_MAIN`)<br>Full 4K / HDR / 120Hz | **Foreground exclusive**.<br>Only one Big App can run at a time; launching another suspends or closes the current one. | Requires `/app0/sce_module/libc.prx`<br>Gated by `PFAuthClient` (`pltauth-patch` required) |
+| **`65536`** (`0x00010000`) | **`SYSTEM_APP`** | **0 Direct Memory**<br>(Userland `mmap`/`malloc` only) | **Denied Primary**<br>(`sceVideoOutOpen` fails `0x80290001`) | Background utility or standalone daemon | No `libc.prx` or `pltauth` required |
+| **`131072`** (`0x00020000`) | **`MINI_APP`** | **Restricted Budget**<br>(~256 MB – 512 MB) | **Overlay Compositor**<br>Renders to compositor layer, not raw HDMI | **Concurrent**.<br>Runs simultaneously alongside a running Big App (e.g. Spotify, Quick Menu) | Constrained PRX & system limits |
+| **`3`** (`0x00000003`) | **`DAEMON`** | System memory pool | **None**<br>(Headless only) | Background system services | Headless execution |
+| **`262144`** (`0x00040000`) | **`MEDIA_APP`** | Media streaming budget | HDCP / DRM Video Layer | Video streaming apps (YouTube, Netflix) | Dedicated media video path |
+
+> [!NOTE]
+> **Games and GUIs requiring screen output must use `--category 0`.**
+> If a GUI or emulator runs under `65536` (`SYSTEM_APP`), `sceVideoOutOpen` fails with `0x80290001 (SCE_VIDEO_OUT_ERROR_INVALID_VALUE)` and `sceKernelAllocateDirectMemory` fails because the kernel grants 0 bytes of DMEM to system apps.
+> Running as Category 0 also means `/app0/sce_module/libc.prx` must be present and `pltauth-patch` must be active under kstuff.
 
 Prosperous can push the finished directory to a scan root, where an auto-mounter registers it
 without the privileged call at all.

@@ -27,8 +27,9 @@ struct Cli {
     command: Command,
 }
 
-/// Category identifier for Prospero homebrew entries.
-const PROSPERO_CATEGORY: i64 = 0x10000;
+/// Category identifier for default Prospero homebrew entries (System App / 0x10000).
+/// Games and GUIs needing 12.5GB DMEM and exclusive HDMI bus 0 pass `--category 0` (Big App).
+const PROSPERO_CATEGORY: i64 = selfish_title::category::SYSTEM_APP;
 const NATIVE_CATEGORY: i64 = PROSPERO_CATEGORY;
 
 #[derive(Subcommand)]
@@ -86,7 +87,7 @@ enum BuildTarget {
         /// Source directory carrying application files (copied verbatim).
         #[arg(long, short)]
         root: Option<PathBuf>,
-        /// The category a title declares.
+        /// The category a title declares (0 = Big App/Game, 65536 = System App/Daemon, 131072 = Mini App).
         #[arg(long, default_value_t = PROSPERO_CATEGORY)]
         category: i64,
         /// Privilege tier: app, sysmodule, system, or root.
@@ -256,7 +257,7 @@ enum Command {
         /// Extra files to place in the title directory, copied verbatim.
         #[arg(long)]
         root: Option<PathBuf>,
-        /// The category a title declares. Defaults to what a native homebrew entry uses.
+        /// The category a title declares (0 = Big App/Game, 65536 = System App/Daemon, 131072 = Mini App). Defaults to system app.
         #[arg(long, default_value_t = NATIVE_CATEGORY)]
         category: i64,
         /// Privilege tier: app, sysmodule, system, or root.

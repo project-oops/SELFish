@@ -76,6 +76,11 @@ generation, both read and written here.
 *`selfish-title`. It depends on nothing else in this repository: it holds what a title says
 about *itself*, which is a different kind of fact from a container layout.*
 
+**`applicationCategoryType`** - the integer field in `param.json` (and `CATEGORY` in `PARAM.SFO`)
+that dictates hardware resource budgets (DMEM) and display ownership (`0` = Big App with
+12.5GB DMEM and exclusive HDMI bus 0, `65536` = System App with 0 DMEM and denied bus 0, `131072` =
+Mini App). Orthogonal to the SELF container's `paid` privilege tier.
+
 **Title directory** - a title laid out as directories and files rather than packed into a
 package: an eboot beside `sce_sys/`. What an auto-mounter can register.
 

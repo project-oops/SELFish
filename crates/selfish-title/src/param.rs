@@ -89,6 +89,9 @@ impl Param {
 
     /// The application category, where the file states one.
     ///
+    /// See [`category`] for known category types (`BIG_APP`, `SYSTEM_APP`, etc.)
+    /// and their hardware/arbitration implications.
+    ///
     /// Accepts a string as well as a number, because dumping tools write both. The console's
     /// own files use a number; a reader that refuses the string form reports a title as
     /// having no category rather than reporting the tool as sloppy.
@@ -99,6 +102,47 @@ impl Param {
             .as_i64()
             .or_else(|| value.as_str()?.trim().parse().ok())
     }
+}
+
+/// Application category types (`applicationCategoryType` in `param.json`).
+///
+/// Dictates Direct Memory (DMEM) allocation budget, HDMI video out bus ownership
+/// via `SceSysAvControl`, and process lifecycle / multitasking behavior.
+/// Category is orthogonal to process privilege (`paid` / Authority ID).
+pub mod category {
+    /// Big App / Native Game (`0`):
+    /// - Direct Memory (DMEM): Full budget (~12.5 GB on PS5, ~5.5 GB on PS4).
+    /// - Video Out: Exclusive primary HDMI scanout (`OBS_VIDEO_BUS_MAIN` / bus 0).
+    /// - Lifecycle: Foreground exclusive. Launching another Big App suspends or terminates.
+    /// - Requirements: Dynamic linker enforces `/app0/sce_module/libc.prx`. Gated by
+    ///   `PFAuthClient` entitlement check (requires `pltauth-patch` under kstuff).
+    pub const BIG_APP: i64 = 0;
+
+    /// System App (`65536` / `0x10000`):
+    /// - Direct Memory (DMEM): 0 bytes granted by Resource Arbitrator (userland `mmap`/`malloc` only).
+    /// - Video Out: Denied primary HDMI scanout (`sceVideoOutOpen` fails with `0x80290001`).
+    /// - Lifecycle: Background utility / daemon / standalone tool.
+    /// - Requirements: Does not require `libc.prx` or `pltauth-patch`.
+    pub const SYSTEM_APP: i64 = 0x10000;
+
+    /// Mini App (`131072` / `0x20000`):
+    /// - Direct Memory (DMEM): Constrained budget (~256 MB - 512 MB).
+    /// - Video Out: Secondary overlay / system compositor layer.
+    /// - Lifecycle: Concurrent; runs alongside a Big App without preempting it.
+    pub const MINI_APP: i64 = 0x20000;
+
+    /// Daemon (`3`):
+    /// - Direct Memory (DMEM): Minimal / system memory pool.
+    /// - Video Out: None (headless background daemon).
+    pub const DAEMON: i64 = 3;
+
+    /// Media App (`262144` / `0x40000`):
+    /// - Direct Memory (DMEM): Custom media streaming budget.
+    /// - Video Out: Dedicated HDCP / protected video path.
+    pub const MEDIA_APP: i64 = 0x40000;
+}
+
+impl Param {
 
     /// The locale named as the default, if the file names one.
     #[must_use]
@@ -299,7 +343,7 @@ impl Default for Param {
     reason = "a panic in a test is the test failing"
 )]
 mod tests {
-    use super::Param;
+    use super::{category, Param};
 
     const REAL_SHAPE: &str = r#"{
         "titleId": "PPSA01650",
@@ -444,5 +488,21 @@ mod tests {
         let parsed = Param::parse(&bytes).expect("document");
         assert_eq!(param, parsed);
         assert!(parsed.is_ps5_native());
+    }
+
+    #[test]
+    fn category_constants_and_set_basics() {
+        assert_eq!(category::BIG_APP, 0);
+        assert_eq!(category::SYSTEM_APP, 0x10000);
+        assert_eq!(category::MINI_APP, 0x20000);
+        assert_eq!(category::DAEMON, 3);
+        assert_eq!(category::MEDIA_APP, 0x40000);
+
+        let mut param = Param::new();
+        param.set_basics("CUSA00001", "Big Game", "en-US", category::BIG_APP);
+        assert_eq!(param.category(), Some(category::BIG_APP));
+
+        param.set_basics("CUSA00002", "System Tool", "en-US", category::SYSTEM_APP);
+        assert_eq!(param.category(), Some(category::SYSTEM_APP));
     }
 }

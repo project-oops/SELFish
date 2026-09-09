@@ -9,9 +9,11 @@ the difference is the difference between recording what a file was and offering 
 obSCEne asked for the nine fixed header values measured across 23 genuine containers to be
 recorded in `data/self-format.tsv` as a **"signed vendor profile"**, set beside the existing rows
 as *"an unambiguous specification of gen-5 signed vendor containers versus fake containers"*
-(REQ-20260909T1715Z-5b91). The measurement is sound and most of it was already recorded. The
-framing was declined, and the reasons are worth a number because the request will be made again -
-by a consumer, or by this repository in six months.
+(REQ-20260909T1715Z-5b91, **filed 18:15Z** - and then asked again under the *same id* filed
+18:55Z, which is why the timestamp is part of the citation; see the note at the head of SELFish's
+inbox). The measurement is sound and most of it was already recorded. The framing was declined
+both times, and the reasons are worth a number because the request will be made again - by a
+consumer, or by this repository in six months.
 
 ## Why not a second profile
 
