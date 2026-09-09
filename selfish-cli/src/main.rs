@@ -891,6 +891,24 @@ fn audit_cmd(file: &Path) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     say!("generation  {:?} (from the magic)", result.generation);
+    // Printed **before** the row count, deliberately. The count is the number a reader
+    // remembers, and on a container written from this table it is nine out of nine no matter
+    // what - so what kind of container this is has to arrive first or it arrives too late.
+    // (D092: it arrived too late once, and the confirmation it produced had to be reversed.)
+    match &result.declared {
+        selfish_container::Declared::Ptype { value, known } => {
+            let name = known.as_deref().unwrap_or("not a kind this table names");
+            say!("kind        ptype {value:#x} - {name}");
+        }
+        selfish_container::Declared::Unreachable => {
+            say!("kind        unknown - `ex_info` is not at `header_size - 0x70` in this file");
+        }
+    }
+    if let Some(caveat) = result.declared.caveat() {
+        say!("            {caveat}");
+    }
+    say!("");
+
     say!(
         "confirmed   {} of {} fixed header row(s) match the table",
         result.confirmed(),

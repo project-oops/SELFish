@@ -103,6 +103,7 @@ and a per-entry date would not be. Entries from D067 on carry one.
 | 🟢 | D090 | [The unterminated SFO format is a length, not a promise of text, and reading it as text failed whole files](decisions/D090-the-unterminated-sfo-format-is-a.md) | decided | 2026-09-09 |
 | 🟢 | D091 | [A writer must refuse where a reader may guess, and this crate had them the wrong way round](decisions/D091-a-writer-must-refuse-where-a-reader.md) | decided | 2026-09-09 |
 | 🔴 | D092 | [The container that matched this table was one this table could have written](decisions/D092-the-container-that-matched-this.md) | reversed | 2026-09-09 |
+| 🟢 | D093 | [The audit reports what kind of container it just agreed with, before it reports how many rows agreed](decisions/D093-the-audit-reports-what-kind-of.md) | decided | 2026-09-09 |
 
 | | meaning |
 |---|---|

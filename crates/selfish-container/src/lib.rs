@@ -485,6 +485,95 @@ pub struct RowVerdict {
     pub note: String,
 }
 
+/// What a container says about its own kind, read where the table pins `ex_info.ptype`.
+///
+/// **This is what stops an audit being read as evidence it is not.** A container written from
+/// this table matches this table, so "nine of nine confirmed" on a fake container is a round
+/// trip and says nothing whatever about vendor material. That mistake was made here against
+/// real hardware output, by a reader holding the contradicting value in the same log, and it
+/// took a commit to undo - so the audit now carries the answer beside the verdict instead of
+/// leaving it to be looked up. (D092)
+///
+/// The value is **reported, not tested**. Deciding "did I find `ex_info`" by asking whether
+/// the value is a *recognised* `ptype` is what hid this the first time round: that test fails
+/// on precisely the material worth having, and "not located" then reads as a fact about the
+/// format rather than about the reader. A caller gets the number, plus whatever this table can
+/// say about it, and draws its own conclusion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Declared {
+    /// The value at the offset the table pins for `ex_info.ptype`.
+    Ptype {
+        /// The raw value, whatever it turns out to be.
+        value: u64,
+        /// The name the `ptype` group gives it, if it names it at all.
+        known: Option<String>,
+    },
+    /// The tail is not where the table says it is, or the file stops before it.
+    ///
+    /// Not an error, and not a judgement about the format: `header_size - 0x70` is a
+    /// PS4-derived layout, and a container whose tail sits elsewhere reads as this.
+    Unreachable,
+}
+
+impl Declared {
+    /// Whether a matching audit would only be a round trip.
+    ///
+    /// True when the container declares itself fake - the one case where agreement with this
+    /// table is guaranteed in advance and so proves nothing. `false` for a value this crate
+    /// cannot place, because *not known to be fake* is not *known to be genuine*, and
+    /// [`Self::caveat`] is what says so in words.
+    #[must_use]
+    pub fn is_round_trip(&self) -> bool {
+        matches!(self, Self::Ptype { known, .. } if known.as_deref() == Some("fake"))
+    }
+
+    /// A line to print beside a verdict, or `None` when the verdict stands unqualified.
+    #[must_use]
+    pub fn caveat(&self) -> Option<&'static str> {
+        match self {
+            Self::Ptype { known, .. } if known.as_deref() == Some("fake") => Some(
+                "this container declares itself FAKE - it agrees with the table because it was \
+                 written from one, so a match is a round trip and says nothing about vendor \
+                 material",
+            ),
+            Self::Ptype { known: None, .. } => Some(
+                "the value where `ex_info.ptype` should be is not one this table names - either \
+                 this is a kind of container the table does not record, or the tail is not at \
+                 `header_size - 0x70`",
+            ),
+            Self::Unreachable => Some(
+                "`ex_info` could not be reached, so what kind of container this is was never \
+                 established - a match cannot be told apart from a round trip",
+            ),
+            Self::Ptype { .. } => None,
+        }
+    }
+}
+
+/// Read the `ptype` where the table pins it, without deciding whether the answer is plausible.
+fn declared_kind(bytes: &[u8]) -> Declared {
+    // `[... ex_info 64][npdrm 48]` ends at `header_size`, so `ex_info` starts 0x70 before it
+    // and `ptype` is eight bytes into that.
+    let Some(header_size) = read_at(bytes, 12, 2) else {
+        return Declared::Unreachable;
+    };
+    let Some(at) = usize::try_from(header_size)
+        .ok()
+        .and_then(|size| size.checked_sub(0x70))
+        .and_then(|ex| ex.checked_add(8))
+    else {
+        return Declared::Unreachable;
+    };
+    let Some(value) = read_at(bytes, at, 8) else {
+        return Declared::Unreachable;
+    };
+    let known = table::group("ptype")
+        .into_iter()
+        .find(|(_, candidate)| *candidate == value)
+        .map(|(name, _)| name);
+    Declared::Ptype { value, known }
+}
+
 /// The result of checking a real container against the table.
 ///
 /// # Why this exists, and the line it must not cross
@@ -504,6 +593,9 @@ pub struct Audit {
     pub generation: Generation,
     /// One verdict per fixed row in the header.
     pub header: Vec<RowVerdict>,
+    /// What the container says its own kind is - the guard against reading a round trip as
+    /// a confirmation. See [`Declared`].
+    pub declared: Declared,
 }
 
 impl Audit {
@@ -551,7 +643,11 @@ pub fn audit(bytes: &[u8]) -> Result<Audit, ContainerError> {
             note: row.note,
         });
     }
-    Ok(Audit { generation, header })
+    Ok(Audit {
+        generation,
+        header,
+        declared: declared_kind(bytes),
+    })
 }
 
 /// Read a little-endian value of `size` bytes at `offset`, if it fits.
@@ -1017,7 +1113,9 @@ impl From<ElfError> for ContainerError {
     reason = "fixture builders read better indexed, and a panic here is the test failing"
 )]
 mod tests {
-    use super::{Constants, Container, ContainerError, Entry, audit, build, entry_segment_types};
+    use super::{
+        Constants, Container, ContainerError, Declared, Entry, audit, build, entry_segment_types,
+    };
     use selfish_abi::Generation;
     use selfish_elf::{ObjectType, segment};
 
@@ -1225,5 +1323,80 @@ mod tests {
             "a corrupted flags field must show up as differing: {:?}",
             result.differing(),
         );
+    }
+
+    #[test]
+    fn a_container_this_crate_builds_says_it_is_fake_and_the_audit_says_so_too() {
+        // The other half of the test above, and the one that was missing when it mattered.
+        // That test asserts a file built from the table confirms every row of the table, and
+        // its own comment calls that a round trip - but `audit` reported only the count, so a
+        // reader holding nine-of-nine had nothing telling them which of the two they had. It
+        // was read as a confirmation against vendor material and had to be reversed. (D092)
+        for generation in [Generation::Current, Generation::Previous] {
+            let built = build(&payload(), generation).expect("builds");
+            let result = audit(&built).expect("audits");
+
+            assert!(
+                result.differing().is_empty(),
+                "{generation:?}: precondition - this is the round trip",
+            );
+            assert!(
+                result.declared.is_round_trip(),
+                "{generation:?}: a container this crate built must declare itself fake, so the \
+                 match above cannot be mistaken for evidence: {:?}",
+                result.declared,
+            );
+            assert!(
+                result
+                    .declared
+                    .caveat()
+                    .is_some_and(|line| line.contains("round trip")),
+                "{generation:?}: and the caveat has to say it in words",
+            );
+        }
+    }
+
+    #[test]
+    fn a_ptype_this_table_does_not_name_is_reported_rather_than_refused() {
+        // Reported, not tested. Deciding "did I find `ex_info`" by whether the value is a
+        // *known* ptype fails on exactly the material worth having - a genuine vendor
+        // container - and then reads as a fact about the format instead of about the reader.
+        // That is how a whole sweep came back "not located" on nine files.
+        let mut built = build(&payload(), Generation::Current).expect("builds");
+        let header_size = usize::from(u16::from_le_bytes([built[12], built[13]]));
+        let at = header_size - 0x70 + 8;
+        built[at..at + 8].copy_from_slice(&0x1234_u64.to_le_bytes());
+
+        let result = audit(&built).expect("audits");
+        match &result.declared {
+            Declared::Ptype { value, known } => {
+                assert_eq!(*value, 0x1234, "the raw value comes back whatever it is");
+                assert!(known.is_none(), "and this table does not name it");
+            }
+            other @ Declared::Unreachable => {
+                panic!("expected the value to be reported, got {other:?}")
+            }
+        }
+        assert!(
+            !result.declared.is_round_trip(),
+            "unknown is not known-to-be-fake"
+        );
+        assert!(
+            result.declared.caveat().is_some(),
+            "and it is still caveated"
+        );
+    }
+
+    #[test]
+    fn a_tail_that_is_named_but_not_there_is_unreachable_rather_than_a_guess() {
+        // A valid container whose header_size points past the end of the file: the tail is
+        // named but not there. Truncating the file instead does not reach this - `parse`
+        // rejects it as `EntriesOutOfBounds` first, which is the right refusal earlier on.
+        let mut built = build(&payload(), Generation::Current).expect("builds");
+        built[12..14].copy_from_slice(&u16::MAX.to_le_bytes());
+        let result = audit(&built).expect("audits");
+        assert_eq!(result.declared, Declared::Unreachable);
+        assert!(!result.declared.is_round_trip());
+        assert!(result.declared.caveat().is_some());
     }
 }
