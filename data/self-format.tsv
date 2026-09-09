@@ -30,45 +30,54 @@
 #
 # ## What was measured on hardware, and why it does not lift that limit
 #
-# On 2026-09-09 obSCEne's `048-selfaudit` audited nine containers on a current-generation
-# console. One matched all nine fixed `self_header` rows -
-# `/system_ex/app/PPSA03416/eboot.bin`, verdict `confirmed`. It was reported as a retail vendor
-# game, and this table said so for one commit.
+# On 2026-09-09 obSCEne walked every installed application tree on a current-generation console
+# and audited **32 containers**, reporting each one's `ex_info.ptype` before its verdict. The
+# split is total and it falls exactly on the fake marker:
 #
-# **It is a fake container, and the confirmation is circular.** The same sweep read its
-# `ex_info`, and every field is this table's own default: `ptype` 0x1 - which the row below
-# calls the thing that makes a fake SELF fake - `paid` 0x3100000000000002, the OpenOrbis
-# default, `app_version` 0x0, `fw_version` 0x0, and `npdrm/type` 0x3. A container written from
-# this table agreeing with this table is a round-trip check, not evidence about the vendor.
+#   ptype 0x1 (PTYPE_FAKE)  9 containers   all NINE fixed rows match this table
+#   ptype 0x0              23 containers   the same FIVE rows differ, identically, on every one
 #
-# The `vendor` beside that path is a **hardcoded label** in the probe's candidate array
-# (`obs_audit_candidates[]` in obSCEne's `src/probe/sections/selfaudit.c`), naming what the
-# probe hoped to find at a path. The same array labels another path `fake`, and that label was
-# read as provenance once already. Neither label is a measurement. (D092)
+#   the five:  version 0x10 (table 0x0)      attributes 0x32 (table 0x12)
+#              key_type 0x10000301 (0x101)   program_type 0x3 (table 0x1)
+#              flags 0x52 (table 0x22)
 #
-# ## What the measurement is worth, which is not nothing
+# **No container that is not marked fake matches this table, and every container that is,
+# does.** Nine for nine and twenty-three for twenty-three, with no partial cases in either
+# direction.
 #
-#   * The current-generation loader **accepts** a container carrying these values: a package
-#     built from this table installs, mounts, loads and executes (worklog 040). That was
-#     already known and this is consistent with it.
-#   * The containers most plausibly *genuine* vendor material - six system apps under
-#     `/system/vsh/app/` - all **diverge** on five rows: `version` 0x10, `attributes` 0x32,
-#     `key_type` 0x10000301, `program_type` 0x3, `flags` 0x52. Their `ex_info` could not be
-#     located at `header_size - 0x70` at all, so the tail layout is unconfirmed for them too.
-#   * So the honest reading of the sweep is the opposite of the first one: **every container
-#     that matched this table is one this table could have produced, and every container that
-#     could not have been is different.** Whether that difference is the generation or the kind
-#     of container is exactly what a genuine, non-fake application container would settle, and
-#     none has been read yet.
+# The simplest explanation is also the one this table's provenance predicts: it was derived from
+# **OpenOrbis, a fake-SELF writer**, so it describes what that writer produces. A container
+# written by an OpenOrbis-lineage tool agrees with it because of where the rows came from, not
+# because a console confirmed them - which is why the `confirmed` verdicts here are round trips
+# and the limit above stands.
 #
-# `flags` is worth one more line, because it is not a constant whichever way that goes. The
-# note below derives it as `0x2 | (signed_block_count & 0x7) << 4`; `0x22` is two signed blocks
-# and the measured `0x52` is five. A row that reads like a constant is a default.
+# ## The confound, stated because an earlier version of this file glossed it
 #
-#   measured-by: obscene 048-selfaudit, sweeps 20260909-144348 and 20260909-151910, payload leg
-#   settles: nothing about vendor material. Records that a fake container built from this
-#            table round-trips through a current-generation console's own reader, and that six
-#            vendor system apps differ from it in five named fields.
+# **Authenticity and container kind are perfectly correlated in this sample.** Every `ptype 0x1`
+# container is `PPSA`-shaped - a game title id - and every `ptype 0x0` container is `NPXS`-shaped,
+# a system application. There is not one genuine application container on the box, and not one
+# fake system one.
+#
+# So these five rows may describe *a fake container* or *an application container*, and **this
+# measurement cannot tell those apart**. An earlier revision of this section said the limit was
+# categorical - "these five rows describe an application container" - and that was reading one
+# arm of a confound as the cause. The fake reading is the better-supported of the two, because
+# it is what the table's own source wrote and because `ptype` is literally the field the format
+# provides for saying so; it is not established, and neither is the other.
+#
+# What would separate them is a container that is genuine **and** application-shaped - a real
+# retail game - or a fake system-tier one. The console holds neither, so this question is not
+# answerable from it and is not being asked of it again.
+#
+# One thing the sample does settle about *this* writer: `mkself` emits the same five values at
+# every privilege tier, because `Privilege` reaches only `paid` in `self_ex_info`. So within what
+# this repository builds, these rows do not encode a tier. That is a fact about the writer, not
+# about the platform.
+#
+#   measured-by: obscene 048-selfaudit, sweep 20260909-175052, payload leg (REQ-20260909T1605Z-9c40)
+#   settles: that no non-fake container on one current-generation console matches these five
+#            rows, and that all nine fixed rows hold for fake ones. Does NOT settle whether the
+#            five track authenticity or container kind - the sample confounds them.
 #
 # ## The tail: `header_size - 0x70` survived its first contact with material we did not write
 #
@@ -90,6 +99,11 @@
 # probably right, and what these containers carry is simply a *kind this table does not
 # describe*. That is a real result and the first one from material this repository could not
 # have produced.
+#
+# **The sample later grew from seven to twenty-three and the agreement held**: the 32-container
+# census above found `ptype 0x0` and `npdrm.type 0x0` on every non-fake container on the box.
+# Twenty-three unrelated files agreeing is further past coincidence than seven was, so the
+# offset is right and the reading below stands.
 #
 # It is stated as *consistent with* rather than proven, because the alternative was not ruled
 # out by measurement - only by argument. `paid` varying per application is what a program
