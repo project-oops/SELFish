@@ -60,3 +60,4 @@ otherwise rediscover the hard way.
 | 2026-09-09 | [The lesson put in the tool, and the reversal made airtight](worklog/050-the-lesson-put-in-the-tool-and-the.md) |
 | 2026-09-09 | [The tail held, and the instinct about it was wrong the other way](worklog/051-the-tail-held-and-the-instinct-was.md) |
 | 2026-09-09 | [The second reader, and the error that pointed at the wrong thing](worklog/052-the-second-reader-and-the-error-that.md) |
+| 2026-09-09 | [Two readers agree on every field, and the third failure of the day was agreeing](worklog/053-two-readers-agree-on-every-field-and.md) |

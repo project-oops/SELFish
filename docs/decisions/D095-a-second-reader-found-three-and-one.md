@@ -68,3 +68,53 @@ Every `Display` in these crates was written for nobody. `main` returned `Result`
 never been seen. `main` now prints the error and exits non-zero. `SegmentNotInFile` is what made
 it obvious: its `Debug` is three numbers, and its `Display` is the paragraph that would have
 saved a second reader the trip.
+
+---
+
+## Closed, 2026-09-09: no reader defect existed, and one endorsement here was unfounded
+
+Class 3 is settled, and not by the mechanism guessed at above. Orbistoun re-ran against `main`
+with the splice and reported **29 modules, 0 disagreements** - every class gone, including this
+one (REQ-20260909T1730Z-5f28).
+
+The cause was neither of the two branches this entry named. It was two more harness comparisons
+of unlike things:
+
+- `vendor_tables` against `table.is_some()`. Theirs means *the values it holds came from vendor
+  tags*; ours means *which convention the file follows*. Under `Current` the standard tables come
+  from standard tags, which is exactly when theirs answers `false`. Compared against
+  `Some(Table::Legacy)`, every module agrees.
+- `dynamic_bytes` against `tables()`. Theirs finds `PT_DYNAMIC`; ours finds resolvable vendor
+  tables. A plain freestanding ELF has the first and not the second - which is obSCEne's payload,
+  the one this repository had already settled from its own side.
+
+**Four rounds of reported disagreements, four harness errors, zero reader defects.**
+
+## The correction owed
+
+In the request that produced this, SELFish told orbistoun: *"on the tag convention in that same
+module - you are probably right to suspect yourselves"*. That was wrong, they withdrew it, and
+the endorsement was ours.
+
+Nothing was checked before agreeing. Their report said "this would make it a defect in **this**
+repository, and it is the one I am taking away to investigate", and this repository replied that
+they were probably right - about a field whose meaning it had not looked up. Reading the two
+field definitions would have shown they were not the same question, which is the whole answer.
+
+That is the third time in one day: a convenient attribution taken on trust (D092), a pessimistic
+reading taken on instinct (worklog 051), and now somebody else's self-doubt agreed with for free.
+**The failure is not optimism or pessimism. It is answering from what a claim sounds like rather
+than from the thing it is about**, and agreeing costs exactly as much as disagreeing when neither
+is checked.
+
+## What the clean result is worth
+
+More than a defect list would have been. Two readers built from the same knowledge in different
+languages - orbistoun's `dynamic.rs` and `reloc.rs` are what `selfish-elf` was built *from* -
+now agree on every field this test compares across 29 modules. The four harness corrections live
+in the test's own comments rather than only in an inbox, which is what stops the next run
+rediscovering them.
+
+The one finding that survives on this side is the error message, and orbistoun named the rule it
+breaks better than this entry did: *a message naming a cause must come from the branch that
+determined it*.
