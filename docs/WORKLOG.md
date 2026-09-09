@@ -67,3 +67,4 @@ otherwise rediscover the hard way.
 | 2026-09-09 | [A title id in a citation, read as a fact](worklog/057-a-title-id-in-a-citation-read-as-a-fact.md) |
 | 2026-09-09 | [The audit closed, and the test that makes it cheap next time](worklog/058-the-audit-closed-and-the-test-that.md) |
 | 2026-09-09 | [The magic, settled by the row nobody asked for](worklog/059-the-magic-settled-by-the-row-nobody.md) |
+| 2026-09-09 | [Both magics are accepted, and the cross-census already contained our own file](worklog/060-both-magics-are-accepted-and-the.md) |

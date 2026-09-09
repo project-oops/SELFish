@@ -114,22 +114,44 @@
 # *previous* magic, "hardware-confirmed" - is **refuted**, not merely unsupported. Its evidence
 # was PPSA02664, which is one of the two gen-4 containers and is `ptype 0x1`: fake.
 #
-# ### And the default does not move on it either
+# ### Both magics are accepted, each on its own delivery route
 #
-# `selfish wrap` still defaults to the previous generation's magic. That is deliberate and it is
-# the same discipline that removed the old justification: **the default rests on acceptance, not
-# on population.** A package built with it installs, mounts, loads and executes on current
-# hardware (worklog 040). Nothing above measures whether a file built with the *current* magic
-# would be accepted, and swapping a proven default for an unproven one on the strength of what
-# other people's files contain is the error D097 was written about, run in reverse.
+# The question a default actually turns on is acceptance, and it is now answered for both values -
+# separately, because the two are proven on **different routes** and neither on the other's:
 #
-# The console accepts both from a fake container, incidentally - 7 fakes carry one and 2 carry
-# the other, and all of them are installed and enumerable. That is consistent with the default
-# being a free choice and is not evidence that it is.
+#   previous magic  a *package* built with it installs, mounts, loads and executes (worklog 040)
+#   current magic   a *native title directory* whose eboot carries it installs, launches and runs
+#                   to completion - 292 checks (obscene sweep 20260909-184538)
+#
+# The second was measured twice over, which is why it is worth stating: the container was built
+# here by `mkself --generation 5`, and then **read back off console storage** by the same probe
+# that produced the census above - `/system_ex/app/PPSA99980/eboot.bin`, `magic 0xeef51454`,
+# `ptype 0x1`. It is one of the 7 fake/current-magic entries in that 2x2. The cross-census
+# already contained this repository's own output as a data point.
+#
+# ### And the default still does not move, for a different reason than before
+#
+# `selfish wrap` defaults to the previous generation's magic. Until the measurement above that was
+# because it was the only value shown to be accepted. It is no longer the only one - so the
+# reason has changed, and the default has not.
+#
+# **It is now a route decision.** `wrap`'s default serves the *package* path, and the previous
+# magic is what is proven there. The current magic is proven on the *native title* path, which
+# passes `--generation 5` explicitly and does not consult the default at all. Moving the default
+# would put the package path onto a value nothing has accepted **on that path** - and D082 already
+# records that the two are different delivery routes rather than two spellings of one.
+#
+# What has **not** happened at any point is the default moving on a population. It did not move
+# when the population said previous (that claim was withdrawn, and its evidence was a fake
+# container), and it did not move when the population turned out to say current, 23 of 23. A
+# default turns on what a loader accepts, and the answer differs by route.
 #
 #   measured-by: obscene 048-selfaudit, sweep 20260909-184538, payload leg (REQ-20260909T2020Z-8a17)
+#                and the eboot leg of the same sweep (REQ-20260909T2125Z-3f9d)
 #   settles: that genuine current-generation containers carry the current magic, 23 of 23, with
-#            fakes present on both sides as a control. Does NOT settle what a loader accepts.
+#            fakes present on both sides as a control; and that a container built here with the
+#            current magic is accepted on the native-title route. Does NOT settle what either
+#            magic does on the *other* route.
 #
 # ## The tail: `header_size - 0x70` survived its first contact with material we did not write
 #

@@ -94,3 +94,46 @@ contain is not, in either direction.
 That 7 fakes carry one value and 2 carry the other says the console tolerates both from a fake
 container - which is consistent with the default being a free choice and is not evidence that it
 is. The thing that would move it is a file built here with the current magic, run.
+
+---
+
+## Settled again, 2026-09-09: both magics are accepted, and the default becomes a route decision
+
+REQ-20260909T2125Z-3f9d asked whether obSCEne had already run a container built here with the
+**current** magic. They had, twice over:
+
+- `build/eboot.bin` begins `54 14 f5 ee`, built by `mkself --generation 5 --privilege root`,
+  installed to `PPSA99980` and launched - **292 checks ran to completion**;
+- and the same sweep's payload leg read it back **off console storage**:
+  `/system_ex/app/PPSA99980/eboot.bin`, `magic 0xeef51454`, `ptype 0x1`.
+
+So the 2x2 in the section above already contained this repository's own output as one of its
+seven fake/current-magic entries, and nobody knew.
+
+## What that changes, and what it does not
+
+**Both values are accepted.** The reason the default stayed 4 up to now - that it was the only
+value shown to be accepted - is gone.
+
+**The default stays 4 anyway, on a different reason: it is a route decision.** The two proofs are
+on different delivery routes and neither is on the other's:
+
+| route | magic | evidence |
+|---|---|---|
+| package | previous | installs, mounts, loads, executes (worklog 040) |
+| native title directory | current | installs, launches, 292 checks (sweep 20260909-184538) |
+
+`wrap`'s default serves the package path. The native path passes `--generation 5` explicitly and
+never consults it. Moving the default would put the package path onto a value nothing has
+accepted *on that path*, and D082 already records that the two are different delivery routes
+rather than two spellings of one.
+
+## The line that survives all three revisions
+
+The default has never moved on a population, in either direction. Not when the population was
+claimed to say *previous* - that claim was withdrawn, and its evidence turned out to be a fake
+container. Not when the population turned out to say *current*, 23 of 23 with a control group,
+which is a far better measurement than the one withdrawn.
+
+**A default turns on what a loader accepts, and the answer differs by route.** Three revisions of
+this entry in one day, and that sentence is the only part that did not need rewriting.

@@ -171,17 +171,27 @@ enum Command {
         out: Option<PathBuf>,
         /// Console generation: 5 for the current one, 4 for the previous.
         ///
-        /// **4 is the default because a file built with it runs**, which is the evidence that
-        /// survived. A package this repository builds with the previous generation's magic
-        /// installs, mounts, loads and executes on current hardware (worklog 040).
+        /// **Both values are accepted by current hardware, each proven on its own delivery
+        /// route.** Pick the one that matches how the file will be delivered:
+        ///
+        /// - **4** - a *package* built with the previous generation's magic installs, mounts,
+        ///   loads and executes (worklog 040). This is the default because it is the route the
+        ///   default serves.
+        /// - **5** - a *native title directory* whose eboot carries the current magic installs
+        ///   and launches, and ran 292 checks to completion. Measured on the container this
+        ///   collection builds, then read back off console storage: `magic 0xeef51454`,
+        ///   `ptype 0x1`. (obscene sweep 20260909-184538, REQ-20260909T2125Z-3f9d)
+        ///
+        /// **Neither has been shown accepted on the other's route**, which is why the default is
+        /// a route decision rather than a generation one.
         ///
         /// The justification used to be a population claim - "every container found inside real
         /// packages for the current console carries the previous generation's magic, thirty-three
-        /// of them, including a working homebrew store". That is **withdrawn**: those thirty-three
-        /// came from packages, which on this evidence means containers of homebrew lineage, and a
-        /// census of forty installed eboots counts **38 carrying the current magic against 2
-        /// carrying the previous one**. The default is unchanged, because "it executes" is a
-        /// better reason than a population that was counted in the wrong place. (D097)
+        /// of them, including a working homebrew store". **Withdrawn**: those came from packages,
+        /// which on this evidence means containers of homebrew lineage, and every *genuine*
+        /// container measured carries the current magic - 23 of 23. That population points the
+        /// other way and is equally not the reason. A default turns on what a loader accepts.
+        /// (D097)
         #[arg(long, default_value_t = 4)]
         generation: u8,
         /// Privilege tier: app, sysmodule, system, or root.
