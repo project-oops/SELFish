@@ -57,11 +57,18 @@
 # and principle 5 says an unexplained value is named and left alone rather than guessed at.
 #
 # **This is not what `mkself` writes for a privileged tier, and that is worth knowing.**
-# `Privilege` in `selfish-container` alters only `paid` in `self_ex_info`; the five fields
-# above come from this table for every tier, so a root-tier container built here carries the
-# *application* values. Whatever `FAKE00000` is, this repository did not give it a
-# `program_type` of 3. The probe's `fake` label is a classification of the file, not a record
-# of what built it, and that gap is open rather than closed. (D092)
+# `Privilege` in `selfish-container` alters only `paid` in `self_ex_info`, and `write_header`
+# uses `generation` for the four magic bytes alone. The five fields above come from this table
+# for every tier and both generations, so a root-tier gen-5 container built here carries the
+# *application* values - and would audit as `confirmed`, the way the retail game did.
+#
+# `FAKE00000` is **not** a container this collection built: the path is a hardcoded candidate
+# in obSCEne's probe (`src/probe/sections/selfaudit.c`), a place to *look* for a pre-existing
+# third-party container, and its `fake` label describes what the probe hoped to find rather
+# than what produced the file. Two sweep resolutions reported it as ours before anyone checked.
+# So it counts as a **second, independent producer** of the non-application values, which is
+# worth more than the puzzle it looked like: whatever wrote it is not this repository, and it
+# agrees with the vendor system app on all five. (D092)
 #
 # # Why three sources, and what each was needed for
 #

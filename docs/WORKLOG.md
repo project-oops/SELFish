@@ -55,3 +55,4 @@ otherwise rediscover the hard way.
 | 2026-09-09 | [`ACCOUNT_ID` was not text, and the reader refused the file rather than the key](worklog/045-account-id-was-not-text-and-the-reader.md) |
 | 2026-09-09 | [The same function twice, written to opposite standards](worklog/046-the-same-function-twice-to-opposite.md) |
 | 2026-09-09 | [The table was right, and the limit was the wrong shape](worklog/047-the-table-was-right-and-the-limit-was.md) |
+| 2026-09-09 | [A label in a candidate list is not provenance](worklog/048-a-label-in-a-candidate-list-is-not.md) |

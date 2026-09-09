@@ -69,3 +69,26 @@ filed as its own question (a new request, because a resolved one is never reopen
 to write it down rather than let it pass: **an attribution that happens to be convenient is the
 kind this collection has been caught by before**, and "our own builder emits system values" is a
 claim that would have quietly justified changing `mkself`.
+
+## Closed, 2026-09-09: it was not ours
+
+The question above was filed as REQ-20260909T1530Z-7e11 and answered the same hour.
+`/system_ex/app/FAKE00000/eboot.bin` was **not built by this collection**. The path is a
+hardcoded candidate in obSCEne's probe - an entry in `obs_audit_candidates[]` in
+`src/probe/sections/selfaudit.c`, a place to *look* for a pre-existing third-party container -
+and the `fake` beside it labels what the probe hoped to find, not what produced the file. The
+"built by collection" attribution was an assumption drawn from that label, and it reached two
+resolutions before anyone checked it.
+
+So `mkself` is sound and this section's argument stands as written. Two things worth keeping
+from how it went:
+
+**A label in a candidate list is not provenance.** `{"fake", "/system_ex/app/FAKE00000/..."}`
+is a hope about a path. Two hops downstream it was being reported as a fact about a builder,
+and the fact would have justified changing what that builder writes.
+
+**The file is more useful than the puzzle was.** Something that is demonstrably not this
+repository wrote a container agreeing with a vendor system app on all five non-application
+values. That makes it a *second, independent producer* of those values rather than a loose end -
+weak evidence, because nothing here knows what wrote it, but evidence pointing the same way as
+the vendor container rather than at us.
