@@ -54,3 +54,4 @@ otherwise rediscover the hard way.
 | 2026-09-09 | [Three unnameable imports, and one of them was never a name](worklog/044-three-unnameable-imports-and-one-was.md) |
 | 2026-09-09 | [`ACCOUNT_ID` was not text, and the reader refused the file rather than the key](worklog/045-account-id-was-not-text-and-the-reader.md) |
 | 2026-09-09 | [The same function twice, written to opposite standards](worklog/046-the-same-function-twice-to-opposite.md) |
+| 2026-09-09 | [The table was right, and the limit was the wrong shape](worklog/047-the-table-was-right-and-the-limit-was.md) |

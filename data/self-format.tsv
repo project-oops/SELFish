@@ -17,16 +17,51 @@
 # it was derived from. `titles/` holds packages to check output against - nothing in `tool/`
 # may open them. (orbistoun#D181, orbistoun#D182)
 #
-# # THE LIMIT THAT MATTERS: this is the previous console's container
+# # THE LIMIT THAT MATTERED, AND WHAT SETTLED IT
 #
-# OpenOrbis is a PS4 toolchain and both readers are PS4-generation loaders. **Nothing here is
-# confirmed for the current generation.** The container is expected to be closely related and
-# it is the only lawful starting point available, but every row is `IMPLEMENTATIONS` at PS4
-# level until something current accepts or rejects a file built from it.
+# OpenOrbis is a PS4 toolchain and both readers are PS4-generation loaders, so every row here
+# was derived from previous-generation material and this section used to say, in bold, that
+# nothing in it was confirmed for the current generation. A file built from this table was a
+# hypothesis.
 #
-# That is not a footnote. This project has been caught believing an emulator-derived fact that
-# turned out to describe a different program, and the whole reason `mkself` matters is to
-# reach the *current* system loader. A file built from this table is a hypothesis.
+# **The nine fixed rows of `self_header` are confirmed at the current generation.** On
+# 2026-09-09 obSCEne's `048-selfaudit` read a real current-generation **retail vendor game**
+# container on the console - `/system_ex/app/PPSA03416/eboot.bin` - and compared each fixed
+# field against the value this table pins. All nine matched: `version` 0x0, `mode` 0x1,
+# `endian` 0x1, `attributes` 0x12, `key_type` 0x101, `category` 0x1, `program_type` 0x1,
+# `flags` 0x22, `padding3` 0x0. Verdict `confirmed`.
+#
+# That is principle 2 working in the direction it is usually not: derived from citable
+# previous-generation sources, then confirmed - not refuted - by current-generation material.
+# The header bytes never left the console; only the verdict did (D086).
+#
+#   measured-by: obscene 048-selfaudit, sweep 20260909-144348, payload leg
+#   settles: self_header rows version, mode, endian, attributes, key_type, category,
+#            program_type, flags, padding3 - at the current generation, for an application
+#            container
+#
+# ## The five rows that differ on a system container, and the limit that replaces the old one
+#
+# The same sweep read `/system/vsh/app/NPXS40038/eboot.bin`, a vendor **system app**, and five
+# of the nine differ there: `version` 0x10, `attributes` 0x32, `key_type` 0x10000301,
+# `program_type` 0x3, `flags` 0x52. A second container the probe classed as fake,
+# `/system_ex/app/FAKE00000/eboot.bin`, carries exactly those five values too.
+#
+# So the honest limit is no longer generational, it is **categorical**: these five rows are
+# pinned for an *application* container and are not invariants of the format. `program_type`
+# says so in its own name. `flags` is computed rather than constant - the note below gives
+# `0x2 | (signed_block_count & 0x7) << 4`, and 0x52 is that same formula with five signed
+# blocks where 0x22 is two - so a row of the table that reads like a constant is really a
+# default. The other three are unexplained and are recorded as observed, not derived: what a
+# system container's `version` 0x10 or `attributes` 0x32 *mean* still needs a citable source,
+# and principle 5 says an unexplained value is named and left alone rather than guessed at.
+#
+# **This is not what `mkself` writes for a privileged tier, and that is worth knowing.**
+# `Privilege` in `selfish-container` alters only `paid` in `self_ex_info`; the five fields
+# above come from this table for every tier, so a root-tier container built here carries the
+# *application* values. Whatever `FAKE00000` is, this repository did not give it a
+# `program_type` of 3. The probe's `fake` label is a classification of the file, not a record
+# of what built it, and that gap is open rather than closed. (D092)
 #
 # # Why three sources, and what each was needed for
 #
