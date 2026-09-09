@@ -41,11 +41,35 @@
 #
 # ## Byte order is where this goes wrong
 #
-# **Little-endian.** The emulator side of this project documents it as big-endian; that
-# is incorrect, and the test vector above is the evidence. The failure mode is nasty:
-# big-endian yields an equally plausible value that encodes to a perfectly ordinary
-# symbol name and resolves nothing, so every import fails silently and the symptom
-# looks like a broken loader rather than a reversed integer.
+# **Little-endian, here.** Get it wrong *within one pipeline* and the failure is nasty:
+# the other order yields an equally plausible value that encodes to a perfectly ordinary
+# symbol name and resolves nothing, so every import fails silently and the symptom looks
+# like a broken loader rather than a reversed integer.
+#
+# ### The other convention is not a bug, and this file used to say it was
+#
+# This paragraph read: *"the emulator side of this project documents it as big-endian;
+# that is incorrect"*. That was an accusation made from a label rather than a meaning, and
+# it was wrong.
+#
+# Orbistoun reads the same eight bytes **big-endian** and hashes big-endian to match, so its
+# `u64` is the byte-reverse of this one and everything it does with it is self-consistent.
+# Its own note records the same discovery this one does, in the mirror: *"reading the digest
+# little-endian produces a perfectly plausible hash that agrees with nothing"*. Both are
+# true, locally, and both were written as though they were universal.
+#
+# A differential across 29 modules settled it: every encoded import matches between the two
+# readers, byte-reversed, with no module mixing the two. Neither is wrong. The `u64` is an
+# internal representation and the two projects unpack the same bytes into it differently.
+#
+# ### So exchange the encoded form, not the number
+#
+# The eleven characters are what a symbol table actually contains and they carry no
+# byte-order ambiguity. `sceKernelLoadStartModule -> wzvqT4UqKX8` is a published pair, and
+# both projects produce that string for that name. Under this crate's convention those
+# characters decode to `0xc33bea4f852a297f`; the other reading is `0x7f292a854fea3bc3`.
+# Whichever a reader produces tells it which convention it is in, with nobody having to be
+# wrong. (D096, worklog 055)
 #
 # Override with `--suffix-file` if this ever turns out to be wrong for some module.
 
