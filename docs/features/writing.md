@@ -26,7 +26,7 @@ a file is rejected the useful question is *which step produced the wrong bytes*.
         v
     eboot.bin
         |                              \
-        |  image     the filesystem     \  build title   lay out a Prospero title directory
+        |  image     the filesystem     \  --format title  lay out a Prospero title
         v            the title mounts    v
    image file                         <TITLE_ID>/
         |  pack      the package          param.json + sce_sys/

@@ -1324,7 +1324,7 @@ fn title_dir(
 
     // No install advice here. This lays a directory out and reports where things went; the
     // pipeline calls it into a scratch directory it then moves, so advice naming `base` would
-    // name a path that no longer exists by the time anybody read it. `build title` gives it.
+    // name a path that no longer exists by the time anybody read it. `selfish title` reports it instead.
     Ok(())
 }
 
