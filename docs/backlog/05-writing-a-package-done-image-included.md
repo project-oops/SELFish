@@ -19,12 +19,23 @@ The header past `0x410` was the other one, and was entirely zero - including `pf
 so there was nothing to mount. Measured out of a real package and matching offset for offset.
 (D054, D056)
 
-What a caller still supplies: the **entry name table** (`0x200`) and **playgo-chunk.dat**
-(`0x1001`), passed empty rather than guessed. `param.sfo` is generated - it is a format, and
-the field set is measured from real current-generation packages (D061) - and the icon and the
-playgo manifest have tool-level defaults.
+**A caller now supplies nothing.** `pack --dir <tree>` with no `--entry` at all writes a
+complete fourteen-entry package. The **entry name table** (`0x200`) is a pure function of which
+entries are present, and this crate already knew every name (worklog 064); **playgo-chunk.dat**
+(`0x1001`) is fixed for a single-chunk title apart from two sizes, both of which are in hand at
+`Builder::build` - the package, and the inner filesystem read out of the `PFSC` header (D099).
+`param.sfo` is generated - it is a format, and the field set is measured from real
+current-generation packages (D061) - and the icon and the playgo manifest have tool-level
+defaults. A supplied entry still wins, for a package being rebuilt to match existing material.
 
 Still open: three slots of `GENERAL_DIGESTS` digest something not present in any package, and
-are reported as gaps rather than filled, so `is_complete()` says `false`. And **nothing selfish
-has produced has been near the hardware.**
+are reported as gaps rather than filled, so `is_complete()` says `false`.
+
+**What the hardware has and has not seen.** A package built through this crate installs and
+launches - obSCEne's `pkg` leg runs its probe from one, and its `000-boot` checks pass
+(`reports/hardware/20260909-234847-pkg.obs.log`). What has *not* been on hardware is the
+`0x1001` inner size this crate now computes: obSCEne's own packages carried a hardcoded
+`0xAA0000` there, which is larger than the package containing it, and the measured `0x630000`
+that replaced it is so far justified by arithmetic alone. Filed as obscene
+REQ-20260910T0520Z-9c33; D099 records the limit.
 
