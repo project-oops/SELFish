@@ -113,11 +113,13 @@ struct Cli {
     #[arg(long = "title-version", value_name = "NN.NN", requires = "input")]
     title_version: Option<String>,
 
-    /// A PNG for the home-screen tile. `--format title` and `--format pkg` only.
+    /// A 512x512 PNG for the home-screen tile. `--format title` and `--format pkg` only.
     ///
-    /// Converted to the 512x512 RGB a console wants. Without one, a default mark is used that
-    /// says selfish built this and nobody supplied artwork - which is what you want to see on a
-    /// package you are debugging. (D073)
+    /// Flattened to the no-alpha RGB a console wants - an icon that keeps its transparency is
+    /// composited wrongly and reads square on a home screen. It is **not resized**: a non-512x512
+    /// PNG is refused rather than scaled, because which filter to use is a decision about the
+    /// artwork. For `pkg` it fills both the mounted tile and the `0x1200` store tile. Without one,
+    /// a default mark is used that says selfish built this and nobody supplied artwork. (D073)
     #[arg(long, value_name = "FILE", requires = "input")]
     icon: Option<PathBuf>,
 
@@ -1299,13 +1301,30 @@ fn pkg_from_elf(
         // the title was laid out with - the image is keyed by it - so both come from `meta`,
         // which `run` has already defaulted for a format that carries metadata.
         let contents = laid.join(title_id);
+
+        // `--icon` set the mounted `sce_sys/icon0.png` through `title_at`; for a package it also
+        // has to fill the `0x1200` store tile, or the caller's art shows after install while the
+        // default mark shows in the store. Injected as a `0x1200` entry so it goes through
+        // `pack`'s own `normalise`. Refused alongside an explicit `--entry 0x1200=`, which would
+        // be two sources for one tile.
+        let mut entries: Vec<String> = entries.to_vec();
+        if let Some(icon) = meta.icon {
+            if builder_ids(&entries).contains(&ICON_ENTRY) {
+                return Err(
+                    "--icon and --entry 0x1200= both set the store tile; pass one or the other"
+                        .into(),
+                );
+            }
+            entries.push(format!("{ICON_ENTRY:#x}={}", icon.display()));
+        }
+
         pack(
             None,
             Some(&contents),
             None,
             output,
             meta.content_id.unwrap_or(""),
-            entries,
+            &entries,
             Some(title_id),
             Some(title),
             meta.version.unwrap_or("01.00"),
@@ -1400,8 +1419,22 @@ fn title_dir(
 
     let icon_path = sce_sys.join("icon0.png");
     if let Some(path) = icon {
-        std::fs::copy(path, &icon_path)?;
-        say!("{} (from {})", icon_path.display(), path.display());
+        // Normalised, not copied. A console wants 512x512 with no alpha, and an icon that is
+        // neither is accepted and then composited wrongly - square on a home screen, found on a
+        // television. So a supplied icon goes through the same conversion the `pack` entry path
+        // uses, rather than being written as authored. (D073)
+        let raw = std::fs::read(path)?;
+        let converted = icon::normalise(&raw, &path.display().to_string())?;
+        std::fs::write(&icon_path, &converted)?;
+        if converted.len() == raw.len() {
+            say!("{} (from {})", icon_path.display(), path.display());
+        } else {
+            say!(
+                "{} (from {}, converted to 512x512 RGB)",
+                icon_path.display(),
+                path.display()
+            );
+        }
     } else {
         std::fs::write(&icon_path, icon::default_icon()?)?;
         say!("{} (generated)", icon_path.display());

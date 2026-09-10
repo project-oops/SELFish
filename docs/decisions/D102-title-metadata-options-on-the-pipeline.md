@@ -60,6 +60,31 @@ it now would be re-growing the surface the four axes removed, on spec.
 
 Refusals fire for `elf`/`prx`/`eboot` with a message naming the formats that take each option, and
 nothing is written. A title built with all four carries them: `param.json` gains `contentId`,
-`masterVersion`, `deeplinkUri`, and an `icon0.png` that differs from the generated default (a
-supplied 11,171-byte icon against the 27,069-byte default). `--version` still reports the build
-line. For `pkg`, an explicit and a defaulted content id both propagate; the empty-id path is gone.
+`masterVersion`, `deeplinkUri`, and an `icon0.png`. `--version` still reports the build line. For
+`pkg`, an explicit and a defaulted content id both propagate; the empty-id path is gone.
+
+### Correction (2026-09-10): `--icon` was landed incomplete, and the first evidence misread
+
+A review of this commit (SELFish inbox REQ-20260910T1441Z-f979) found `--icon` doing less than this
+entry claimed, and the claim itself resting on a misread:
+
+- **The icon was copied, not normalised.** `title_dir` wrote a supplied icon with `std::fs::copy`,
+  so an RGBA or non-512 PNG reached `sce_sys/icon0.png` as authored - reintroducing the D073 failure
+  (alpha composited wrongly, square on a television) that the `pack` entry path already guards
+  against by calling `icon::normalise`.
+- **The evidence above was circumstantial.** "A supplied 11,171-byte icon against the 27,069-byte
+  default" shows only that the supplied file differs from the default file - not that anything
+  converted it. 11,171 bytes was the raw obSCEne logo, copied through. Reading "differs from the
+  default" as "was converted" is the same judging-by-association this repository keeps catching;
+  the number proved the opposite of what it was cited for.
+- **`--icon --format pkg` set only the mounted tile.** The `0x1200` store/pre-install tile stayed
+  selfish's default, so a package showed the caller's art after install and the default mark in the
+  store.
+
+Fixed in a follow-up: `title_dir` routes `--icon` through `icon::normalise` (which flattens alpha
+and **refuses** a non-512 icon rather than resizing - resizing is a decision about the artwork), and
+`pkg_from_elf` fills `0x1200` from `--icon`, refusing `--icon` alongside an explicit `--entry
+0x1200=` as two sources for one tile. Pinned by `icon.rs` tests that a non-512 icon is refused and
+an RGBA one is flattened to RGB. The verification this time reads the re-encoded output and the two
+code paths' own messages ("converted to 512x512 RGB" versus "none given, using selfish own"), not a
+file-size difference.

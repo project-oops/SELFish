@@ -262,9 +262,10 @@ is installed: registration is `sceAppInstUtilAppInstallTitleDir("OBSC00001", "/u
 after copying the directory to `/user/app/`, and that call needs kernel privileges, so it runs
 from a payload on the target rather than from here.
 
-**What the title carries is set on the same invocation.** `--icon FILE` puts a PNG on the tile
-(converted to 512x512 RGB; without it the default mark says selfish built this and nobody supplied
-artwork); `--content-id`, `--title-version` and `--deeplink` land in `param.json`:
+**What the title carries is set on the same invocation.** `--icon FILE` puts a 512x512 PNG on the
+tile (flattened to no-alpha RGB; a non-512 icon is refused rather than resized, and without one the
+default mark says selfish built this and nobody supplied artwork); `--content-id`,
+`--title-version` and `--deeplink` land in `param.json`:
 
 ```console
 $ selfish --input payload.elf --target prospero --format title --title-id OBSC00001 --title Demo \

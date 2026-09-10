@@ -217,4 +217,45 @@ mod tests {
         assert_eq!(width, &[0, 0, 2, 0], "the logo is not 512 wide");
         assert_eq!(height, &[0, 0, 2, 0], "the logo is not 512 tall");
     }
+
+    /// A solid RGBA PNG of a given side, for feeding [`normalise`].
+    fn rgba_png(side: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut encoder = png::Encoder::new(&mut out, side, side);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().expect("header");
+        let pixels = (side as usize).saturating_mul(side as usize);
+        let data: Vec<u8> = std::iter::repeat_n([200_u8, 50, 25, 128], pixels)
+            .flatten()
+            .collect();
+        writer.write_image_data(&data).expect("pixels");
+        drop(writer);
+        out
+    }
+
+    /// A wrong-size icon is refused, not resized - which is why the pipeline's `--icon` routes
+    /// through here rather than copying the file. Resizing is a decision about the artwork, so
+    /// the tool declines it and names the size rather than guessing a filter.
+    #[test]
+    fn a_non_512_icon_is_refused_rather_than_resized() {
+        let err = super::normalise(&rgba_png(64), "test.png").expect_err("64x64 must be refused");
+        assert!(err.contains("64x64"), "names the size it got: {err}");
+        assert!(err.contains("512"), "names the size it wants: {err}");
+    }
+
+    /// A 512×512 RGBA icon is flattened to RGB rather than written as authored. An icon that
+    /// keeps its alpha is composited wrongly - square on a home screen - which is the failure
+    /// `--icon` used to reintroduce by copying the file straight through. (D073)
+    #[test]
+    fn a_supplied_rgba_icon_is_flattened_to_rgb() {
+        let out = super::normalise(&rgba_png(super::ICON_SIDE), "test.png")
+            .expect("a 512 RGBA icon normalises");
+        assert_eq!(
+            out.get(25),
+            Some(&2),
+            "IHDR colour type must be RGB (2), not RGBA (6)"
+        );
+        assert_eq!(out.get(16..20), Some(&[0, 0, 2, 0][..]), "512 wide");
+    }
 }
