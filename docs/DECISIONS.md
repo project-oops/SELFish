@@ -110,6 +110,7 @@ and a per-entry date would not be. Entries from D067 on carry one.
 | 🟢 | D097 | [The wrap default was justified by a population counted in the wrong place, and the default is right anyway](decisions/D097-the-wrap-default-was-justified-by-a.md) | decided | 2026-09-09 |
 | 🟢 | D098 | [Measured vendor values are recorded against the rows they refute, never as a profile a writer could reach for](decisions/D098-measured-vendor-values-are-recorded.md) | decided | 2026-09-09 |
 | 🟢 | D099 | [The inner size was never unknown, and entry 0x1001 is computed like every other derivable entry](decisions/D099-the-inner-size-was-never-unknown.md) | decided | 2026-09-10 |
+| 🟢 | D100 | [`stamp` and `wrap` retire into the pipeline; `--format prx`, and `--privilege`/`--sdk` as pipeline options](decisions/D100-stamp-and-wrap-retire-into-the-pipeline.md) | decided | 2026-09-10 |
 
 | | meaning |
 |---|---|

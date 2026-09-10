@@ -2,6 +2,11 @@
 
 **Status: decided. 2026-09-09.**
 
+> **Its subject no longer exists (D100).** `wrap` is retired, and the pipeline that took its
+> `--privilege` and `--sdk` requires `--target`, so there is no default magic left for this
+> reasoning to justify. What follows stands as the record of why the default was right while
+> it existed.
+
 
 **`selfish wrap` defaults to the previous generation's magic. The reason given for that was a
 count of containers that are all of homebrew lineage, and a hardware citation that turns out to

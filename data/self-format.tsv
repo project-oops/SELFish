@@ -129,22 +129,23 @@
 # `ptype 0x1`. It is one of the 7 fake/current-magic entries in that 2x2. The cross-census
 # already contained this repository's own output as a data point.
 #
-# ### And the default still does not move, for a different reason than before
+# ### And then there was no default at all
 #
-# `selfish wrap` defaults to the previous generation's magic. Until the measurement above that was
-# because it was the only value shown to be accepted. It is no longer the only one - so the
-# reason has changed, and the default has not.
+# `selfish wrap` defaulted to the previous generation's magic. Until the measurement above that was
+# because it was the only value shown to be accepted. When it stopped being the only one the reason
+# changed and the default did not: it became a route decision. The previous magic is proven on the
+# *package* path and the current magic on the *native title* path, and D082 already records that
+# those are different delivery routes rather than two spellings of one.
 #
-# **It is now a route decision.** `wrap`'s default serves the *package* path, and the previous
-# magic is what is proven there. The current magic is proven on the *native title* path, which
-# passes `--generation 5` explicitly and does not consult the default at all. Moving the default
-# would put the package path onto a value nothing has accepted **on that path** - and D082 already
-# records that the two are different delivery routes rather than two spellings of one.
+# **`wrap` is retired (D100)**, and nothing replaced its default. Its last two reasons for existing,
+# `--privilege` and `--sdk`, are pipeline options now, and the pipeline requires `--target` - so
+# every container built here names its magic by naming its machine. A default that is right for
+# one route is wrong for the other, and there is no longer one to be wrong.
 #
-# What has **not** happened at any point is the default moving on a population. It did not move
-# when the population said previous (that claim was withdrawn, and its evidence was a fake
-# container), and it did not move when the population turned out to say current, 23 of 23. A
-# default turns on what a loader accepts, and the answer differs by route.
+# What never happened at any point is the default moving on a population. It did not move when the
+# population said previous (that claim was withdrawn, and its evidence was a fake container), and
+# it did not move when the population turned out to say current, 23 of 23. A default turned on what
+# a loader accepts, and the answer differed by route.
 #
 #   measured-by: obscene 048-selfaudit, sweep 20260909-184538, payload leg (REQ-20260909T2020Z-8a17)
 #                and the eboot leg of the same sweep (REQ-20260909T2125Z-3f9d)
@@ -334,4 +335,4 @@ entry_prop	has_digests_shift	-	-	value	16	mask 0x1
 entry_prop	has_extents_shift	-	-	value	17	mask 0x1
 entry_prop	segment_index_shift	-	-	value	20	mask 0xFFFF. The field shadPS4 reads as GetId
 generation	current_magic	0x0	4	u32	0xEEF51454	stored so little-endian writes 54 14 F5 EE on disk. SETTLED: every genuine container measured carries THIS magic - 23 of 23 with ex_info.ptype 0x0, and 0 with previous_magic (obscene 048-selfaudit 2x2 cross-census, sweep 20260909-184538). Fakes carry both: 7 gen-5, 2 gen-4. The earlier note claiming a current-generation eboot carries previous_magic is refuted; its evidence was PPSA02664, one of the two gen-4 fakes. (D097)
-generation	previous_magic	0x0	4	u32	0x1D3D154F	stored so little-endian writes 4F 15 3D 1D on disk. What every source above describes, and what this repository writes by default. The only containers measured carrying it are 2 FAKE ones (PPSA02664, PPSA21564); no genuine container does. `selfish wrap` still defaults to it, on the evidence that a package built with it installs, mounts, loads and executes on current hardware (worklog 040) - a measurement of acceptance, which a population of what others write cannot replace in either direction. (D097)
+generation	previous_magic	0x0	4	u32	0x1D3D154F	stored so little-endian writes 4F 15 3D 1D on disk. What every source above describes, and what `--target orbis` and `--target neo` write. The only containers measured carrying it are 2 FAKE ones (PPSA02664, PPSA21564); no genuine container does. `selfish wrap` defaulted to it until it was retired (D100), on the evidence that a package built with it installs, mounts, loads and executes on current hardware (worklog 040) - a measurement of acceptance, which a population of what others write cannot replace in either direction. The pipeline has no default target. (D097)

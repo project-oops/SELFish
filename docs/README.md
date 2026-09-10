@@ -34,17 +34,19 @@ The binary is `selfish`, and it has two ways in.
 **Building is one invocation, four axes:**
 
 ```
-selfish --input <file> --target <orbis|neo|prospero|trinity> --format <elf|eboot|title|pkg> --output <path>
+selfish --input <file> --target <orbis|neo|prospero|trinity> --format <elf|prx|eboot|title|pkg> --output <path>
 ```
 
 `--target` carries the generation, so nothing passes one. Each format writes exactly `--output`
 and puts nothing beside it.
 
 **Everything else is a diagnostic** somebody runs by hand on a file they already have: `nid`,
-`elf`, `imports`, `sections`, `reloc`, `container`, `title`, `pkg`, `extract`, `derive`,
-`audit`, and the two layer verbs the pipeline does not subsume - `stamp --library` for a `.prx`,
-and `wrap` for the `--privilege` and `--sdk` it has no pipeline spelling for. `image` and `pack`
-build a package's parts separately.
+`elf`, `imports`, `sections`, `reloc`, `container`, `title`, `pkg`, `extract`, `derive` and
+`audit`. `image` and `pack` build a package's parts separately.
+
+There are no layer verbs for stamping or wrapping. `--format prx` is a shared library, and
+`--privilege` and `--sdk` are pipeline options for the formats that build a container - which
+were the only two reasons `stamp` and `wrap` existed alongside the pipeline.
 
 **`selfish --help` is the authority and this paragraph is not a list**, which is the point: the
 enumeration that used to be here advertised `build` and `native` after both had been deleted

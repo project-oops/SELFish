@@ -3,26 +3,30 @@
 For most workflows, **the pipeline** runs the complete assembly in a single invocation:
 
 ```
-selfish --input <file> --target <orbis|neo|prospero|trinity> --format <elf|eboot|title|pkg> --output <path>
+selfish --input <file> --target <orbis|neo|prospero|trinity> --format <elf|prx|eboot|title|pkg> --output <path>
 ```
 
 - `--format elf`: stamps the platform identity a loader checks before anything else.
-- `--format eboot`: that, wrapped in a signed-executable container.
+- `--format prx`: the same stamping, for a shared library.
+- `--format eboot`: the executable, stamped and wrapped in a signed-executable container.
 - `--format title`: container plus `param.json`, `icon0.png`, keystone, laid out as `<output>/<TITLE_ID>/`.
 - `--format pkg`: that, plus `param.sfo` and a PFS image, assembled into a `.pkg`.
 
-`--target` carries the generation; nothing passes a generation number.
+`--target` carries the generation and is always required. Nothing passes a generation number, and
+nothing picks one for you.
 
-Underneath, between a compiler and the hardware there are four steps, and then a fork. `selfish`
-provides format diagnostic commands for each layer independently - which matters, because when
-a file is rejected the useful question is *which step produced the wrong bytes*.
+Underneath, between a compiler and the hardware there are four steps, and then a fork. The first
+two are pipeline formats - `elf` and `prx` stop after stamping, `eboot` after wrapping - and the
+last two are commands of their own, `image` and `pack`, so a package can be built a layer at a
+time. That matters, because when a file is rejected the useful question is *which step produced
+the wrong bytes*.
 
 ```
    compiler output
-        |  stamp     the platform identity no linker sets
+        |  stamp     the platform identity no linker sets      --format elf, prx
         v
       module  ------------------------------------> a payload, and it can stop here
-        |  wrap      the signed-executable container
+        |  wrap      the signed-executable container           --format eboot
         v
     eboot.bin
         |                              \
@@ -39,23 +43,38 @@ wrapper decides something different about where the code ends up running: a payl
 under a homebrew loader, a package installs through the previous generation's compatibility
 path, a title directory is a current-generation (Prospero) entry on the home screen.
 
-Every transcript below is real output, from one 35 KB payload run through the whole set.
+Every transcript below is real output, from obSCEne's probe executable (5.6 MB) and its `libc`
+module (166 KB), captured on Windows - hence the separators in step 4b, where one temporary path
+is also elided.
 
 ## 1. Stamp the identity
 
 ```console
-$ selfish stamp payload.elf --target prospero
-  EI_ABIVERSION  0x0 -> 0x2
-  e_type         0x3 -> 0xfe10
-  p_flags (R+X -> X) 0x5 -> 0x1
-3 field(s) written to payload.elf
+$ selfish --input payload.elf --target prospero --format elf --output module.elf
+Prospero -> Elf  (current generation)
+  elf     6 program header(s), entry 0x531270
+  stamp   EI_ABIVERSION  0x0 -> 0x2
+  stamp   e_type         0xfe00 -> 0xfe10
+  stamp   p_flags (R+X -> X) 0x5 -> 0x1
+  wrote   module.elf (5598248 bytes)
 ```
 
-Rewrites the file in place, and says which fields and what they were. No linker sets these,
-because no linker knows about either console - so a freshly compiled ELF is not yet a module,
-and nothing about it looks wrong until a loader refuses it.
+Writes exactly `--output`, and says which fields it changed and what they were. No linker sets
+these, because no linker knows about either console - so a freshly compiled ELF is not yet a
+module, and nothing about it looks wrong until a loader refuses it.
 
-`--library` stamps it as a shared library rather than an executable.
+A shared library is the same step with a different `e_type`, and that is `--format prx`:
+
+```console
+$ selfish --input libc.elf --target prospero --format prx --output libc.prx
+Prospero -> Prx  (current generation)
+  elf     5 program header(s), entry 0x0
+  stamp   EI_ABIVERSION  0x0 -> 0x2
+  wrote   libc.prx (166320 bytes)
+```
+
+One field this time. The input already carried `e_type` `0xfe18`, the shared-library value, so
+only the ABI version was left to write - stamping reports what it changed, not what it checked.
 
 **A stamped file is already a payload.** If a homebrew loader is going to map and run it, the
 remaining steps are not needed at all.
@@ -63,14 +82,23 @@ remaining steps are not needed at all.
 ## 2. Wrap it in a container
 
 ```console
-$ selfish wrap payload.elf --out eboot-gen4.bin --target orbis
-eboot-gen4.bin: 30368 bytes from a 35720 byte payload, previous generation (privilege: App, sdk: 0x08008011/0x00000000)
+$ selfish --input payload.elf --target orbis --format eboot --output eboot-gen4.bin
+Orbis -> Eboot  (previous generation)
+  stamp   1 field(s)
+  wrap    5469936 bytes from a 5598248 byte payload
+  wrote   eboot-gen4.bin (5469936 bytes)
 
-$ selfish wrap payload.elf --out eboot-gen5.bin --target prospero --sdk ps5-native
-eboot-gen5.bin: 30368 bytes from a 35720 byte payload, current generation (privilege: App, sdk: 0x08050001/0x02000009)
+$ selfish --input payload.elf --target prospero --format eboot --sdk ps5-native --output eboot-gen5.bin
+Prospero -> Eboot  (current generation)
+  stamp   3 field(s)
+  tier    App
+  sdk     0x08050001/0x02000009
+  wrap    5469936 bytes from a 5598248 byte payload
+  wrote   eboot-gen5.bin (5469936 bytes)
 ```
 
-Without `--out` it writes `eboot.bin` beside the input.
+`--format eboot` stamps on the way, so it takes the compiler's output directly rather than a
+module stamped beforehand.
 
 The generation changes the four bytes at the front:
 
@@ -86,18 +114,17 @@ makes it look, and [the glossary](../GLOSSARY.md#the-generation-split) has it: a
 current-generation *app eboot* carries the first, and a title's *bundled modules* carry the
 second. What makes a title native is `param.json` and native registration, not the magic.
 
-**`--target` defaults to `orbis`, and that is a route decision rather than a habit.** Both
-generations are accepted by current hardware, each proven on its own delivery route: a
-*package* with the previous generation's magic installs, mounts, loads and executes (worklog
-040), and a *native title* with the current magic installs, launches and ran 292 checks to
-completion (obscene sweep 20260909-184538). Neither has been shown accepted on the other's
-route, and the default serves the package path.
+**There is no default `--target`.** Both generations are accepted by current hardware, each
+proven on its own delivery route: a *package* with the previous generation's magic installs,
+mounts, loads and executes (worklog 040), and a *native title* with the current magic installs,
+launches and ran 292 checks to completion (obscene sweep 20260909-184538). Neither has been shown
+accepted on the other's route, so a default would be right for one route and wrong for the other.
 
-The justification used to be a population - "every container inside the real packages sampled
-carries the previous generation's magic". **That is withdrawn**: those containers were of
+The retired `wrap` verb did default, to `orbis`, because that served the package path. Its
+justification once included a population - "every container inside the real packages sampled
+carries the previous generation's magic" - and **that was withdrawn**: those containers were of
 homebrew lineage, and every *genuine* container measured carries the current magic, 23 of 23.
-The better population points the other way and is equally not the reason. A default turns on
-what a loader accepts. (D097)
+(D097, D100)
 
 **`--sdk` takes an alias or a literal version.** `ps5-native` resolved to
 `0x08050001/0x02000009` above; `2.000.009` and `ps4-compat` are equally valid. The dictionary
@@ -105,19 +132,36 @@ is `data/sdk-versions.toml`, outside the source, because a version table is data
 code, and it is validated against the generation - a current-generation version on a
 previous-generation container is refused rather than written. Getting this wrong is not
 subtle: the loader refuses the process with an SDK-version error before any of your code
-runs.
+runs. `--sdk-table` reads a different dictionary.
 
-`--privilege` takes `app`, `sysmodule`, `system` or `root`.
+**`--privilege` takes `app`, `sysmodule`, `system` or `root`**, and defaults to `app`. Asking for
+`app` produces the same bytes as not asking - checked with `cmp`, not assumed:
+
+```console
+$ selfish --input payload.elf --target prospero --format eboot --privilege root --sdk ps5-native --output eboot-root.bin
+Prospero -> Eboot  (current generation)
+  stamp   3 field(s)
+  tier    Root
+  sdk     0x08050001/0x02000009
+  wrap    5469936 bytes from a 5598248 byte payload
+  wrote   eboot-root.bin (5469936 bytes)
+```
+
+Both options apply to the formats that build a container - `eboot`, `title` and `pkg` - and are
+refused with `elf` and `prx`, which build none. The refusal names the formats they do apply to,
+rather than accepting a tier there is no container to put in.
 
 The container declares itself fake in the field the format provides for exactly that, and its
 signature area is zero. No vendor signature is forged and none could be.
 
 ## 3. Build the filesystem image
 
+`app` here holds the previous-generation `eboot.bin` from step 2.
+
 ```console
 $ selfish image --root app --out title.pfs.img --content-id UP0000-OBSC00001_00-0000000000000000
 sce_sys/keystone: generated from the passcode
-title.pfs.img: 1048576 bytes
+title.pfs.img: 6553600 bytes
 keyed to UP0000-OBSC00001_00-0000000000000000 - a package carrying this must declare the same id
 ```
 
@@ -135,31 +179,39 @@ the mismatch hard to reach.
 ## 4. Pack it
 
 ```console
-$ selfish pack --image title.pfs.img --out title.pkg --content-id UP0000-OBSC00001_00-0000000000000000 --title-id OBSC00001 --title "Demo"
-warning: the inner filesystem is 589824 bytes. The hardware refuses to mount an image this small - `Failed to enable GDDR5 cache`, EINVAL, after the outer image has already mounted - and lowering the declared cache size does NOT help: it was tried, set to exactly 589824, and the hardware refused it identically. Pad the directory past 851968 bytes.
+$ selfish pack --image title.pfs.img --out title.pkg --content-id UP0000-OBSC00001_00-0000000000000000 --title-id OBSC00001 --title Demo
 param.sfo: generated for OBSC00001 ("Demo", version 01.00)
 icon0.png: none given, using selfish own - supply --entry 0x1200=FILE to replace
 playgo-manifest.xml: generated the default manifest
-no contents for entries: 0x200 0x1001 - nothing here can compute them, so they must be supplied
+title.pkg: 7077888 bytes, 14 entries, image at 0x80000
+1 gap(s) left blank, because nothing established says what goes in them:
+  entry 0x80 at 0x60, 32 bytes - the header digest, filled by finalize_digests once the header exists
 ```
 
-**No package was written, and that is the feature.** Everything derivable was computed and
-reported; the two entries that cannot be computed from anything this repository knows are
-named, and the build stops. A package that assembled itself by guessing an entry is a package
-that installs and then fails somewhere with no connection to the guess.
+**Nothing was supplied, and nothing was guessed.** Every entry is computed or generated: both
+digest tables, the block digests, both licences, both key blobs, `param.sfo`, the playgo
+manifest, the entry name table and the playgo chunk table.
 
-Supply them and the same command completes:
+The last two used to be demanded, and this section used to show `pack` stopping without them.
+Both turned out to be facts the builder was already holding: the name table is a function of
+which entries are present, and the chunk table is fixed for a single-chunk title apart from two
+sizes it can read out of the image. (D099)
+
+What `pack` still does is list every region it left blank rather than hiding it, and say what it
+knows about each.
+
+`--entry ID=FILE` overrides any entry, which is for rebuilding a package to match existing
+material - and for the one entry that is genuinely yours, the icon:
 
 ```bash
 selfish pack --image title.pfs.img --out title.pkg \
     --content-id UP0000-OBSC00001_00-0000000000000000 \
-    --entry 0x200=names.bin \
-    --entry 0x1001=playgo-chunk.dat \
     --entry 0x1200=icon0.png
 ```
 
-The size warning is a measured fact rather than a guess: the threshold, the error string and
-the workaround that *did not* work were all established against hardware.
+Given an image whose inner filesystem is too small to mount, `pack` warns before anything else.
+The threshold, the error string and the workaround that *did not* work were all established
+against hardware. (D071)
 
 `--dir` runs the whole chain - step 3 and step 4 together - which is the usual way in:
 
@@ -186,40 +238,49 @@ the fork. It is a directory described by `param.json`, registered by a call that
 privileges:
 
 ```console
-$ selfish --input payload.elf --target prospero --format title --title-id OBSC00001 --title "Demo" --output native
-1 file(s) copied from app
+$ selfish --input payload.elf --target prospero --format title --title-id OBSC00001 --title Demo --output native
+Prospero -> Title  (current generation)
+  stamp   3 field(s)
+  wrap    5469936 bytes from a 5598248 byte payload
+  wrote   <scratch>\root\eboot.bin (5469936 bytes)
+1 file(s) copied from <scratch>\root
 privilege: App
-contentId: UP0000-OBSC00001_00-0000000000000000
-native/OBSC00001/sce_sys/param.json
-native/OBSC00001/sce_sys/icon0.png (generated)
-native/OBSC00001/sce_sys/keystone (generated)
-native/OBSC00001/sce_sys/pfs-version.dat (generated)
-native/OBSC00001/sce_sys/nptitle.dat (generated)
-
-install by copying native/OBSC00001 to /user/app/ on the
-target and calling sceAppInstUtilAppInstallTitleDir("OBSC00001", "/user/app/", 0).
-that call needs kernel privileges, so it runs from a payload rather than from here.
+native\OBSC00001\sce_sys\param.json
+native\OBSC00001\sce_sys\icon0.png (generated)
+native\OBSC00001\sce_sys\keystone (generated)
+native\OBSC00001\sce_sys\pfs-version.dat (generated)
+native\OBSC00001\sce_sys\nptitle.dat (generated)
+  title   native\OBSC00001
 ```
 
+`<scratch>` is a temporary directory the eboot is staged in and removed before the command
+returns.
 
-Four of the five metadata files are generated because they are derivable; the eboot came in
-through `--root`, which copies extra files verbatim (and wraps `eboot.elf` into `eboot.bin` automatically
-if it has not already been wrapped). This lays out bytes and then says what it cannot do - the registration
-call is not one a host-side program can make, so it names the call rather than appearing to install anything.
+The eboot is built from `--input` on the way - stamped, wrapped, staged - and the title is laid
+out around it. Four of the five metadata files are generated because they are derivable. Nothing
+is installed: registration is `sceAppInstUtilAppInstallTitleDir("OBSC00001", "/user/app/", 0)`
+after copying the directory to `/user/app/`, and that call needs kernel privileges, so it runs
+from a payload on the target rather than from here.
 
-`--deeplink` makes an entry that launches something else instead of carrying its own
-executable, which is the shape to use when the code is already running as a payload.
-`--category` and `--privilege` default to what a Prospero homebrew entry uses (`category: 65536`, `privilege: app`).
+`--category` defaults to `system-app` and `--privilege` to `app`.
 
 ### Choosing `--category` and `--privilege`
 
 Execution on PlayStation systems is governed by two orthogonal axes:
 
-1. **Privilege Tier (`paid` / Authority ID in the SELF header)**:
-   - `app` (`0x3800000000000000`): Standard sandboxed execution.
-   - `sysmodule` (`0x3800000000000001`): Dynamic system module privileges.
+1. **Privilege Tier (`paid` / Authority ID in the SELF header)**. The values are what `selfish`
+   writes, read back with `audit`; what each tier is granted on hardware is not measured here.
+   - `app` (`0x3100000000000002`, the format's default): Standard sandboxed execution.
+   - `sysmodule` (`0x3100000000000002`): **currently identical to `app`**, byte for byte -
+     nothing distinguishes the two when the container is built, so choosing it changes nothing.
    - `system` (`0x3800000000000001`): Unsandboxed system service privileges.
    - `root` (`0x8000000000000001`): Full kernel root authority (jailbreak syscalls, arbitrary `/dev/*` nodes).
+
+   `--privilege system` also sets the title's category to `0x20000`, a pairing carried over
+   rather than measured.
+
+   An earlier copy of this list gave `app` as `0x3800000000000000` and `sysmodule` as
+   `0x3800000000000001`. Nothing writes either.
 
 2. **Application Category (`applicationCategoryType` in `param.json`, `CATEGORY` in
    `PARAM.SFO`, `--category` on the pipeline)**: decides Direct Memory allocation, HDMI

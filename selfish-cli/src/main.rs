@@ -48,6 +48,31 @@ struct Cli {
     #[arg(long, value_enum, requires = "input")]
     category: Option<Category>,
 
+    /// Privilege tier the container declares: app, sysmodule, system, or root.
+    ///
+    /// Not meaningful for `--format elf` or `--format prx`, which produce no container, and
+    /// passing it with either is an error rather than a no-op.
+    ///
+    /// `sysmodule` currently writes exactly what `app` does - the container comes out
+    /// byte-identical - so it is accepted and changes nothing.
+    ///
+    /// `system` also sets the title's category to `0x20000` - a pairing carried over from
+    /// `title_dir`, not one measured here. Nothing has checked what a loader does with a
+    /// system-tier container under any other category.
+    #[arg(long, value_name = "TIER", requires = "input")]
+    privilege: Option<String>,
+
+    /// Target SDK version or alias to pin, such as `2.000.009`, `ps5-native` or `ps4-compat`.
+    ///
+    /// Patches `PT_SCE_PROCPARAM` and the container's declared version. Same formats as
+    /// `--privilege`, and the same refusal for `elf` and `prx`.
+    #[arg(long, value_name = "VERSION", requires = "input")]
+    sdk: Option<String>,
+
+    /// A `sdk-versions.toml` to read instead of the embedded one.
+    #[arg(long, value_name = "FILE", requires = "sdk")]
+    sdk_table: Option<PathBuf>,
+
     /// The title id an artifact carries. Optional; defaults to `OBSC00001`, and says so.
     ///
     /// **It cannot be read out of `--input`, and this tool will not invent a place to put it.**
@@ -125,9 +150,15 @@ impl Target {
 enum Format {
     /// The executable, stamped with the target's platform identity. No container.
     Elf,
+    /// A shared library, stamped as one. No container.
+    ///
+    /// The same stamping `elf` does with a different `e_type`, which is the whole difference
+    /// between an executable and a `.prx` at this layer. It is a `--format` rather than a flag
+    /// because what comes out is a different kind of file, which is what this axis selects.
+    Prx,
     /// A signed-executable container - an `eboot.bin`.
     Eboot,
-    /// A title directory, laid out at `--output` itself.
+    /// A title directory, laid out as `<output>/<TITLE_ID>/` - the shape the install call takes.
     Title,
     /// An installable package.
     Pkg,
@@ -189,23 +220,6 @@ enum Command {
         #[arg(long)]
         all: bool,
     },
-    /// Stamp the platform identity a loader checks before it reads anything else.
-    ///
-    /// Mostly superseded by `--format elf`, which stamps as it builds. **Not retired**, because
-    /// `--library` stamps a shared object and the pipeline builds executables: there is no
-    /// `--format` value that produces a `.prx`, so this is the only way to reach that.
-    ///
-    /// No linker sets these, because no linker knows about either console.
-    Stamp {
-        /// The module, rewritten in place.
-        file: PathBuf,
-        /// Which machine the module is for. One vocabulary with the pipeline.
-        #[arg(long, value_enum, default_value = "orbis")]
-        target: Target,
-        /// Stamp it as a shared library rather than an executable.
-        #[arg(long)]
-        library: bool,
-    },
     /// List an object's sections and its link-time symbol table.
     Sections {
         /// The file.
@@ -223,47 +237,6 @@ enum Command {
     Container {
         /// The file.
         file: PathBuf,
-    },
-    /// Wrap an executable in a container.
-    ///
-    /// Mostly superseded by `--format eboot`. **Not retired**, because `--privilege` and
-    /// `--sdk` have no pipeline spelling yet: a root-tier or SDK-pinned container still has to
-    /// be built here. Those two are the gap to close before this can go.
-    Wrap {
-        /// The executable to wrap.
-        file: PathBuf,
-        /// Where to write it. Defaults to `eboot.bin` beside the input.
-        #[arg(long)]
-        out: Option<PathBuf>,
-        /// Which machine the container is for. One vocabulary with the pipeline.
-        ///
-        /// **Both generations are accepted by current hardware, each proven on its own delivery
-        /// route**, so this is a route decision rather than a generation one:
-        ///
-        /// - `orbis`/`neo` - a *package* built with the previous generation's magic installs,
-        ///   mounts, loads and executes (worklog 040). The default, because that is the route
-        ///   the default serves.
-        /// - `prospero`/`trinity` - a *native title directory* whose eboot carries the current
-        ///   magic installs and launches, and ran 292 checks to completion. Measured on the
-        ///   container this collection builds, then read back off console storage:
-        ///   `magic 0xeef51454`, `ptype 0x1`. (obscene sweep 20260909-184538)
-        ///
-        /// Neither has been shown accepted on the other's route. A default turns on what a
-        /// loader accepts, not on what other people's files contain - the population claim that
-        /// used to justify this one was withdrawn when its evidence turned out to be a fake
-        /// container, and the better population that replaced it points the other way and is
-        /// equally not the reason. (D097)
-        #[arg(long, value_enum, default_value = "orbis")]
-        target: Target,
-        /// Privilege tier: app, sysmodule, system, or root.
-        #[arg(long, default_value = "app")]
-        privilege: String,
-        /// Target SDK version or alias (e.g. "2.000.009", "ps5-native", "ps4-compat").
-        #[arg(long)]
-        sdk: Option<String>,
-        /// Path to custom sdk-versions.toml file.
-        #[arg(long)]
-        sdk_table: Option<PathBuf>,
     },
     /// Show what a title says about itself.
     ///
@@ -442,33 +415,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::Nid { names } => nid(&names),
         Command::Elf { file } => elf(&file),
         Command::Imports { file, all } => imports(&file, all),
-        Command::Stamp {
-            file,
-            target,
-            library,
-        } => stamp(&file, target.generation(), library),
         Command::Sections { file, defines } => sections(&file, &defines),
         Command::Reloc { file } => reloc(&file),
         Command::Container { file } => container(&file),
-        Command::Wrap {
-            file,
-            out,
-            target,
-            privilege,
-            sdk,
-            sdk_table,
-        } => {
-            let priv_tier: selfish_container::Privilege =
-                privilege.parse().map_err(|e: &str| e.to_owned())?;
-            wrap(
-                &file,
-                out.as_deref(),
-                target.generation(),
-                priv_tier,
-                sdk.as_deref(),
-                sdk_table.as_deref(),
-            )
-        }
         Command::Title { file, round_trip } => title(&file, round_trip),
         Command::Audit { file } => audit_cmd(&file),
         Command::Image {
@@ -655,36 +604,6 @@ fn imports(path: &Path, all: bool) -> Result<(), Box<dyn std::error::Error>> {
     for (library, module, count) in counts {
         say!("  {count:>6}  {library:<28} {module}");
     }
-    Ok(())
-}
-
-fn stamp(
-    path: &Path,
-    generation: Generation,
-    library: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let kind = if library {
-        selfish_elf::ObjectType::SharedLibrary
-    } else {
-        selfish_elf::ObjectType::Executable
-    };
-
-    let mut bytes = std::fs::read(path)?;
-    let changes = selfish_elf::identity::stamp(&mut bytes, kind, generation)?;
-    if changes.is_empty() {
-        say!("already stamped for {generation}, as {kind}");
-        return Ok(());
-    }
-    for change in &changes {
-        say!(
-            "  {:<14} {:#x} -> {:#x}",
-            change.field,
-            change.from,
-            change.to
-        );
-    }
-    std::fs::write(path, &bytes)?;
-    say!("{} field(s) written to {}", changes.len(), path.display());
     Ok(())
 }
 
@@ -1033,22 +952,67 @@ fn pipeline(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
 
+    // Same rule, same reason: these reach a container, and `elf` and `prx` produce none.
+    let wraps = matches!(format, Format::Eboot | Format::Title | Format::Pkg);
+    if !wraps {
+        if cli.privilege.is_some() {
+            return Err(format!(
+                "--privilege applies to `eboot`, `title` and `pkg`, not to `{format:?}`; \
+                 stamping produces no container to declare a tier in"
+            )
+            .into());
+        }
+        if cli.sdk.is_some() {
+            return Err(format!(
+                "--sdk applies to `eboot`, `title` and `pkg`, not to `{format:?}`; stamping \
+                 produces no container to pin a version in"
+            )
+            .into());
+        }
+    }
+
     let generation = target.generation();
     let category = cli.category.unwrap_or(Category::SystemApp);
+    let privilege: selfish_container::Privilege = match cli.privilege.as_deref() {
+        Some(tier) => tier.parse().map_err(|e: &str| e.to_owned())?,
+        None => selfish_container::Privilege::App,
+    };
+    let sdk = cli.sdk.as_deref();
+    let sdk_table = cli.sdk_table.as_deref();
     // Announced when it is the default, because a title id nobody chose is worth seeing in the
     // output rather than discovered in a directory name.
     let title_id = cli.title_id.as_deref().unwrap_or_else(|| {
-        say!("  id      {DEFAULT_TITLE_ID} (default; pass --title-id to choose)");
+        // Only where a title id is carried. An `elf`, `prx` or `eboot` has none, so announcing a
+        // default there would report a choice nothing makes.
+        if matches!(format, Format::Title | Format::Pkg) {
+            say!("  id      {DEFAULT_TITLE_ID} (default; pass --title-id to choose)");
+        }
         DEFAULT_TITLE_ID
     });
     let title = cli.title.as_deref().unwrap_or(title_id);
 
     say!("{target:?} -> {format:?}  ({generation})");
 
+    let wrap = WrapOptions {
+        privilege,
+        sdk,
+        sdk_table,
+    };
     match format {
-        Format::Elf => stamped_elf(input, output, generation),
-        Format::Eboot => eboot(input, output, generation),
-        Format::Title => title_at(input, output, generation, title_id, title, category),
+        Format::Elf => stamped_elf(
+            input,
+            output,
+            generation,
+            selfish_elf::ObjectType::Executable,
+        ),
+        Format::Prx => stamped_elf(
+            input,
+            output,
+            generation,
+            selfish_elf::ObjectType::SharedLibrary,
+        ),
+        Format::Eboot => eboot(input, output, generation, &wrap),
+        Format::Title => title_at(input, output, generation, title_id, title, category, &wrap),
         Format::Pkg => pkg_from_elf(
             input,
             output,
@@ -1057,8 +1021,23 @@ fn pipeline(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
             title,
             category,
             &cli.entries,
+            &wrap,
         ),
     }
+}
+
+/// How a container is built, for the formats that build one.
+///
+/// Gathered into one struct rather than threaded as three arguments because they travel
+/// together through every wrapping format and always have: `title` builds an `eboot` and `pkg`
+/// builds a `title`, so anything the container needs has to survive two hops.
+struct WrapOptions<'a> {
+    /// The tier the container declares.
+    privilege: selfish_container::Privilege,
+    /// The SDK version or alias to pin, if one was asked for.
+    sdk: Option<&'a str>,
+    /// A replacement version table.
+    sdk_table: Option<&'a Path>,
 }
 
 /// `--format elf`: the executable with the target's platform identity stamped into it.
@@ -1066,6 +1045,7 @@ fn stamped_elf(
     input: &Path,
     output: &Path,
     generation: Generation,
+    kind: selfish_elf::ObjectType,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut bytes = std::fs::read(input)?;
     let elf = selfish_elf::Elf::parse(&bytes)?;
@@ -1075,8 +1055,7 @@ fn stamped_elf(
         elf.entry()
     );
 
-    let changes =
-        selfish_elf::identity::stamp(&mut bytes, selfish_elf::ObjectType::Executable, generation)?;
+    let changes = selfish_elf::identity::stamp(&mut bytes, kind, generation)?;
     for change in &changes {
         say!(
             "  stamp   {:<14} {:#x} -> {:#x}",
@@ -1098,13 +1077,38 @@ fn eboot(
     input: &Path,
     output: &Path,
     generation: Generation,
+    wrap: &WrapOptions<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut bytes = std::fs::read(input)?;
     let changes =
         selfish_elf::identity::stamp(&mut bytes, selfish_elf::ObjectType::Executable, generation)?;
     say!("  stamp   {} field(s)", changes.len());
 
-    let container = selfish_container::build(&bytes, generation)?;
+    // The default path stays `build`, which is the same call with an `App` tier and no version
+    // patch. Routing everything through `build_with_options` would make every ordinary run pay
+    // for a table load it does not read.
+    let container = match (wrap.privilege, wrap.sdk) {
+        (selfish_container::Privilege::App, None) => selfish_container::build(&bytes, generation)?,
+        (privilege, sdk) => {
+            let dict = selfish_container::SdkDictionary::load_or_embedded(wrap.sdk_table);
+            // Defaulted rather than left absent, which is what `wrap` did: asking for a tier
+            // and getting an unpinned version back would be a different artifact from the one
+            // that verb produced.
+            let target_sdk = match sdk {
+                Some(text) => dict
+                    .resolve(text, generation)
+                    .map_err(Box::<dyn std::error::Error>::from)?,
+                None => selfish_container::TargetSdk::default_for(generation),
+            };
+            say!("  tier    {privilege:?}");
+            say!(
+                "  sdk     0x{:08x}/0x{:08x}",
+                target_sdk.ps4_sdk,
+                target_sdk.ppr_sdk
+            );
+            selfish_container::build_with_options(&bytes, generation, privilege, Some(target_sdk))?
+        }
+    };
     say!(
         "  wrap    {} bytes from a {} byte payload",
         container.len(),
@@ -1133,6 +1137,7 @@ fn title_at(
     title_id: &str,
     title: &str,
     category: Category,
+    wrap: &WrapOptions<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Only the eboot needs staging - `title_dir` joins the title id on itself, so it can write
     // straight into `--output` and the directory shape comes out right with no move.
@@ -1140,7 +1145,7 @@ fn title_at(
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let staged = scratch.join("root");
         std::fs::create_dir_all(&staged)?;
-        eboot(input, &staged.join("eboot.bin"), generation)?;
+        eboot(input, &staged.join("eboot.bin"), generation, wrap)?;
 
         title_dir(
             output,
@@ -1152,7 +1157,7 @@ fn title_at(
             None,
             Some(&staged),
             category.value(),
-            selfish_container::Privilege::App,
+            wrap.privilege,
         )
     })();
     let _ = std::fs::remove_dir_all(&scratch);
@@ -1166,6 +1171,10 @@ fn title_at(
 /// **This is the stage that needs a directory**, because a package is made of a title layout
 /// rather than of a file. The directory is made here, under the system temp, and removed - so
 /// the option surface stays input-to-output and no caller prepares or cleans anything.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a command-line command takes what the command line offers"
+)]
 fn pkg_from_elf(
     input: &Path,
     output: &Path,
@@ -1174,11 +1183,12 @@ fn pkg_from_elf(
     title: &str,
     category: Category,
     entries: &[String],
+    wrap: &WrapOptions<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let scratch = scratch_dir("pkg")?;
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let laid = scratch.join("title");
-        title_at(input, &laid, generation, title_id, title, category)?;
+        title_at(input, &laid, generation, title_id, title, category, wrap)?;
         // `title_at` writes `<laid>/<TITLE_ID>/`, and a package is made of the title's own
         // contents rather than of the directory holding it.
         let contents = laid.join(title_id);
@@ -1732,37 +1742,6 @@ fn container(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         Ok(_) => say!("inner executable at {:#x}", container.inner_offset()),
         Err(error) => say!("inner executable: {error}"),
     }
-    Ok(())
-}
-
-fn wrap(
-    path: &Path,
-    out: Option<&Path>,
-    generation: Generation,
-    privilege: selfish_container::Privilege,
-    sdk_str: Option<&str>,
-    sdk_table: Option<&Path>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let payload = std::fs::read(path)?;
-    let dict = selfish_container::SdkDictionary::load_or_embedded(sdk_table);
-    let target_sdk = match sdk_str {
-        Some(s) => dict
-            .resolve(s, generation)
-            .map_err(Box::<dyn std::error::Error>::from)?,
-        None => selfish_container::TargetSdk::default_for(generation),
-    };
-    let container =
-        selfish_container::build_with_options(&payload, generation, privilege, Some(target_sdk))?;
-    let target = out.map_or_else(|| path.with_file_name("eboot.bin"), PathBuf::from);
-    std::fs::write(&target, &container)?;
-    say!(
-        "{}: {} bytes from a {} byte payload, {generation} (privilege: {privilege:?}, sdk: 0x{:08x}/0x{:08x})",
-        target.display(),
-        container.len(),
-        payload.len(),
-        target_sdk.ps4_sdk,
-        target_sdk.ppr_sdk,
-    );
     Ok(())
 }
 

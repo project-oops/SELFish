@@ -720,11 +720,17 @@ fn read_at(bytes: &[u8], offset: usize, size: usize) -> Option<u64> {
 
 /// The privilege tier for an executable container.
 ///
-/// Dictates the `paid` (Program Authentication ID) stamped into `self_ex_info`:
-/// - `App`: Standard title sandbox (`0x3800000000000000` or format default).
-/// - `Sysmodule`: Title sandbox with dynamic sysmodule access.
-/// - `System`: Extended system application (`0x3800000000000001`).
-/// - `Root`: Root / kernel superuser access (`0x8000000000000001`).
+/// Dictates the `paid` (Program Authentication ID) stamped into `self_ex_info`, through
+/// [`Privilege::paid`]:
+/// - `App`: the format's default - `0x3100000000000002`, from `data/self-format.tsv`.
+/// - `Sysmodule`: **the same as `App`.** [`Privilege::paid`] does not distinguish the two, so a
+///   container built at this tier is byte-identical to one built at `App`.
+/// - `System`: `0x3800000000000001`.
+/// - `Root`: `0x8000000000000001`.
+///
+/// Those are what this crate writes, read back with `selfish audit`. What each tier is granted on
+/// hardware is not measured here. `0x3800000000000000`, which an earlier copy of this list gave
+/// for `App`, is written by nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Privilege {
     /// Standard title sandbox (Tier 1).

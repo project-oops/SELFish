@@ -65,7 +65,8 @@ Building - one invocation, four axes:
 
 ```
 selfish --input <file> --target <orbis|neo|prospero|trinity>
-        --format <elf|eboot|title|pkg> --output <path>
+        --format <elf|prx|eboot|title|pkg> --output <path>
+        [--privilege <app|sysmodule|system|root>] [--sdk VERSION|ALIAS]
         [--category <big-app|system-app|mini-app|daemon|media-app>]
         [--title-id ID] [--title NAME] [--entry ID=FILE]...
 ```
@@ -79,28 +80,25 @@ beside it, and none needs a directory the caller prepares or cleans.
 
 ```
 --format elf     the executable, stamped with the target's platform identity
---format eboot   that, inside a signed-executable container
+--format prx     a shared library, stamped as one
+--format eboot   the executable inside a signed-executable container
 --format title   a title directory at <output>/<TITLE_ID>/ - the shape
                  sceAppInstUtilAppInstallTitleDir takes
---format pkg     an installable package. Needs entries 0x200 and 0x1001 supplied with
-                 --entry: they are a name table and a playgo chunk table, and nothing here
-                 can compute either
+--format pkg     an installable package. Nothing needs supplying: the entry name table and
+                 the playgo chunk table are both computed (D099)
 ```
 
 `--category` applies to `title` and `pkg` only and defaults to `system-app`; it decides the
 memory budget and whether the artifact owns the display, so it is a build lever with runtime
 consequences rather than a label.
 
-Format diagnostics - inspect and produce each layer independently:
+`--privilege` and `--sdk` apply to `eboot`, `title` and `pkg` - the formats that build a
+container - and are refused with `elf` and `prx`, which build none. `--privilege` defaults to
+`app`; `--sdk` takes a literal version or an alias from `data/sdk-versions.toml`.
+
+Package layers - the filesystem image and the package, each on its own:
 
 ```
-selfish stamp     <file> --target <orbis|neo|prospero|trinity> [--library]
-                           the header identity a loader checks first, which no linker sets.
-                           --library is the only route to a .prx: no --format produces one
-selfish wrap      <file> --target <orbis|neo|prospero|trinity>
-                  [--sdk VERSION|ALIAS] [--privilege TIER]
-                           the signed-executable container. --privilege and --sdk have no
-                           pipeline spelling yet, which is why this verb is still here
 selfish image     --root <dir> -o <file> --content-id ID
                            build the filesystem image a package carries, from a directory
 selfish pack      (--image <file> | --dir <dir>) -o <file> --content-id ID
@@ -110,7 +108,8 @@ selfish pack      (--image <file> | --dir <dir>) -o <file> --content-id ID
 ```
 
 **[docs/features/writing.md](docs/features/writing.md) runs one payload through each of
-these**, with the real output of each command, including what `pack` refuses to do and why.
+these**, with the real output of each command, including the one gap `pack` reports rather
+than fills, and why.
 
 ## What is not here
 
