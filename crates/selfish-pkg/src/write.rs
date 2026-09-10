@@ -365,6 +365,17 @@ impl Builder {
         contents.sort_by_key(|(id, _)| *id);
         contents.dedup_by_key(|(id, _)| *id);
 
+        // Entry `0x200` is derived, not supplied, when the caller has not given one. It is a
+        // NUL-separated list of the names of the entries actually present, and this crate knows
+        // every one of those names already - so requiring it was asking a caller to hand back a
+        // fact the builder was holding. A supplied one still wins: a package being rebuilt to
+        // match existing material needs its own table byte for byte.
+        if !contents.iter().any(|(id, _)| *id == 0x200) {
+            let ids: Vec<u32> = contents.iter().map(|(id, _)| *id).collect();
+            contents.push((0x200, entry_names_table(&ids)));
+            contents.sort_by_key(|(id, _)| *id);
+        }
+
         let missing: Vec<u32> = entry_id::ALWAYS_PRESENT
             .iter()
             .copied()
@@ -823,6 +834,56 @@ fn entry_name(id: u32) -> Option<&'static str> {
         0x12c0 => Some("pic1.dds"),
         _ => None,
     }
+}
+
+/// The order a real package lists its entry names in.
+///
+/// **Not ascending entry id** - `icon0.png` is `0x1200` and comes first. Taken from a real
+/// package, where the table is 75 bytes and reads
+/// `\0icon0.png\0param.sfo\0playgo-chunk.dat\0playgo-chunk.sha\0playgo-manifest.xml\0`.
+///
+/// The format does not require this order - `name_offset` points at whatever offset a name
+/// happens to sit at, so any order is self-consistent - but a package built here should look
+/// like one that works rather than merely parse like one, and this is the sequence material
+/// shows. Ids not listed here follow, in the order the package carries them.
+const NAME_TABLE_ORDER: [u32; 5] = [0x1200, 0x1000, 0x1001, 0x1002, 0x1003];
+
+/// Build entry `0x200`, the entry name table, from the entries the package actually carries.
+///
+/// A NUL-separated list of the *named* entries' filenames, opening with a NUL and closing with
+/// one. It is what `entry_record.name_offset` points into, so a package without it leaves a
+/// console unable to name the entries it is about to read.
+///
+/// # Why this is computed rather than required
+///
+/// It was in the "supply these yourself" set with `0x1001`, and it did not belong there: it is a
+/// pure function of which entries are present, and this crate already knows every name through
+/// [`entry_name`]. Nothing about it needs a source this repository does not have. The two were
+/// grouped because they arrived together in the same refusal, which is not the same as being
+/// the same kind of problem.
+///
+/// `0x1001` genuinely is the other kind - a `plgo` structure with sub-tables and records - and
+/// stays supplied.
+fn entry_names_table(ids: &[u32]) -> Vec<u8> {
+    let mut ordered: Vec<u32> = NAME_TABLE_ORDER
+        .iter()
+        .copied()
+        .filter(|wanted| ids.contains(wanted))
+        .collect();
+    for id in ids {
+        if entry_name(*id).is_some() && !ordered.contains(id) {
+            ordered.push(*id);
+        }
+    }
+
+    let mut out = vec![0_u8];
+    for id in ordered {
+        if let Some(name) = entry_name(id) {
+            out.extend_from_slice(name.as_bytes());
+            out.push(0);
+        }
+    }
+    out
 }
 
 fn resolve_name_offset(id: u32, contents: &[(u32, Vec<u8>)]) -> u32 {
@@ -1299,7 +1360,7 @@ impl std::error::Error for WriteError {}
 mod tests {
     use sha2::{Digest as _, Sha256};
 
-    use super::{Builder, WriteError};
+    use super::{Builder, WriteError, entry_name, entry_names_table, resolve_name_offset};
     use crate::{Package, derive, entry_id};
 
     /// Everything a package needs that this crate cannot compute.
@@ -1511,5 +1572,45 @@ mod tests {
                 .iter()
                 .all(|gap| gap.entry == derive::entry::MANIFEST)
         );
+    }
+
+    #[test]
+    fn the_entry_name_table_matches_the_one_a_real_package_carries() {
+        // Byte for byte against a real package, via obSCEne's `build-pkg.sh`, where the table is
+        // 75 bytes. The order is not ascending entry id - `icon0.png` is `0x1200` and comes
+        // first - which is why the sequence is taken from material rather than sorted.
+        let table = entry_names_table(&[0x1000, 0x1001, 0x1002, 0x1003, 0x1200]);
+        assert_eq!(
+            table,
+            b"\0icon0.png\0param.sfo\0playgo-chunk.dat\0playgo-chunk.sha\0playgo-manifest.xml\0"
+        );
+        assert_eq!(table.len(), 75, "the length a real package's table has");
+    }
+
+    #[test]
+    fn a_name_offset_lands_on_the_name_it_belongs_to() {
+        // The table is only useful if `resolve_name_offset` finds each name in it, since that is
+        // what an entry record carries. Generating one and then pointing at the wrong place
+        // would be worse than not generating it.
+        let table = entry_names_table(&[0x1000, 0x1001, 0x1002, 0x1003, 0x1200]);
+        let contents = vec![(0x200_u32, table.clone())];
+        for id in [0x1000_u32, 0x1001, 0x1002, 0x1003, 0x1200] {
+            let at = resolve_name_offset(id, &contents) as usize;
+            let name = entry_name(id).expect("a named entry");
+            let end = at.saturating_add(name.len());
+            assert_eq!(
+                table.get(at..end).map(String::from_utf8_lossy).as_deref(),
+                Some(name),
+                "entry {id:#x} name offset {at} does not land on {name}",
+            );
+        }
+    }
+
+    #[test]
+    fn entries_without_a_name_are_left_out_of_the_table() {
+        // `0x200` itself has no name, and neither do the digest entries. A table listing them
+        // would shift every offset after it.
+        let table = entry_names_table(&[0x200, 0x1000, 0x0080, 0x1200]);
+        assert_eq!(table, b"\0icon0.png\0param.sfo\0");
     }
 }

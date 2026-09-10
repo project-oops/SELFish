@@ -71,3 +71,4 @@ otherwise rediscover the hard way.
 | 2026-09-10 | [A green gate that was never checked, and a commit that took somebody else's work](worklog/061-a-green-gate-that-was-never-checked.md) |
 | 2026-09-10 | [One vocabulary, and an attribute that outlived its variant](worklog/062-one-vocabulary-and-the-orphaned.md) |
 | 2026-09-10 | [A guard that covered one of three, and five copies of one table](worklog/063-a-guard-that-covered-one-of-three.md) |
+| 2026-09-10 | [Half of a refusal was never a refusal](worklog/064-half-of-a-refusal-was-never-a-refusal.md) |
