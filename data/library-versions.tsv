@@ -1,7 +1,10 @@
 # The version a module must declare for a platform library, where it is not the default.
 # Columns: library, generation, major, minor, note
 #
-# read-from: Kyty@vendored    src/lib/Core/Libs — LIB_VERSION registration tables
+# read-from: KytyPS5@0b4e78c   src/libs/libVideoOut.cpp — `LIB_VERSION("VideoOut", 1, "VideoOut", 1, 1)`,
+#            the current-generation 1.1 registration this row records. (Was cited "Kyty@vendored
+#            src/lib/Core/Libs", a path that exists in no Kyty tree here; corrected to the variant
+#            and file that actually carry the registration, pinned to the commit on hand.)
 #
 # # Why this is a table and not a constant
 #

@@ -1,5 +1,8 @@
 # The public fake-package keyset.
 #
+# read-from: LibOrbisPkg@6434772  the published fake keyset (every value below)
+#            prosperity@3475257   carries the same and states the same origin in its own header
+#
 # Three RSA-2048 keypairs as modulus and private exponent, one AES key, and seven RSA public
 # moduli. Together they read *and* write a **fake** package - one built by a community tool
 # rather than signed by the vendor.

@@ -1,5 +1,9 @@
 # The NID hash suffix.
 #
+# read-from: community NID documentation, resolver tools and IDA plugins - not a single project.
+#            It is self-verifying against published (name, NID) pairs, so the origin matters less
+#            than usual (see "It proves itself" below).
+#
 # A console loader imports by NID rather than by name:
 #
 #     NID = first 8 bytes of SHA-1(name || suffix), packed so digest[0] is the LEAST

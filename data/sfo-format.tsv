@@ -2,8 +2,15 @@
 # write it.
 # Columns: struct, field, offset, size, type, value, note
 #
-# read-from: pfd_sfo_tools@vendored      sfopatcher/src/sfo.{c,h}     C       READER + WRITER
-#            ps5upload@vendored          engine/crates/ps5upload-pkg  Rust    reader + writer
+# read-from: pfd_sfo_tools  sfopatcher/src/sfo.{c,h}     C     READER + WRITER  [commit unrecorded]
+#            ps5upload      engine/crates/ps5upload-pkg  Rust  reader + writer  [commit unrecorded]
+#
+# Both are public projects and the file paths are the reproduction path - find the project, read
+# that file. The exact commits were not recorded when this was written, and are not pinned here
+# rather than guessed: the only pfd_sfo_tools copy on this machine is vendored inside a third-party
+# tree at that tree's own hash (not the upstream's), and the ps5upload copy on disk is v5.4.19 while
+# a v5.14.0 is referenced elsewhere in the collection - so neither commit can be stated with
+# confidence, and an unconfident pin is worse than an honest "unrecorded".
 #
 # Both sides of the format are covered twice, which is unusual for anything in this
 # repository and worth stating: the container needed four sources before a writer turned up,

@@ -91,7 +91,7 @@ provenance() {
     # has quietly become somebody's memory. And a real console file committed beside a format is
     # principle 2's failure - an oracle mistaken for a source.
     local status=0 table
-    for table in data/*.tsv; do
+    for table in data/*.tsv data/*.toml; do
         [ -f "$table" ] || continue
         if ! grep -q '^# read-from:' "$table"; then
             printf '%s has no read-from header naming where its rows came from

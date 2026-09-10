@@ -4,6 +4,9 @@
 # and this maps the name to the two 32-bit fields an executable declares. Encoded 0xMMmmppbb
 # (major, minor, patch, build).
 #
+# read-from: OpenOrbis-PS4-Toolchain@0a1aaf9  the PT_SCE_PROCPARAM ORBI structure the version lives in
+#            obSCEne 048-selfaudit            the values, read from installed titles' PROCPARAM on-device
+#
 # ## What an SDK version is, and where it lives
 #
 # It is not a runtime behaviour - it is a static field an executable carries in its
