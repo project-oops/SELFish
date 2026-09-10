@@ -24,7 +24,7 @@ default, the default was wrong and the file was rejected by the machine it was b
 `4F 15 3D 1D` is what a real current-generation *app eboot* carries; `54 14 F5 EE` is what a
 title's *bundled modules* carry. Both are current. Calling the second one "the current
 generation's magic" was a hypothesis the table itself flagged, and hardware refuted it - see
-obSCEne's D293. What makes a title native is `param.json` and native registration, not the
+obscene#D293. What makes a title native is `param.json` and native registration, not the
 eboot's magic.
 
 ## Executables
@@ -76,10 +76,14 @@ generation, both read and written here.
 *`selfish-title`. It depends on nothing else in this repository: it holds what a title says
 about *itself*, which is a different kind of fact from a container layout.*
 
-**`applicationCategoryType`** - the integer field in `param.json` (and `CATEGORY` in `PARAM.SFO`)
-that dictates hardware resource budgets (DMEM) and display ownership (`0` = Big App with
-12.5GB DMEM and exclusive HDMI bus 0, `65536` = System App with 0 DMEM and denied bus 0, `131072` =
-Mini App). Orthogonal to the SELF container's `paid` privilege tier.
+**`applicationCategoryType`** - the integer field in `param.json` (and `CATEGORY` in
+`PARAM.SFO`) that decides an artifact's memory budget and whether it owns the display.
+Orthogonal to the SELF container's `paid` privilege tier, which is a different axis entirely.
+
+The values and what each one costs are in [the collection's four-axes
+table](https://github.com/project-oops/OOPS/blob/main/docs/CONVENTIONS.md#the-four-axes-of-a-build-and-a-run),
+and in `selfish_title::category`, which is what code reads. Not repeated here: this table
+existed in five places and two of the copies had already drifted.
 
 **Title directory** - a title laid out as directories and files rather than packed into a
 package: an eboot beside `sce_sys/`. What an auto-mounter can register.

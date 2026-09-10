@@ -46,8 +46,12 @@ selfish sections module.prx     # sections and the link-time symbol table
 selfish reloc module.prx        # relocation tables, censused by type
 ```
 
-`sections` takes any number of symbol names after the file and reports where each is
+`sections` takes `--defines NAME` (repeatable) and reports where each named symbol is
 defined, which is the quick way to answer "did this actually get linked in".
+
+```bash
+selfish sections module.prx --defines sceKernelWrite --defines main
+```
 
 `reloc` counts rather than lists. A relocation census is how you tell a module that will
 load from one that will load *and then* fail somewhere unrelated: an unexpected type in the
@@ -70,13 +74,13 @@ misunderstood some part of it, and the mismatch says which.
 
 ```bash
 selfish pkg package.pkg         # list the entries
-selfish pkg package.pkg --all   # including the ones whose meaning is not established
-selfish extract package.pkg --out ./unpacked
+selfish pkg package.pkg --all   # every file, not just the first forty
+selfish extract package.pkg ./unpacked
 ```
 
-`--all` matters. A package holds entries this project cannot yet name, and the default view
-hides them so the listing is legible. When you are working out what an unknown entry *is*,
-the default is the wrong view.
+`--all` lifts a **truncation**, not a filter. Every entry is listed either way, including the
+ones this project cannot yet name; the default stops at forty files so a large package stays
+legible. When you are working out what a package actually contains, that cut is the wrong view.
 
 ## Where the answers come from
 

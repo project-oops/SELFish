@@ -74,6 +74,9 @@ used to confirm or refute a structure taken from cited material, never to derive
 Nothing is invented: where a field's meaning is unknown it is named `unknown` and left
 alone, because an absent row is visible and a wrong one is not.
 
+[`CLAUDE.md`](../CLAUDE.md) principle 2 is the canonical statement of that rule; this is a
+summary and defers to it.
+
 Shared rules - provenance, naming, decision logs, worklogs, gates - are in
 [the OOPS conventions](https://github.com/project-oops/OOPS/blob/main/docs/CONVENTIONS.md)
 and not restated here.

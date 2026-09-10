@@ -163,8 +163,8 @@ It is a script rather than a pipeline because a pipeline swallowed a failure twi
 | grep` reports the exit status of `grep`. The script runs each step under `set -e` and filters
 the output afterwards.
 
-Two integration tests shell out to `clang` and `ld.lld` to link a module with the script here
-and read the result back. They **skip** rather than fail when those are absent - they are not
+The integration tests that link shell out to `clang` and `ld.lld` to build a module with the
+script here and read the result back. They **skip** rather than fail when those are absent - they are not
 build dependencies, and a test that fails on a clean machine teaches people to ignore failures.
 `./bin/selfish links` runs those tests and fails if they skipped, which is the only way a run
 can claim to have checked the linker script.

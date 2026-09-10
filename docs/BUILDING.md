@@ -33,10 +33,10 @@ failed on a missing directory. It bootstraps now.
 Nothing in the *libraries* depends on oops-libs; the dependency is confined to `selfish-cli`.
 Whoever wants the old property back needs to move two calls, not restructure anything.
 
-### `clang` and `lld`, for two tests
+### `clang` and `lld`, for the tests that link
 
-Two integration tests link a real module with this repository's own linker script
-(`link/module.ld`) and read the result back. Without `ld.lld` they **skip** rather than fail.
+The integration tests that link with this repository's own linker script (`link/module.ld`)
+build a real module and read the result back. Without `ld.lld` they **skip** rather than fail.
 
 That skip is why there is a verb for it:
 
@@ -85,7 +85,8 @@ table whose header stops naming that has quietly become somebody's memory.
 And no `.pkg`, `.elf`, `.prx`, `.sprx`, `.bin` or `.self` is tracked. A real file is an
 **oracle, never a source** - used to confirm or refute a structure taken from cited material,
 never to derive one - and committing one beside a format is that principle failing in the
-most direct way available.
+most direct way available. [`CLAUDE.md`](../CLAUDE.md) principle 2 states the rule; this says
+what the gate does about it.
 
 ## What `check` runs
 

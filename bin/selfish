@@ -132,14 +132,22 @@ provenance() {
 links() {
     # Proof the linker tests actually ran rather than skipping for a missing `ld.lld` - a skip
     # would let this pass having verified none of the segment layout or tag conventions.
+    #
+    # **All three targets that link, not just `links`.** This ran only `--test links` while
+    # `current` and `module` link too, so two of the three could skip silently under the very
+    # verb that exists to stop that. The prose in docs/BUILDING.md described the guard this
+    # loop now actually is. (REQ-20260910T0015Z-8e44)
     local log="${TMPDIR:-/tmp}/selfish-links.$$"
-    cargo test -p selfish-elf --test links -- --nocapture 2>&1 | tee "$log"
-    if grep -q 'skipped:' "$log"; then
-        rm -f "$log"
-        printf 'the linker tests skipped, so this proved nothing about the script
-' >&2
-        return 1
-    fi
+    local target
+    for target in links current module; do
+        printf '=== %s\n' "$target"
+        cargo test -p selfish-elf --test "$target" -- --nocapture 2>&1 | tee "$log"
+        if grep -q 'skipped:' "$log"; then
+            rm -f "$log"
+            printf 'the %s tests skipped, so this proved nothing about the script\n' "$target" >&2
+            return 1
+        fi
+    done
     rm -f "$log"
 }
 
