@@ -61,28 +61,46 @@ selfish derive    <file>...  re-derive what a package's entries mean, from packa
 selfish nid       <name>...
 ```
 
-Building - assemble installable packages, title directories, or payloads in one step:
+Building - one invocation, four axes:
 
 ```
-selfish build pkg     --dir <dir> -o <file> [--content-id ID] [--title-id ID] [--title NAME]
-                          assemble an Orbis-generation installable package (.pkg), wrapping
-                          eboot.bin if raw ELF, creating param.sfo and PFS filesystem
-selfish build title   --out <dir> --title-id ID --title NAME [--content-id ID] [--root <dir>]
-                          lay out a Prospero-generation title directory (<TITLE_ID>/) with
-                          param.json, icon, keystone, and staging files
-selfish build payload <file> [-o <file>] [--generation 4|5]
-                          validate and stamp a freestanding ELF binary for an elfldr payload
+selfish --input <file> --target <orbis|neo|prospero|trinity>
+        --format <elf|eboot|title|pkg> --output <path>
+        [--category <big-app|system-app|mini-app|daemon|media-app>]
+        [--title-id ID] [--title NAME] [--entry ID=FILE]...
 ```
+
+`--target` carries the generation, so nothing passes one: `orbis`/`neo` are the previous
+generation, `prospero`/`trinity` the current. The two refreshes are **not** synonyms for the
+base machines - an artifact for any previous-generation console is `orbis`.
+
+Each format is a pure function of its input: it writes exactly `--output` and puts nothing
+beside it, and none needs a directory the caller prepares or cleans.
+
+```
+--format elf     the executable, stamped with the target's platform identity
+--format eboot   that, inside a signed-executable container
+--format title   a title directory at <output>/<TITLE_ID>/ - the shape
+                 sceAppInstUtilAppInstallTitleDir takes
+--format pkg     an installable package. Needs entries 0x200 and 0x1001 supplied with
+                 --entry: they are a name table and a playgo chunk table, and nothing here
+                 can compute either
+```
+
+`--category` applies to `title` and `pkg` only and defaults to `system-app`; it decides the
+memory budget and whether the artifact owns the display, so it is a build lever with runtime
+consequences rather than a label.
 
 Format diagnostics - inspect and produce each layer independently:
 
 ```
-selfish stamp     <file> --generation 4|5 [--library]
+selfish stamp     <file> --target <orbis|neo|prospero|trinity> [--library]
                            the header identity a loader checks first, which no linker sets.
-                           A stamped module is already a payload; the rest is optional
-selfish wrap      <file> --generation 4|5 [--sdk VERSION|ALIAS] [--privilege TIER]
-                           the signed-executable container. --generation defaults to 4,
-                           which is a measurement rather than a habit
+                           --library is the only route to a .prx: no --format produces one
+selfish wrap      <file> --target <orbis|neo|prospero|trinity>
+                  [--sdk VERSION|ALIAS] [--privilege TIER]
+                           the signed-executable container. --privilege and --sdk have no
+                           pipeline spelling yet, which is why this verb is still here
 selfish image     --root <dir> -o <file> --content-id ID
                            build the filesystem image a package carries, from a directory
 selfish pack      (--image <file> | --dir <dir>) -o <file> --content-id ID

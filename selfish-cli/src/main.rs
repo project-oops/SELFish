@@ -23,97 +23,154 @@ use selfish_pfs::{Compressed, Filesystem, Region, Slice, Source, Xts};
     about = "Read and write the file formats Prospero-generation hardware loads"
 )]
 struct Cli {
+    /// The executable to build from. Begins a pipeline invocation.
+    ///
+    /// `--input`, `--target`, `--format` and `--output` are one pipeline run and are required
+    /// together. With none of them, `selfish` takes a diagnostic subcommand instead.
+    #[arg(long, value_name = "FILE", requires_all = ["target", "format", "output"])]
+    input: Option<PathBuf>,
+
+    /// Which machine the artifact is for. Replaces `--generation`.
+    #[arg(long, value_enum, requires = "input")]
+    target: Option<Target>,
+
+    /// What to produce.
+    #[arg(long, value_enum, requires = "input")]
+    format: Option<Format>,
+
+    /// Where to write it. Written exactly, with nothing placed beside it.
+    #[arg(long, value_name = "PATH", requires = "input")]
+    output: Option<PathBuf>,
+
+    /// What the title declares itself to be. `--format title` and `--format pkg` only.
+    ///
+    /// Defaults to `system-app`, which is what this tool has always produced for homebrew.
+    #[arg(long, value_enum, requires = "input")]
+    category: Option<Category>,
+
+    /// The title id an artifact carries. Optional; defaults to `OBSC00001`, and says so.
+    ///
+    /// **It cannot be read out of `--input`, and this tool will not invent a place to put it.**
+    /// There is no title id in an ELF: `PT_SCE_PROCPARAM` is the only per-process block the
+    /// platform reads before anything runs and it holds SDK versions (`ORBI` magic, versions at
+    /// `+0x10` and `+0x14`) and no identity; `PT_SCE_MODULE_PARAM` is the same; and the ELF
+    /// specification has no home for one either.
+    ///
+    /// A note section or an agreed magic string would work and would be this collection's own
+    /// invented standard - enforced nowhere, understood by nothing that ships, and a dependency
+    /// on a generator rather than on a format. So it stays an option with a stated default,
+    /// which is honest about a fact that is genuinely not present in the input.
+    ///
+    /// Where a title id does live, all of it *title metadata* rather than executable content -
+    /// which is the point, since the id is a property of a title and a bare executable is not
+    /// one yet: `param.json` → `titleId`; `PARAM.SFO` → `TITLE_ID`; and a package's content id,
+    /// `UP0000-PPSA01650_00-…`, between the first `-` and the `_`.
+    #[arg(long, requires = "input")]
+    title_id: Option<String>,
+
+    /// The name shown on the home screen. Defaults to the title id.
+    #[arg(long, requires = "input")]
+    title: Option<String>,
+
+    /// A package entry this crate cannot compute, as `ID=FILE`. `--format pkg` only.
+    ///
+    /// **`0x200` and `0x1001` are required and have no default.** They are the one reason
+    /// `--format pkg` is not a pure function of `--input`: see the `pipeline` docs.
+    #[arg(long = "entry", value_name = "ID=FILE", requires = "input")]
+    entries: Vec<String>,
+
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 /// Category identifier for default Prospero homebrew entries (System App / 0x10000).
-/// Games and GUIs needing 12.5GB DMEM and exclusive HDMI bus 0 pass `--category 0` (Big App).
-const PROSPERO_CATEGORY: i64 = selfish_title::category::SYSTEM_APP;
-const NATIVE_CATEGORY: i64 = PROSPERO_CATEGORY;
+/// Which machine an artifact is for.
+///
+/// **This is where the generation lives now.** `--generation 4|5` is gone from the command
+/// line: `orbis` and `neo` are the previous generation, `prospero` and `trinity` the current
+/// one, so the generation is derivable and stops being a thing anyone passes.
+///
+/// `neo` and `trinity` are the **mid-generation refreshes and are not synonyms** for `orbis`
+/// and `prospero`. An artifact for any previous-generation machine is `orbis`; `neo` is correct
+/// only for a genuinely Pro-specific build. Artifact names and release URLs follow this.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+#[value(rename_all = "lower")]
+enum Target {
+    /// The previous generation's base machine.
+    Orbis,
+    /// The previous generation's mid-cycle refresh. Not a synonym for `orbis`.
+    Neo,
+    /// The current generation's base machine.
+    Prospero,
+    /// The current generation's mid-cycle refresh. Not a synonym for `prospero`.
+    Trinity,
+}
 
-#[derive(Subcommand)]
-enum BuildTarget {
-    /// Build an Orbis-generation installable package (.pkg).
-    Pkg {
-        /// The directory containing the title files (eboot.bin, assets).
-        #[arg(long, short)]
-        dir: PathBuf,
-        /// Where to write the .pkg file.
-        #[arg(long, short)]
-        out: PathBuf,
-        /// The content id, such as `UP0000-OBSC00001_00-0000000000000000`.
-        #[arg(long, default_value = "")]
-        content_id: String,
-        /// The title id, such as `OBSC00001`.
-        #[arg(long)]
-        title_id: Option<String>,
-        /// What the title is called on the home screen.
-        #[arg(long)]
-        title: Option<String>,
-        /// The version, as `NN.NN`.
-        #[arg(long, default_value = "01.00")]
-        version: String,
-        /// The passcode. Defaults to the fake one.
-        #[arg(long)]
-        passcode: Option<String>,
-        /// An entry this crate cannot compute, as `ID=FILE` - for example `0x200=names.bin`.
-        #[arg(long = "entry", value_name = "ID=FILE")]
-        entries: Vec<String>,
-    },
-    /// Build a Prospero-generation title directory (`<TITLE_ID>/`) with `param.json`.
-    Title {
-        /// Where to write the title directory. A `<TITLE_ID>` folder is created inside it.
-        #[arg(long, short)]
-        out: PathBuf,
-        /// The title id, such as `OBSC00001`.
-        #[arg(long)]
-        title_id: String,
-        /// What the title is called on the home screen.
-        #[arg(long)]
-        title: String,
-        /// Optional content ID (such as `UP0000-PPSA01650_00-YOUTUBE000000000`).
-        #[arg(long)]
-        content_id: Option<String>,
-        /// Content version string (such as `01.00`).
-        #[arg(long)]
-        version: Option<String>,
-        /// What launching the icon should open (e.g. local payload server).
-        #[arg(long)]
-        deeplink: Option<String>,
-        /// Path to an icon. One is generated if not given.
-        #[arg(long)]
-        icon: Option<PathBuf>,
-        /// Source directory carrying application files (copied verbatim).
-        #[arg(long, short)]
-        root: Option<PathBuf>,
-        /// The category a title declares (0 = Big App/Game, 65536 = System App/Daemon, 131072 = Mini App).
-        #[arg(long, default_value_t = PROSPERO_CATEGORY)]
-        category: i64,
-        /// Privilege tier: app, sysmodule, system, or root.
-        #[arg(long, default_value = "app")]
-        privilege: String,
-    },
-    /// Validate and stamp a freestanding ELF payload for elfldr.
-    Payload {
-        /// The input ELF binary.
-        input: PathBuf,
-        /// Where to write the stamped payload ELF.
-        #[arg(long, short)]
-        out: Option<PathBuf>,
-        /// Target generation (4 = Orbis, 5 = Prospero). Defaults to 5.
-        #[arg(long, default_value_t = 5)]
-        generation: u8,
-    },
+impl Target {
+    /// The container generation this machine loads.
+    const fn generation(self) -> Generation {
+        match self {
+            Self::Orbis | Self::Neo => Generation::Previous,
+            Self::Prospero | Self::Trinity => Generation::Current,
+        }
+    }
+}
+
+/// What to produce.
+///
+/// Each is a pure function of `--input` and the other options: it writes exactly `--output`
+/// and nothing beside it, and needs no directory the caller has to prepare or clean.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+#[value(rename_all = "lower")]
+enum Format {
+    /// The executable, stamped with the target's platform identity. No container.
+    Elf,
+    /// A signed-executable container - an `eboot.bin`.
+    Eboot,
+    /// A title directory, laid out at `--output` itself.
+    Title,
+    /// An installable package.
+    Pkg,
+}
+
+/// What a title declares itself to be.
+///
+/// A build-side lever with runtime consequences: the loader decides an artifact's memory
+/// budget and whether it owns the display from this, and refuses a previous-generation
+/// category the current generation's libraries. Only meaningful for `--format title` and
+/// `--format pkg`; passing it with `elf` or `eboot` is an error rather than a no-op, because a
+/// silently ignored option is how somebody believes they set something.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+#[value(rename_all = "kebab-case")]
+enum Category {
+    /// Full memory budget and exclusive primary display. A game.
+    BigApp,
+    /// No direct memory and no primary display. **The default**, and what homebrew has been
+    /// getting: it needs neither `libc.prx` nor a `pltauth` patch.
+    SystemApp,
+    /// Constrained budget, overlay display, runs alongside a big app.
+    MiniApp,
+    /// Headless background service.
+    Daemon,
+    /// Media streaming budget and a protected video path.
+    MediaApp,
+}
+
+impl Category {
+    /// The value the metadata carries.
+    const fn value(self) -> i64 {
+        match self {
+            Self::BigApp => selfish_title::category::BIG_APP,
+            Self::SystemApp => selfish_title::category::SYSTEM_APP,
+            Self::MiniApp => selfish_title::category::MINI_APP,
+            Self::Daemon => selfish_title::category::DAEMON,
+            Self::MediaApp => selfish_title::category::MEDIA_APP,
+        }
+    }
 }
 
 #[derive(Subcommand)]
 enum Command {
-    /// Build installable packages, title directories, or homebrew payloads in one step.
-    Build {
-        #[command(subcommand)]
-        target: BuildTarget,
-    },
     /// Hash a symbol name the way a loader does.
     Nid {
         /// The symbol names.
@@ -134,13 +191,17 @@ enum Command {
     },
     /// Stamp the platform identity a loader checks before it reads anything else.
     ///
+    /// Mostly superseded by `--format elf`, which stamps as it builds. **Not retired**, because
+    /// `--library` stamps a shared object and the pipeline builds executables: there is no
+    /// `--format` value that produces a `.prx`, so this is the only way to reach that.
+    ///
     /// No linker sets these, because no linker knows about either console.
     Stamp {
         /// The module, rewritten in place.
         file: PathBuf,
-        /// Console generation: 5 for the current one, 4 for the previous.
-        #[arg(long, default_value_t = 4)]
-        generation: u8,
+        /// Which machine the module is for. One vocabulary with the pipeline.
+        #[arg(long, value_enum, default_value = "orbis")]
+        target: Target,
         /// Stamp it as a shared library rather than an executable.
         #[arg(long)]
         library: bool,
@@ -164,37 +225,36 @@ enum Command {
         file: PathBuf,
     },
     /// Wrap an executable in a container.
+    ///
+    /// Mostly superseded by `--format eboot`. **Not retired**, because `--privilege` and
+    /// `--sdk` have no pipeline spelling yet: a root-tier or SDK-pinned container still has to
+    /// be built here. Those two are the gap to close before this can go.
     Wrap {
         /// The executable to wrap.
         file: PathBuf,
         /// Where to write it. Defaults to `eboot.bin` beside the input.
         #[arg(long)]
         out: Option<PathBuf>,
-        /// Console generation: 5 for the current one, 4 for the previous.
+        /// Which machine the container is for. One vocabulary with the pipeline.
         ///
-        /// **Both values are accepted by current hardware, each proven on its own delivery
-        /// route.** Pick the one that matches how the file will be delivered:
+        /// **Both generations are accepted by current hardware, each proven on its own delivery
+        /// route**, so this is a route decision rather than a generation one:
         ///
-        /// - **4** - a *package* built with the previous generation's magic installs, mounts,
-        ///   loads and executes (worklog 040). This is the default because it is the route the
-        ///   default serves.
-        /// - **5** - a *native title directory* whose eboot carries the current magic installs
-        ///   and launches, and ran 292 checks to completion. Measured on the container this
-        ///   collection builds, then read back off console storage: `magic 0xeef51454`,
-        ///   `ptype 0x1`. (obscene sweep 20260909-184538, REQ-20260909T2125Z-3f9d)
+        /// - `orbis`/`neo` - a *package* built with the previous generation's magic installs,
+        ///   mounts, loads and executes (worklog 040). The default, because that is the route
+        ///   the default serves.
+        /// - `prospero`/`trinity` - a *native title directory* whose eboot carries the current
+        ///   magic installs and launches, and ran 292 checks to completion. Measured on the
+        ///   container this collection builds, then read back off console storage:
+        ///   `magic 0xeef51454`, `ptype 0x1`. (obscene sweep 20260909-184538)
         ///
-        /// **Neither has been shown accepted on the other's route**, which is why the default is
-        /// a route decision rather than a generation one.
-        ///
-        /// The justification used to be a population claim - "every container found inside real
-        /// packages for the current console carries the previous generation's magic, thirty-three
-        /// of them, including a working homebrew store". **Withdrawn**: those came from packages,
-        /// which on this evidence means containers of homebrew lineage, and every *genuine*
-        /// container measured carries the current magic - 23 of 23. That population points the
-        /// other way and is equally not the reason. A default turns on what a loader accepts.
-        /// (D097)
-        #[arg(long, default_value_t = 4)]
-        generation: u8,
+        /// Neither has been shown accepted on the other's route. A default turns on what a
+        /// loader accepts, not on what other people's files contain - the population claim that
+        /// used to justify this one was withdrawn when its evidence turned out to be a fake
+        /// container, and the better population that replaced it points the other way and is
+        /// equally not the reason. (D097)
+        #[arg(long, value_enum, default_value = "orbis")]
+        target: Target,
         /// Privilege tier: app, sysmodule, system, or root.
         #[arg(long, default_value = "app")]
         privilege: String,
@@ -229,40 +289,6 @@ enum Command {
     Audit {
         /// The container, or a dump of its header region.
         file: PathBuf,
-    },
-    /// (Deprecated: use 'selfish build title') Lay out a Prospero-generation title directory.
-    #[command(hide = true)]
-    Native {
-        /// Where to write the title directory. A `<TITLE_ID>` folder is created inside it.
-        #[arg(long, short)]
-        out: PathBuf,
-        /// The title id, such as `OBSC00001`.
-        #[arg(long)]
-        title_id: String,
-        /// What the title is called on the home screen.
-        #[arg(long)]
-        title: String,
-        /// Optional content ID (such as `UP0000-PPSA01650_00-YOUTUBE000000000`).
-        #[arg(long)]
-        content_id: Option<String>,
-        /// Content version string (such as `01.00`).
-        #[arg(long)]
-        version: Option<String>,
-        /// What launching the icon should open. A payload's own local server, usually.
-        #[arg(long)]
-        deeplink: Option<String>,
-        /// An icon. One is generated if this is not given.
-        #[arg(long)]
-        icon: Option<PathBuf>,
-        /// Extra files to place in the title directory, copied verbatim.
-        #[arg(long)]
-        root: Option<PathBuf>,
-        /// The category a title declares (0 = Big App/Game, 65536 = System App/Daemon, 131072 = Mini App). Defaults to system app.
-        #[arg(long, default_value_t = NATIVE_CATEGORY)]
-        category: i64,
-        /// Privilege tier: app, sysmodule, system, or root.
-        #[arg(long, default_value = "app")]
-        privilege: String,
     },
     /// Build a filesystem image from a directory of files.
     ///
@@ -399,75 +425,35 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _logging = oops_log::Logging::new("selfish")
         .build(oops_build::line!())
         .init();
-    match Cli::parse().command {
-        Command::Build { target } => match target {
-            BuildTarget::Pkg {
-                dir,
-                out,
-                content_id,
-                title_id,
-                title,
-                version,
-                passcode,
-                entries,
-            } => build_pkg(
-                &dir,
-                &out,
-                &content_id,
-                title_id.as_deref(),
-                title.as_deref(),
-                &version,
-                passcode.as_deref(),
-                &entries,
-            ),
-            BuildTarget::Title {
-                out,
-                title_id,
-                title: title_name,
-                content_id,
-                version,
-                deeplink,
-                icon,
-                root,
-                category,
-                privilege,
-            } => {
-                let priv_tier: selfish_container::Privilege =
-                    privilege.parse().map_err(|e: &str| e.to_owned())?;
-                build_title(
-                    &out,
-                    &title_id,
-                    &title_name,
-                    content_id.as_deref(),
-                    version.as_deref(),
-                    deeplink.as_deref(),
-                    icon.as_deref(),
-                    root.as_deref(),
-                    category,
-                    priv_tier,
-                )
-            }
-            BuildTarget::Payload {
-                input,
-                out,
-                generation,
-            } => build_payload(&input, out.as_deref(), generation),
-        },
+    let cli = Cli::parse();
+
+    // Two ways in, and they do not mix. Four options are a build; a subcommand is a
+    // diagnostic somebody runs by hand on a file they already have.
+    let Some(command) = cli.command else {
+        if cli.input.is_some() {
+            return pipeline(&cli);
+        }
+        // Neither: clap's own help, rather than a bespoke error that says less.
+        <Cli as clap::CommandFactory>::command().print_help()?;
+        return Ok(());
+    };
+
+    match command {
         Command::Nid { names } => nid(&names),
         Command::Elf { file } => elf(&file),
         Command::Imports { file, all } => imports(&file, all),
         Command::Stamp {
             file,
-            generation,
+            target,
             library,
-        } => stamp(&file, generation, library),
+        } => stamp(&file, target.generation(), library),
         Command::Sections { file, defines } => sections(&file, &defines),
         Command::Reloc { file } => reloc(&file),
         Command::Container { file } => container(&file),
         Command::Wrap {
             file,
             out,
-            generation,
+            target,
             privilege,
             sdk,
             sdk_table,
@@ -477,7 +463,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             wrap(
                 &file,
                 out.as_deref(),
-                generation,
+                target.generation(),
                 priv_tier,
                 sdk.as_deref(),
                 sdk_table.as_deref(),
@@ -485,34 +471,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Title { file, round_trip } => title(&file, round_trip),
         Command::Audit { file } => audit_cmd(&file),
-        Command::Native {
-            out,
-            title_id,
-            title,
-            content_id,
-            version,
-            deeplink,
-            icon,
-            root,
-            category,
-            privilege,
-        } => {
-            eprintln!("warning: 'selfish native' is deprecated; use 'selfish build title' instead");
-            let priv_tier: selfish_container::Privilege =
-                privilege.parse().map_err(|e: &str| e.to_owned())?;
-            build_title(
-                &out,
-                &title_id,
-                &title,
-                content_id.as_deref(),
-                version.as_deref(),
-                deeplink.as_deref(),
-                icon.as_deref(),
-                root.as_deref(),
-                category,
-                priv_tier,
-            )
-        }
         Command::Image {
             root,
             out,
@@ -700,12 +658,11 @@ fn imports(path: &Path, all: bool) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn stamp(path: &Path, generation: u8, library: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let generation = match generation {
-        5 => Generation::Current,
-        4 => Generation::Previous,
-        other => return Err(format!("generation {other} is neither 4 nor 5").into()),
-    };
+fn stamp(
+    path: &Path,
+    generation: Generation,
+    library: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let kind = if library {
         selfish_elf::ObjectType::SharedLibrary
     } else {
@@ -1041,149 +998,230 @@ fn audit_cmd(file: &Path) -> Result<(), Box<dyn std::error::Error>> {
 /// The language a title falls back to when it declares only one.
 const DEFAULT_LANGUAGE: &str = "en-US";
 
-/// Ensure an eboot.bin in the target directory is stamped and wrapped in a SELF container.
-fn ensure_wrapped_eboot(
-    dir: &Path,
-    generation: Generation,
-) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let eboot_bin = dir.join("eboot.bin");
-    let candidate = if eboot_bin.exists() {
-        eboot_bin.clone()
-    } else {
-        let eboot_elf = dir.join("eboot.elf");
-        if eboot_elf.exists() {
-            eboot_elf
-        } else {
-            let mut found = None;
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_some_and(|ext| ext == "elf") {
-                        found = Some(path);
-                        break;
-                    }
-                }
-            }
-            match found {
-                Some(f) => f,
-                None => return Ok(eboot_bin),
-            }
-        }
+/// The default title id, when `--title-id` is not given.
+const DEFAULT_TITLE_ID: &str = "OBSC00001";
+
+/// One pipeline invocation: `--input` through `--format` to `--output`.
+///
+/// # The contract this owes its caller
+///
+/// Every arm is a **pure function of its inputs**: it reads `--input`, writes exactly
+/// `--output`, and puts nothing beside it. Nothing here needs a staging directory the caller
+/// prepares or cleans - where a stage wants one (packaging does), it makes its own under the
+/// system temp directory and removes it, so `make` can call this in parallel and rebuild
+/// incrementally without two invocations colliding in a shared tree.
+fn pipeline(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+    // `requires_all` on `--input` means clap has already refused any partial set; these four
+    // cannot be absent here, and an `expect` would be a panic in a binary that has removed
+    // them everywhere else.
+    let (Some(input), Some(target), Some(format), Some(output)) = (
+        cli.input.as_deref(),
+        cli.target,
+        cli.format,
+        cli.output.as_deref(),
+    ) else {
+        return Err("--input, --target, --format and --output are one invocation".into());
     };
 
-    let bytes = std::fs::read(&candidate)?;
-    if selfish_container::Container::parse(&bytes).is_ok() {
-        say!("eboot.bin: already a SELF container");
-        if candidate != eboot_bin {
-            std::fs::copy(&candidate, &eboot_bin)?;
-        }
-        return Ok(eboot_bin);
+    // Refused rather than ignored. A category that silently does nothing is how somebody
+    // believes they set one.
+    if cli.category.is_some() && !matches!(format, Format::Title | Format::Pkg) {
+        return Err(format!(
+            "--category applies to `title` and `pkg`, not to `{format:?}`; a container carries \
+             no category"
+        )
+        .into());
     }
 
-    // It's a raw ELF: stamp it first, then wrap into a SELF container
-    let mut elf_bytes = bytes;
-    let kind = selfish_elf::ObjectType::Executable;
-    let _ = selfish_elf::identity::stamp(&mut elf_bytes, kind, generation);
-    let target_sdk = selfish_container::TargetSdk::default_for(generation);
-    let container = selfish_container::build_with_options(
-        &elf_bytes,
-        generation,
-        selfish_container::Privilege::App,
-        Some(target_sdk),
-    )?;
-    std::fs::write(&eboot_bin, &container)?;
-    say!(
-        "eboot.bin: stamped and wrapped into {} byte {generation} container",
-        container.len()
-    );
-    Ok(eboot_bin)
-}
+    let generation = target.generation();
+    let category = cli.category.unwrap_or(Category::SystemApp);
+    // Announced when it is the default, because a title id nobody chose is worth seeing in the
+    // output rather than discovered in a directory name.
+    let title_id = cli.title_id.as_deref().unwrap_or_else(|| {
+        say!("  id      {DEFAULT_TITLE_ID} (default; pass --title-id to choose)");
+        DEFAULT_TITLE_ID
+    });
+    let title = cli.title.as_deref().unwrap_or(title_id);
 
-#[allow(clippy::too_many_arguments)]
-fn build_pkg(
-    dir: &Path,
-    out: &Path,
-    content_id: &str,
-    title_id: Option<&str>,
-    title: Option<&str>,
-    version: &str,
-    passcode: Option<&str>,
-    entries: &[String],
-) -> Result<(), Box<dyn std::error::Error>> {
-    say!("building Orbis package from {}", dir.display());
-    let _ = ensure_wrapped_eboot(dir, Generation::Previous);
-    pack(
-        None,
-        Some(dir),
-        passcode,
-        out,
-        content_id,
-        entries,
-        title_id,
-        title,
-        version,
-    )
-}
+    say!("{target:?} -> {format:?}  ({generation})");
 
-#[allow(clippy::too_many_arguments)]
-fn build_title(
-    out: &Path,
-    title_id: &str,
-    title_name: &str,
-    content_id: Option<&str>,
-    version: Option<&str>,
-    deeplink: Option<&str>,
-    icon: Option<&Path>,
-    root: Option<&Path>,
-    category: i64,
-    privilege: selfish_container::Privilege,
-) -> Result<(), Box<dyn std::error::Error>> {
-    say!("building Prospero title directory in {}", out.display());
-    if let Some(src_dir) = root {
-        let _ = ensure_wrapped_eboot(src_dir, Generation::Current);
+    match format {
+        Format::Elf => stamped_elf(input, output, generation),
+        Format::Eboot => eboot(input, output, generation),
+        Format::Title => title_at(input, output, generation, title_id, title, category),
+        Format::Pkg => pkg_from_elf(
+            input,
+            output,
+            generation,
+            title_id,
+            title,
+            category,
+            &cli.entries,
+        ),
     }
-    title_dir(
-        out, title_id, title_name, content_id, version, deeplink, icon, root, category, privilege,
-    )
 }
 
-fn build_payload(
+/// `--format elf`: the executable with the target's platform identity stamped into it.
+fn stamped_elf(
     input: &Path,
-    out: Option<&Path>,
-    generation: u8,
+    output: &Path,
+    generation: Generation,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let target_gen = match generation {
-        5 => Generation::Current,
-        4 => Generation::Previous,
-        other => return Err(format!("generation {other} is neither 4 nor 5").into()),
-    };
-
-    let target = out.unwrap_or(input);
     let mut bytes = std::fs::read(input)?;
     let elf = selfish_elf::Elf::parse(&bytes)?;
     say!(
-        "validating payload ELF: {} program header(s), entry {:#x}",
+        "  elf     {} program header(s), entry {:#x}",
         elf.program_headers().len(),
         elf.entry()
     );
 
-    let kind = selfish_elf::ObjectType::Executable;
-    let changes = selfish_elf::identity::stamp(&mut bytes, kind, target_gen)?;
-    if changes.is_empty() {
-        say!("payload already stamped for {target_gen}");
-    } else {
-        for change in &changes {
-            say!(
-                "  {:<14} {:#x} -> {:#x}",
-                change.field,
-                change.from,
-                change.to
-            );
-        }
+    let changes =
+        selfish_elf::identity::stamp(&mut bytes, selfish_elf::ObjectType::Executable, generation)?;
+    for change in &changes {
+        say!(
+            "  stamp   {:<14} {:#x} -> {:#x}",
+            change.field,
+            change.from,
+            change.to
+        );
     }
-    std::fs::write(target, &bytes)?;
-    say!("payload ready: written to {}", target.display());
+    if changes.is_empty() {
+        say!("  stamp   already {generation}");
+    }
+
+    write_exactly(output, &bytes)?;
     Ok(())
+}
+
+/// `--format eboot`: the executable, stamped, inside a container.
+fn eboot(
+    input: &Path,
+    output: &Path,
+    generation: Generation,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut bytes = std::fs::read(input)?;
+    let changes =
+        selfish_elf::identity::stamp(&mut bytes, selfish_elf::ObjectType::Executable, generation)?;
+    say!("  stamp   {} field(s)", changes.len());
+
+    let container = selfish_container::build(&bytes, generation)?;
+    say!(
+        "  wrap    {} bytes from a {} byte payload",
+        container.len(),
+        bytes.len()
+    );
+
+    write_exactly(output, &container)?;
+    Ok(())
+}
+
+/// `--format title`: a title directory, laid out as `<output>/<TITLE_ID>/`.
+///
+/// **The title id folder is part of the artifact, not decoration.** The install call is
+/// `sceAppInstUtilAppInstallTitleDir("<TITLE_ID>", "<parent>", 0)` - a title id and the
+/// directory *containing* it - so `<parent>/<TITLE_ID>/` is the shape the console asks for. An
+/// earlier revision laid the title out at `--output` itself, on the reasoning that `--output`
+/// is the artifact; that reasoning is tidy and it produced something the install call cannot
+/// take.
+///
+/// So `--output` is the parent, and the artifact inside it is named by the title id. That is
+/// still "nothing beside it": one directory is created and nothing else.
+fn title_at(
+    input: &Path,
+    output: &Path,
+    generation: Generation,
+    title_id: &str,
+    title: &str,
+    category: Category,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Only the eboot needs staging - `title_dir` joins the title id on itself, so it can write
+    // straight into `--output` and the directory shape comes out right with no move.
+    let scratch = scratch_dir("title")?;
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let staged = scratch.join("root");
+        std::fs::create_dir_all(&staged)?;
+        eboot(input, &staged.join("eboot.bin"), generation)?;
+
+        title_dir(
+            output,
+            title_id,
+            title,
+            None,
+            None,
+            None,
+            None,
+            Some(&staged),
+            category.value(),
+            selfish_container::Privilege::App,
+        )
+    })();
+    let _ = std::fs::remove_dir_all(&scratch);
+    result?;
+    say!("  title   {}", output.join(title_id).display());
+    Ok(())
+}
+
+/// `--format pkg`: an installable package built from one executable.
+///
+/// **This is the stage that needs a directory**, because a package is made of a title layout
+/// rather than of a file. The directory is made here, under the system temp, and removed - so
+/// the option surface stays input-to-output and no caller prepares or cleans anything.
+fn pkg_from_elf(
+    input: &Path,
+    output: &Path,
+    generation: Generation,
+    title_id: &str,
+    title: &str,
+    category: Category,
+    entries: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let scratch = scratch_dir("pkg")?;
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let laid = scratch.join("title");
+        title_at(input, &laid, generation, title_id, title, category)?;
+        // `title_at` writes `<laid>/<TITLE_ID>/`, and a package is made of the title's own
+        // contents rather than of the directory holding it.
+        let contents = laid.join(title_id);
+        pack(
+            None,
+            Some(&contents),
+            None,
+            output,
+            "",
+            entries,
+            Some(title_id),
+            Some(title),
+            "01.00",
+        )
+    })();
+    let _ = std::fs::remove_dir_all(&scratch);
+    result?;
+    Ok(())
+}
+
+/// Write a file at exactly this path, creating only the directories above it.
+fn write_exactly(output: &Path, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(output, bytes)?;
+    say!("  wrote   {} ({} bytes)", output.display(), bytes.len());
+    Ok(())
+}
+
+/// A private scratch directory under the system temp, named so two runs cannot collide.
+///
+/// Under the system temp rather than beside `--output`, so a parallel `make` never sees a
+/// half-built directory in its own tree, and so a failed run leaves nothing in the caller's.
+fn scratch_dir(what: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let dir = std::env::temp_dir().join(format!("selfish-{what}-{}-{unique}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
 }
 
 /// Lay out a Prospero title directory.
@@ -1284,10 +1322,9 @@ fn title_dir(
         say!("{} (generated)", nptitle_path.display());
     }
 
-    say!("");
-    say!("install by copying {} to /user/app/ on the", base.display());
-    say!("target and calling sceAppInstUtilAppInstallTitleDir(\"{title_id}\", \"/user/app/\", 0).");
-    say!("that call needs kernel privileges, so it runs from a payload rather than from here.");
+    // No install advice here. This lays a directory out and reports where things went; the
+    // pipeline calls it into a scratch directory it then moves, so advice naming `base` would
+    // name a path that no longer exists by the time anybody read it. `build title` gives it.
     Ok(())
 }
 
@@ -1746,13 +1783,11 @@ fn container(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 fn wrap(
     path: &Path,
     out: Option<&Path>,
-    generation: u8,
+    generation: Generation,
     privilege: selfish_container::Privilege,
     sdk_str: Option<&str>,
     sdk_table: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let generation = Generation::from_number(generation)
-        .ok_or("generation must be 4 or 5; anything else is a typo rather than a generation")?;
     let payload = std::fs::read(path)?;
     let dict = selfish_container::SdkDictionary::load_or_embedded(sdk_table);
     let target_sdk = match sdk_str {

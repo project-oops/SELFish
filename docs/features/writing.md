@@ -1,9 +1,17 @@
 # Producing something the hardware will load
 
-For most workflows, **`selfish build`** runs the complete assembly pipeline in a single step:
-- `selfish build pkg`: Orchestrates ELF stamping, SELF wrapping, `param.sfo`, PFS image, and `.pkg` assembly.
-- `selfish build title`: Orchestrates Prospero SELF wrapping, `param.json`, `icon0.png`, keystone, and `<TITLE_ID>/` title staging.
-- `selfish build payload`: Validates and stamps ELF shared objects for `elfldr`.
+For most workflows, **the pipeline** runs the complete assembly in a single invocation:
+
+```
+selfish --input <file> --target <orbis|neo|prospero|trinity> --format <elf|eboot|title|pkg> --output <path>
+```
+
+- `--format elf`: stamps the platform identity a loader checks before anything else.
+- `--format eboot`: that, wrapped in a signed-executable container.
+- `--format title`: container plus `param.json`, `icon0.png`, keystone, laid out as `<output>/<TITLE_ID>/`.
+- `--format pkg`: that, plus `param.sfo` and a PFS image, assembled into a `.pkg`.
+
+`--target` carries the generation; nothing passes a generation number.
 
 Underneath, between a compiler and the hardware there are four steps, and then a fork. `selfish`
 provides format diagnostic commands for each layer independently - which matters, because when
@@ -36,7 +44,7 @@ Every transcript below is real output, from one 35 KB payload run through the wh
 ## 1. Stamp the identity
 
 ```console
-$ selfish stamp payload.elf --generation 5
+$ selfish stamp payload.elf --target prospero
   EI_ABIVERSION  0x0 -> 0x2
   e_type         0x3 -> 0xfe10
   p_flags (R+X -> X) 0x5 -> 0x1
@@ -55,10 +63,10 @@ remaining steps are not needed at all.
 ## 2. Wrap it in a container
 
 ```console
-$ selfish wrap payload.elf --out eboot-gen4.bin --generation 4
+$ selfish wrap payload.elf --out eboot-gen4.bin --target orbis
 eboot-gen4.bin: 30368 bytes from a 35720 byte payload, previous generation (privilege: App, sdk: 0x08008011/0x00000000)
 
-$ selfish wrap payload.elf --out eboot-gen5.bin --generation 5 --sdk ps5-native
+$ selfish wrap payload.elf --out eboot-gen5.bin --target prospero --sdk ps5-native
 eboot-gen5.bin: 30368 bytes from a 35720 byte payload, current generation (privilege: App, sdk: 0x08050001/0x02000009)
 ```
 
@@ -78,10 +86,18 @@ makes it look, and [the glossary](../GLOSSARY.md#the-generation-split) has it: a
 current-generation *app eboot* carries the first, and a title's *bundled modules* carry the
 second. What makes a title native is `param.json` and native registration, not the magic.
 
-**`--generation` defaults to 4, and that is a measurement rather than a habit.** Every
-container found inside the real current-console packages sampled carries the *previous*
-generation's magic - D010 is the count, a working homebrew store among them. Pass
-`--generation 5` when you mean it; the default is what the evidence says is normal.
+**`--target` defaults to `orbis`, and that is a route decision rather than a habit.** Both
+generations are accepted by current hardware, each proven on its own delivery route: a
+*package* with the previous generation's magic installs, mounts, loads and executes (worklog
+040), and a *native title* with the current magic installs, launches and ran 292 checks to
+completion (obscene sweep 20260909-184538). Neither has been shown accepted on the other's
+route, and the default serves the package path.
+
+The justification used to be a population - "every container inside the real packages sampled
+carries the previous generation's magic". **That is withdrawn**: those containers were of
+homebrew lineage, and every *genuine* container measured carries the current magic, 23 of 23.
+The better population points the other way and is equally not the reason. A default turns on
+what a loader accepts. (D097)
 
 **`--sdk` takes an alias or a literal version.** `ps5-native` resolved to
 `0x08050001/0x02000009` above; `2.000.009` and `ps4-compat` are equally valid. The dictionary
@@ -170,7 +186,7 @@ the fork. It is a directory described by `param.json`, registered by a call that
 privileges:
 
 ```console
-$ selfish build title --out native --title-id OBSC00001 --title "Demo" --content-id UP0000-OBSC00001_00-0000000000000000 --root app
+$ selfish --input payload.elf --target prospero --format title --title-id OBSC00001 --title "Demo" --output native
 1 file(s) copied from app
 privilege: App
 contentId: UP0000-OBSC00001_00-0000000000000000
@@ -185,7 +201,6 @@ target and calling sceAppInstUtilAppInstallTitleDir("OBSC00001", "/user/app/", 0
 that call needs kernel privileges, so it runs from a payload rather than from here.
 ```
 
-(The command `selfish native` is retained as a deprecated alias pointing to `selfish build title`.)
 
 Four of the five metadata files are generated because they are derivable; the eboot came in
 through `--root`, which copies extra files verbatim (and wraps `eboot.elf` into `eboot.bin` automatically
