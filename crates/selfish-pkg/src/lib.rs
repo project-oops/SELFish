@@ -31,6 +31,7 @@ pub mod derive;
 pub mod keys;
 pub mod keystone;
 pub mod licence;
+pub mod playgo;
 pub mod sfo;
 pub mod wrap;
 pub mod write;

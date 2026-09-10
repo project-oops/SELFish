@@ -376,6 +376,33 @@ impl Builder {
             contents.sort_by_key(|(id, _)| *id);
         }
 
+        // Entry `0x1001` is derived too, and for the same reason one step further along: its
+        // structure is fixed for a single-chunk title, and the two values that are not fixed are
+        // the finished package and the inner filesystem, both of which are in hand here.
+        //
+        // It was the last entry a caller had to supply, on the grounds that the inner size was a
+        // number nobody could account for. The source the derivation was already cited to names
+        // it - `ChunkDat.cs` leaves it zero commented *"must update this to inner pfs image
+        // size"* - and [`inner_image_size`] has been reading exactly that out of the outer
+        // filesystem all along, for the cache-size warning. (D099)
+        //
+        // A supplied one still wins, as with `0x200`.
+        let has_playgo = contents
+            .iter()
+            .any(|(id, _)| *id == derive::entry::PLAYGO_CHUNK_DAT);
+        let inner_size = if has_playgo {
+            None
+        } else {
+            inner_image_size(&self.image, &self.content_id, self.passcode_bytes())
+        };
+        if let Some(inner) = inner_size {
+            let package_size = u64::try_from(IMAGE_OFFSET.saturating_add(self.image.len()))
+                .map_err(|_| WriteError::TooLarge)?;
+            let body = crate::playgo::chunk_dat(&self.content_id, package_size, inner);
+            contents.push((derive::entry::PLAYGO_CHUNK_DAT, body));
+            contents.sort_by_key(|(id, _)| *id);
+        }
+
         let missing: Vec<u32> = entry_id::ALWAYS_PRESENT
             .iter()
             .copied()
@@ -1350,6 +1377,59 @@ impl core::fmt::Display for WriteError {
 
 impl std::error::Error for WriteError {}
 
+/// How large the *inner* filesystem inside an outer image is, or `None` if it cannot be read.
+///
+/// Reaching it means decrypting, because the inner image is a `PFSC` container held as a file
+/// inside the encrypted outer filesystem. Everything needed is in hand - the key comes from the
+/// content id and the passcode - so this is the same walk an extractor does, from an image rather
+/// than from a whole package. Only the `PFSC` header is read: it records the length its contents
+/// decompress to.
+///
+/// Returns `None` rather than failing: a package whose image cannot be walked has a larger
+/// problem than any one field, and it will be reported by whatever reads it next.
+///
+/// # Two callers, one number
+///
+/// The package header's cache size has to be compared against this rather than against the outer
+/// image, which is larger and would have hidden the problem: a minimal package's outer image was
+/// comfortably above the declared cache while its inner filesystem was below it, and a console
+/// refused the mount.
+///
+/// The second caller is [`crate::playgo::chunk_dat`], where the same number is
+/// `inner_mchunk_attrs[0].size`. That entry was the last one a caller had to supply, on the
+/// grounds that its inner size was unaccountable - while this function, written for the cache
+/// warning, had been computing it all along. It lives here rather than in a consumer because
+/// two callers needing one number is the definition of a fact belonging to the library. (D099)
+#[must_use]
+pub fn inner_image_size(image: &[u8], content_id: &str, passcode: &[u8]) -> Option<u64> {
+    use selfish_pfs::{Filesystem, Slice, Source, Xts};
+
+    let ekpfs = keys::derive_filesystem_key(content_id.as_bytes(), passcode);
+    let source = Slice::new(image, 0);
+    // The superblock is in the clear even where the rest is not, which is what carries the seed.
+    let superblock = source.read(0, 0x400).ok()?;
+    let block_size = u64::from(u32::from_le_bytes([
+        *superblock.get(0x20)?,
+        *superblock.get(0x21)?,
+        *superblock.get(0x22)?,
+        *superblock.get(0x23)?,
+    ]));
+    let (tweak, data) = selfish_pfs::image_keys(&ekpfs, &superblock).ok()?;
+    let sectors = block_size.checked_div(selfish_pfs::SECTOR_SIZE)?;
+    let decrypted = Xts::new(source, &tweak, &data, sectors).ok()?;
+    let outer = Filesystem::new(&decrypted).ok()?;
+    for found in outer.walk(0).ok()? {
+        if !found.path.ends_with(selfish_pfs::outer::IMAGE_NAME) {
+            continue;
+        }
+        let contents = outer.contents(found.inode).ok()?;
+        let raw = contents.get(0x28..0x30)?;
+        let mut value = [0_u8; 8];
+        value.copy_from_slice(raw);
+        return Some(u64::from_le_bytes(value));
+    }
+    None
+}
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,

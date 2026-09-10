@@ -1387,54 +1387,6 @@ fn read_tree(root: &Path) -> Result<selfish_pfs::write::Tree, Box<dyn std::error
     walk(root, selfish_pfs::write::ROOT_NAME)
 }
 
-/// Build the image a package carries, from a tree.
-///
-/// Three layers, and the keys for the outer one come from the content id and the passcode.
-/// How large the *inner* filesystem inside an outer image is, or `None` if it cannot be read.
-///
-/// The package header's cache size has to be compared against this rather than against the outer
-/// image, which is larger and would have hidden the problem: a minimal package's outer image was
-/// comfortably above the declared cache while its inner filesystem was below it, and the console
-/// refused the mount.
-///
-/// Reaching it means decrypting, because the inner image is a `PFSC` container held as a file
-/// inside the encrypted outer filesystem. Everything needed is in hand - the key comes from the
-/// content id and the passcode - so this is the same walk [`open`] does, from an image rather than
-/// from a whole package.
-///
-/// Returns `None` rather than failing the build: a package whose image cannot be walked has a
-/// larger problem than its cache size, and it will be reported by whatever reads it next.
-fn inner_image_size(image: &[u8], content_id: &str, passcode: &[u8]) -> Option<u64> {
-    use selfish_pfs::{Filesystem, Slice, Source, Xts};
-
-    let ekpfs = selfish_pkg::keys::derive_filesystem_key(content_id.as_bytes(), passcode);
-    let source = Slice::new(image, 0);
-    // The superblock is in the clear even where the rest is not, which is what carries the seed.
-    let superblock = source.read(0, 0x400).ok()?;
-    let block_size = u64::from(u32::from_le_bytes([
-        *superblock.get(0x20)?,
-        *superblock.get(0x21)?,
-        *superblock.get(0x22)?,
-        *superblock.get(0x23)?,
-    ]));
-    let (tweak, data) = selfish_pfs::image_keys(&ekpfs, &superblock).ok()?;
-    let sectors = block_size.checked_div(selfish_pfs::SECTOR_SIZE)?;
-    let decrypted = Xts::new(source, &tweak, &data, sectors).ok()?;
-    let outer = Filesystem::new(&decrypted).ok()?;
-    for found in outer.walk(0).ok()? {
-        if !found.path.ends_with(selfish_pfs::outer::IMAGE_NAME) {
-            continue;
-        }
-        // Only the `PFSC` header is needed: it records the length its contents decompress to.
-        let contents = outer.contents(found.inode).ok()?;
-        let raw = contents.get(0x28..0x30)?;
-        let mut value = [0_u8; 8];
-        value.copy_from_slice(raw);
-        return Some(u64::from_le_bytes(value));
-    }
-    None
-}
-
 /// Whether a tree already carries a keystone.
 fn has_keystone(tree: &selfish_pfs::write::Tree) -> bool {
     tree.dirs
@@ -1456,6 +1408,9 @@ fn add_to_sce_sys(tree: &mut selfish_pfs::write::Tree, name: &str, bytes: Vec<u8
 /// The directory a title own metadata lives in.
 const SCE_SYS: &str = "sce_sys";
 
+/// Build the image a package carries, from a tree.
+///
+/// Three layers, and the keys for the outer one come from the content id and the passcode.
 fn build_image(
     tree: &selfish_pfs::write::Tree,
     content_id: &str,
@@ -1577,7 +1532,7 @@ fn pack(
     let builder = selfish_pkg::write::Builder::new()
         .content_id(content_id)
         .passcode(&passcode);
-    if let Some(inner) = inner_image_size(&image, content_id, &passcode)
+    if let Some(inner) = selfish_pkg::write::inner_image_size(&image, content_id, &passcode)
         .filter(|inner| *inner < u64::from(selfish_pkg::write::DEFAULT_CACHE_SIZE))
     {
         say!(

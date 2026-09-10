@@ -483,6 +483,11 @@ pub mod entry {
     ///
     /// `PLAYGO_CHUNK_SHA` in `LibOrbisPkg@6434772`.
     pub const PLAYGO_CHUNK_SHA: u32 = 0x1002;
+    /// The chunk descriptor - which chunks a title has and how big each image is.
+    ///
+    /// `PLAYGO_CHUNK_DAT` in `LibOrbisPkg@6434772`, whose `PlayGo/ChunkDat.cs` writes it and
+    /// whose fields shadPS4's `playgo_chunk.h` names. Built by [`crate::playgo::chunk_dat`].
+    pub const PLAYGO_CHUNK_DAT: u32 = 0x1001;
 }
 
 /// Offset of the id within a record.

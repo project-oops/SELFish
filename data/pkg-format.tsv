@@ -4,6 +4,8 @@
 #
 # read-from: prosperity@3475257  tools/pkg_extract/pkg_extract.py  Python  reader
 #            shadPS4@be21649     src/core/file_format/pfs.h        C++     reader (inner filesystem)
+#            LibOrbisPkg@6434772 LibOrbisPkg/PlayGo/ChunkDat.cs      C#      WRITER  (playgo_* rows)
+#            shadPS4@be21649     src/core/file_format/playgo_chunk.h C++     reader  (playgo_* rows)
 #
 # confirmed-against: titles/PS5_ITEM00001_v1.14.pkg
 #                    titles/PS5_LAPY20011_v1.05.pkg
@@ -202,3 +204,78 @@ rif	secret	0x270	144	bytes	-	AES-CFB128 under rif_debug_key. encrypted in all th
 rif	signature	0x300	256	bytes	-	RSA-2048 over sha256 of the first 0x300 bytes, under the debug RIF keyset
 rif	(size)	-	0x400	size	-	
 entry_content	0x80	0x1c	4	u32be	0x6e	measured: identical in all three packages while every digest slot differs. Not interpreted. selfish manifest_probe
+
+#
+# # `playgo-chunk.dat`, entry `0x1001` - the rows below, and why they are here
+#
+# Two independent readings, one a writer and one a reader, and they agree field for field:
+# `LibOrbisPkg`'s `PlayGo/ChunkDat.cs` builds it, shadPS4's `playgo_chunk.h` declares it. The
+# names in the `field` column are shadPS4's, which are the more descriptive of the two.
+#
+# **Little-endian, unlike the package container around it**, which is big-endian. The magic is
+# stored as bytes rather than as the number shadPS4 spells `0x6F676C70`, because a magic held as
+# an integer and written back is a magic written backwards. (D002)
+#
+# Every value below is fixed for a single-chunk title except two sizes, and both of those this
+# repository computes:
+#
+#   mchunk_attrs[0].size        the finished package - 0x80000 + the outer image
+#   inner_mchunk_attrs[0].size  the inner PFS image
+#
+# `ChunkDat.cs` names both in comments beside the zeros it leaves for them: *"must update this to
+# outer pfs image size + pfs offset"* and *"must update this to inner pfs image size"*. Neither is
+# unknown and neither is supplied - the second is what `write::inner_image_size` already reads out
+# of the outer filesystem, from the `PFSC` header's decompressed length. (D099)
+#
+# The eight `(offset, size)` pairs at `0xC0` are **not in address order**: the last pair points at
+# `0x150`, between the fourth and fifth. That is what both sources write, so it is preserved
+# rather than tidied. A reader indexes the pairs by position, so reordering them would move
+# `inner_mchunk_attrs` to whatever slot came fourth.
+#
+# The header-only version of this entry is a recorded failure rather than a hypothetical: a
+# console read `chunk_count = 1` and `scenario_count = 1`, found no records behind them, and
+# `scePlayGoCoreGetRawContentInfo` returned `0x80f00200` **after** the header had passed.
+playgo	magic	0x00	4	bytes	70 6c 67 6f	"plgo". shadPS4 spells it PLAYGO_MAGIC 0x6F676C70, a little-endian u32 of these bytes
+playgo	version_major	0x04	2	u16le	0	the writer sets zero
+playgo	version_minor	0x06	2	u16le	0	
+playgo	image_count	0x08	2	u16le	1	shadPS4 bounds it [0;1]
+playgo	chunk_count	0x0A	2	u16le	1	[0;1000]. one for a single-chunk title
+playgo	mchunk_count	0x0C	2	u16le	1	[0;8000]
+playgo	scenario_count	0x0E	2	u16le	1	[0;32]
+playgo	file_size	0x10	4	u32le	416	the whole structure, header and sub-tables
+playgo	default_scenario_id	0x14	2	u16le	0	
+playgo	attrib	0x16	2	u16le	1	
+playgo	sdk_version	0x18	4	u32le	0	
+playgo	disc_count	0x1C	2	u16le	0	shadPS4: "if equals to 0 then disc count = 1"
+playgo	layer_bmp	0x1E	2	u16le	0	
+playgo	reserved	0x20	32	bytes	ff	0xFF repeated, not zero. LibOrbisPkg fills it explicitly
+playgo	content_id	0x40	128	string	-	the field is 128 wide; a 36-character content id is written and the rest left zero
+playgo	(size)	-	416	size	-	
+playgo_toc	chunk_attrs	0xC0	8	pair	0x100 32	(offset, size), both u32le. NOT in address order - see the note above
+playgo_toc	chunk_mchunks	0xC8	8	pair	0x120 2	
+playgo_toc	chunk_labels	0xD0	8	pair	0x130 9	"Chunk #0" and its terminator
+playgo_toc	mchunk_attrs	0xD8	8	pair	0x140 16	
+playgo_toc	scenario_attrs	0xE0	8	pair	0x160 32	
+playgo_toc	scenario_chunks	0xE8	8	pair	0x180 2	
+playgo_toc	scenario_labels	0xF0	8	pair	0x190 12	"Scenario #0" and its terminator
+playgo_toc	inner_mchunk_attrs	0xF8	8	pair	0x150 16	the out-of-order one
+playgo_body	chunk_flag	0x100	1	u8	0x80	
+playgo_body	chunk_image_disc_layer_no	0x101	1	u8	0	shadPS4 splits it into layer_no:2, disc_no:2, image_no:4
+playgo_body	chunk_req_locus	0x102	1	u8	3	
+playgo_body	chunk_mchunk_count	0x10E	2	u16le	1	
+playgo_body	chunk_language_mask	0x110	8	u64le	0xFFFFFFFFFFFFFFFF	every language
+playgo_body	chunk_mchunks_offset	0x118	4	u32le	0	relative to chunk_mchunks
+playgo_body	chunk_label_offset	0x11C	4	u32le	0	relative to chunk_labels
+playgo_body	chunk_mchunks_0	0x120	2	u16le	0	chunk 0 maps to mchunk 0
+playgo_body	chunk_label_0	0x130	9	string	Chunk #0	
+playgo_body	mchunk_offset	0x140	8	u64le	0	
+playgo_body	mchunk_size	0x148	8	u64le	-	COMPUTED: the finished package - 0x80000 + the outer image
+playgo_body	inner_mchunk_offset	0x150	8	u64le	0	
+playgo_body	inner_mchunk_size	0x158	8	u64le	-	COMPUTED: the inner PFS image, from the PFSC header decompressed length
+playgo_body	scenario_type	0x160	1	u8	1	
+playgo_body	scenario_initial_chunk_count	0x174	2	u16le	1	
+playgo_body	scenario_chunk_count	0x176	2	u16le	1	
+playgo_body	scenario_chunks_offset	0x178	4	u32le	0	
+playgo_body	scenario_label_offset	0x17C	4	u32le	0	
+playgo_body	scenario_chunks_0	0x180	2	u16le	0	scenario 0 covers chunk 0
+playgo_body	scenario_label_0	0x190	12	string	Scenario #0	
