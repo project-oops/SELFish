@@ -76,3 +76,4 @@ otherwise rediscover the hard way.
 | 2026-09-10 | [The last two verbs, and a `paid` value nothing wrote](worklog/066-the-last-two-verbs-and-a-paid-value-nothing-wrote.md) |
 | 2026-09-10 | [The pipeline learns what a title carries, and an empty content id that keyed nothing](worklog/067-the-pipeline-learns-what-a-title-carries.md) |
 | 2026-09-10 | [A review caught `--icon` copied, not converted - and my evidence that it was](worklog/068-a-review-caught-icon-copied-not-converted.md) |
+| 2026-09-10 | [The shader container was citable after all, once I looked past the first two emulators](worklog/069-the-shader-container-was-citable-after-all.md) |

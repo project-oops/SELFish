@@ -1,0 +1,63 @@
+# The AGC shader container header - what `sceAgcCreateShader` is handed, as five open-source
+# PlayStation 5 emulators read it. This is the guest-visible `Shader` structure: a fixed header
+# whose pointer fields reach sub-tables (registers, semantics, user data) laid out after it.
+# Columns: struct, field, offset, size, type, value, note
+#
+# read-from: craziiEmu@8a13647    src/CraziiEmu.Libs/Agc/AgcExports.cs   C#    reader (validates magic+version, relocates the pointer fields, patches the compute program registers)
+#            prosper@bb3e189      src/hle/graphics/hle_agc.cpp           C++   reader (struct AgcShader, with a static_assert pinning the offsets)
+#            KytyPS5@0b4e78c      src/graphics/shader/shader.h           C++   reader (struct Shader, identical layout, plus the sub-table structs)
+#            Kyty                 source/emulator/include/Emulator/Graphics/Shader.h:974  C++  reader (struct Shader - the upstream prosper cites)
+#            SharpEMU             src/SharpEmu.Libs/Agc/AgcExports.cs    C#    reader (same magic and validation, num_sh_registers at 0x5C)
+#
+# **Five readers, one layout, and one of them pins it.** prosper carries
+# `static_assert(offsetof(AgcShader, user_data)==0x08 && code==0x10 && specials==0x28 &&
+# type==0x5a && num_sh_registers==0x5c, "AgcShader must match the SDK blob layout")`, and the other
+# four agree field for field. craziiEmu and SharpEMU validate the `0x34333231` magic and `0x18`
+# version before touching anything else. This is derivation from cited implementations, per
+# principle 1, with obSCEne's hardware sweep 20260910-203426-eboot (`166-agc/compute-dispatch`,
+# `rc-create=0x0`) as the oracle a real container passed - never a source. (selfish D103)
+#
+# # Little-endian, and the pointers are self-relative until a console relocates them
+#
+# Every scalar is little-endian. The `ptr` fields do not hold an absolute address in a built
+# container: they hold an offset relative to the field's own location, and `sceAgcCreateShader`
+# rewrites each in place to `field_address + offset` (craziiEmu `RelocatePointerField`). So a
+# writer lays the sub-tables out after the header and sets each pointer field to
+# `sub_table_offset - field_offset`. A zero pointer field stays zero (no sub-table).
+#
+# # What is a field here, and what is the caller's
+#
+# This table is the container *format* - the fixed header and where the sub-tables sit. The
+# *contents* of those sub-tables (which registers a shader programs, its semantics, its resource
+# usage) are the shader's own, read out of its RDNA2 bytecode by whatever produced it, and are
+# supplied to the builder rather than invented here. The one placement a console imposes is that
+# the bytecode the `code` field reaches is 256-byte aligned (KytyPS5, prosper: a non-256-aligned
+# code pointer is rejected).
+#
+# The disassembly draft this replaced (obSCEne worklog 069, since dropped) had two of these wrong:
+# it called `0x44` a "64-bit shader hash" - it is `shader_size`, a u32 - and it placed the target
+# nowhere precise, where it is a u32 at `0x4c`. Reading the implementations caught both. (D103)
+header	file_header	0x00	4	bytes	31 32 33 34	"1234" = 0x34333231. Stored as bytes: a magic held as an integer and written back is a magic reversed (D002)
+header	version	0x04	4	u32le	0x18	craziiEmu/SharpEMU `ShaderVersion`; validated alongside the magic
+header	user_data	0x08	8	ptr	-	self-relative offset to the ShaderUserData block, or 0
+header	code	0x10	8	ptr	-	the shader bytecode; written by sceAgcCreateShader from its own argument. 256-byte aligned
+header	cx_registers	0x18	8	ptr	-	self-relative offset to a ShaderRegister array (context registers), or 0
+header	sh_registers	0x20	8	ptr	-	self-relative offset to a ShaderRegister array (SH registers), or 0
+header	specials	0x28	8	ptr	-	self-relative offset to the ShaderSpecialRegs block, or 0
+header	input_semantics	0x30	8	ptr	-	self-relative offset to a ShaderSemantic array, or 0
+header	output_semantics	0x38	8	ptr	-	self-relative offset to a ShaderSemantic array, or 0
+header	header_size	0x40	4	u32le	-	size of the header region; computed by the builder
+header	shader_size	0x44	4	u32le	-	the bytecode's size; supplied (NOT a hash, contra the draft)
+header	embedded_constant_buffer_size_dqw	0x48	4	u32le	-	embedded constant buffer size in dqwords; supplied, 0 if none
+header	target	0x4c	4	u32le	-	the ISA/target the bytecode is for; supplied (the draft's "ISA")
+header	num_input_semantics	0x50	4	u32le	-	count of input_semantics entries
+header	scratch_size_dw_per_thread	0x54	2	u16le	-	scratch dwords per thread; supplied
+header	num_output_semantics	0x56	2	u16le	-	count of output_semantics entries
+header	special_sizes_bytes	0x58	2	u16le	-	size of the ShaderSpecialRegs block; supplied
+header	type	0x5a	1	u8	-	shader stage: 0 = compute, 1 = pixel, 2/6 = es/geometry, 4 = gs, 7 = ls
+header	num_cx_registers	0x5b	1	u8	-	count of cx_registers entries
+header	num_sh_registers	0x5c	1	u8	-	count of sh_registers entries
+header	(size)	-	0x60	size	-	the header rounded up to an 8-byte boundary; sub-tables follow
+shader_register	offset	0x00	4	u32le	-	a GPU register address (e.g. compute program lo/hi at 0x20C/0x20D)
+shader_register	value	0x04	4	u32le	-	the value written to that register; the program-address ones are patched by the console from the code pointer
+shader_register	(size)	-	0x08	size	-	one ShaderRegister is eight bytes

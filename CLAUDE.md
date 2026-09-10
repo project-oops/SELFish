@@ -157,6 +157,12 @@ made anything safer - it would only have meant a package this repository builds 
   title says about *itself* - `PARAM.SFO` and `param.json`. `pkg` uses it because a package
   carries a `PARAM.SFO`; nothing else does.
 
+  `shader` sits off to the side too, depending on nothing: it is the AGC shader container
+  `sceAgcCreateShader` is handed, from `data/agc-shader-format.tsv`. It owns the container
+  *format* - the header and how its sub-tables are placed and self-relatively pointed to - and
+  takes the register contents from the caller, because reading a shader's registers out of its
+  bytecode is a compiler's job, not a format's. (D103)
+
   **This list must stay complete.** It was missing `title` for one crate's lifetime, and in
   that window a session read this file, concluded `PARAM.SFO` had no home, and wrote a second
   implementation of it inside `pkg` - hardcoding offsets the real one reads from

@@ -539,6 +539,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "selfish-shader"
+version = "0.1.0"
+
+[[package]]
 name = "selfish-title"
 version = "0.1.0"
 dependencies = [

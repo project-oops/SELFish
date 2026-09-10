@@ -1,7 +1,53 @@
 # D103 - The AGC shader container is admissible as a format, but only the part a citable source derives - not the vendor-binary part, and not because hardware accepts it
 
-**Status: decided. 2026-09-10.**
+**Status: decided, then corrected on evidence. 2026-09-10.**
 
+> ## Corrected: the whole container is citable, and it is being built
+>
+> The section below concluded that four "working-critical" fields - the target, a field at `+0x44`,
+> the total size, and the alignment - had no citable source and so SELFish would not ship the
+> container. **That was wrong, and it was wrong because I stopped searching too early.** I checked
+> craziiEmu and shadPS4 and ruled; I did not check the other PS5 emulators sitting in the same
+> directory. Prompted to look wider, I found four more, and they overturn it.
+>
+> **Five open-source emulators carry the same header, and one pins it with a `static_assert`:**
+> craziiEmu (`AgcExports.cs`), prosper (`hle_agc.cpp`, `struct AgcShader`, `static_assert` on the
+> offsets, citing Kyty), KytyPS5 (`shader.h`, `struct Shader`), Kyty (`Shader.h:974`, the upstream
+> the others trace to), and SharpEMU (`AgcExports.cs`). The guest-visible header they agree on:
+>
+> | off | field | type | | off | field | type |
+> |---|---|---|---|---|---|---|
+> | `0x00` | file_header `0x34333231` | u32 | | `0x40` | header_size | u32 |
+> | `0x04` | version `0x18` | u32 | | `0x44` | **shader_size** | u32 |
+> | `0x08` | user_data | ptr* | | `0x48` | embedded_constant_buffer_size_dqw | u32 |
+> | `0x10` | code | ptr | | `0x4c` | **target** | u32 |
+> | `0x18` | cx_registers | ptr* | | `0x50` | num_input_semantics | u32 |
+> | `0x20` | sh_registers | ptr* | | `0x54` | scratch_size_dw_per_thread | u16 |
+> | `0x28` | specials | ptr* | | `0x56` | num_output_semantics | u16 |
+> | `0x30` | input_semantics | ptr* | | `0x58` | special_sizes_bytes | u16 |
+> | `0x38` | output_semantics | ptr* | | `0x5a` | type (`0`=compute) | u8 |
+> | | | | | `0x5b` | num_cx_registers | u8 |
+> | | | | | `0x5c` | num_sh_registers | u8 |
+>
+> `ptr*` fields hold a **self-relative offset** in the built container; `sceAgcCreateShader`
+> rewrites each in place to an absolute pointer (`field += fieldAddr`, craziiEmu
+> `RelocatePointerField`), so a writer sets `field = target - fieldAddr`. The sub-tables those
+> pointers reach - `ShaderRegister{u32 offset, u32 value}`, `ShaderSpecialRegs`, `ShaderSemantic`,
+> `ShaderUserData` - are all defined in Kyty/prosper too.
+>
+> **The citable sources also correct the disassembly draft.** The draft called `+0x44` a "64-bit
+> barefoot trailer hash"; it is `shader_size`, a `u32`. It put the "ISA `0x0e`" nowhere precise;
+> `target` is a `u32` at `+0x4c`. Its "base `0x18` + stage `0xd8` = `0x130`" framing does not match
+> the flat ~`0x60` header the emulators read - `0x18` is the *version value*, not a base size, and
+> `0x130` is the whole container (header plus this shader's sub-tables) for obSCEne's specific
+> compute shader, not a format constant. This is principle 1 doing its job: a vendor-binary
+> derivation drifted, and reading the citable implementations caught it.
+>
+> **So the container is fully derivable and SELFish builds it** (`selfish-shader`), from the five
+> sources with obSCEne's passing sweep as the oracle. The reasoning below is kept as the record of
+> a ruling made on half the evidence.
+
+---
 
 **A shader container is a format and belongs here (obSCEne REQ-20260910T1945Z-7a3b). Most of its
 structure is derivable from an open-source emulator and is admissible. The fields that make it a

@@ -8,6 +8,7 @@ members = [
     "crates/selfish-title",
     "crates/selfish-pfs",
     "crates/selfish-pkg",
+    "crates/selfish-shader",
     "selfish-cli",
 ]
 
