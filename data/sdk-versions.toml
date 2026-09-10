@@ -1,9 +1,36 @@
 # Target SDK versions for PlayStation 4 and PlayStation 5 executables.
 #
-# Allows users and callers to specify human-readable versions (e.g. "2.000.009", "ps5-native")
-# rather than opaque 32-bit packed hex numbers.
+# A caller names a version ("2.000.009", "ps5-native") instead of an opaque packed hex number,
+# and this maps the name to the two 32-bit fields an executable declares. Encoded 0xMMmmppbb
+# (major, minor, patch, build).
 #
-# Encoded format: 0xMMmmppbb (Major, Minor, Patch, Build).
+# ## What an SDK version is, and where it lives
+#
+# It is not a runtime behaviour - it is a static field an executable carries in its
+# `PT_SCE_PROCPARAM` segment (type `0x61000001`): an `ORBI` block with `sdk_version` (PS4) at
+# `+0x10` and `sdk_version_second` (PPR) at `+0x14`. The structure is named in the OpenOrbis PS4
+# ELF specification - the same source `selfish-container`'s `patch_elf_procparam` writes from - so
+# reading one needs no vendor material.
+#
+# ## The reproduction path: read it off any title, on your own device
+#
+# Because it is a field in the eboot, you observe a real value by *reading* a title's PROCPARAM -
+# not running the title, no hardware and no emulator required, just parsing the ELF. obSCEne does
+# this on the console at scale: its `048-selfaudit` walk enumerates the installed-title
+# directories (`/user/app`, `/system_ex/app`, `/system/vsh/app`) with `sceKernelGetdents` and
+# audits whatever eboots are present. So a census of the SDK versions titles declare is
+# reproducible by anyone running obSCEne against their own library - any title, nothing copied out.
+#
+# ## Where each entry below came from
+#
+# Marked per entry in `source`, and not dressed up beyond what is known:
+#   - `measured`      - read from a named title's PROCPARAM.
+#   - `conventional`  - a representative value in common use, NOT traced to a specific title
+#                       measured here. Flagged honestly rather than presented as a measurement.
+#   - `synthetic`     - not a real title's value; a deliberate choice, with the reason.
+#
+# `min_firmware` is the firmware a target implies, for the caller's guidance; it is not part of
+# the PROCPARAM and is conventional throughout.
 
 [sdks."2.000.009"]
 generation = 5
@@ -11,7 +38,8 @@ alias = "prospero, prospero-default, ps5-native"
 ps4_sdk = "08.050.001"
 ppr_sdk = "02.000.009"
 min_firmware = "2.00"
-description = "Universal safe Prospero target (measured from retail PPSA03416)"
+source = "measured: retail PPSA03416's PT_SCE_PROCPARAM"
+description = "Universal safe Prospero target"
 
 [sdks."11.600.005"]
 generation = 5
@@ -19,6 +47,7 @@ alias = "prospero-current, ps5-current"
 ps4_sdk = "12.590.001"
 ppr_sdk = "11.600.005"
 min_firmware = "11.60"
+source = "conventional: a representative recent-firmware Prospero value, not traced to a specific title measured here"
 description = "Modern Prospero target (FW 11.xx/12.xx)"
 
 [sdks."8.008.011"]
@@ -27,6 +56,7 @@ alias = "orbis, orbis-default, ps4-compat"
 ps4_sdk = "08.008.011"
 ppr_sdk = "00.000.000"
 min_firmware = "8.00"
+source = "measured: the value a launching PS4 title declares (D242); its on-console effect was tested in D244"
 description = "Orbis baseline"
 
 [sdks."0.000.000"]
@@ -35,5 +65,5 @@ alias = "zero"
 ps4_sdk = "00.000.000"
 ppr_sdk = "00.000.000"
 min_firmware = "0.00"
+source = "synthetic: not a title's value. obSCEne keeps zero for its own module because a real SDK version broke sceKernelDlsym resolution on the console tested (D244); kept here as the census-probe baseline"
 description = "Zero SDK for D244 census probing"
-
