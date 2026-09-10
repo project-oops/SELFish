@@ -78,3 +78,31 @@ here was small and the finding was better than the answer would have been. It wi
 This is the fifth instance of one shape: judging what something is from what it is called - a
 candidate label, a verdict headline, a field name, a doc comment, a title id in a citation, and now
 a constant's variable name. The discriminator each time was going to the material.
+
+## What this has *not* shown, which matters more than usual here
+
+**The corrected value has never been on hardware, and the value it replaces has.**
+
+obSCEne's script records that a header-only version of this entry was refused -
+`scePlayGoCoreGetRawContentInfo` returning `0x80f00200` after the header passed - and that the full
+structure, `0xAA0000` and all, is what stopped that happening. So `11141120` is a number that
+appears in a package a console accepted.
+
+Two readings survive that, and this repository cannot tell them apart from here:
+
+1. **The console does not validate this field against anything**, in which case both values install
+   and the correction is a tidiness argument backed by arithmetic.
+2. **It does**, in which case the old value was tolerated for some reason and the new one is
+   either an improvement or a regression.
+
+The arithmetic is not in doubt - `0xAA0000` is larger than the package that contains it, so it
+cannot be describing the inner image, whatever else it is doing. What is in doubt is whether
+anything reads it. That is a hardware question, it belongs to obSCEne, and it is filed
+(REQ-20260910T0520Z-9c33).
+
+**Recording this rather than leaving it implied**, because the failure mode is specific: a change
+justified entirely by reasoning, replacing a value justified entirely by "it worked", is exactly
+the shape that gets adopted quietly and blamed six months later for something unrelated. If a probe
+comes back refused on this entry, the finding reverses this decision's *value* without touching its
+argument - the field would still be the inner PFS image, and `Builder` would gain a way to override
+what it measures.
