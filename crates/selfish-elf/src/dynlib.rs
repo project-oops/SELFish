@@ -73,6 +73,12 @@ pub const FUNCTION: u8 = 2;
 /// So the binding is rewritten here for the same reason the type is (see [`FUNCTION`]): the
 /// name is what a reader looks at and it is not what the loader decides on. The weak binding
 /// stays where it is needed, in the C, and does not travel into the module. (obscene#D248)
+///
+/// A consequence, because it caught a consumer: a module built here cannot carry a weak
+/// undefined import at all. A resolved import is forced `GLOBAL` here; an unresolved one is a
+/// build error (`BuildError::Unclaimed`). So a deliberately-absent symbol used as a weak-symbol
+/// feature-detection control reads present once packaged, not absent - that control is
+/// payload-only by construction. (D101)
 pub const GLOBAL: u8 = 1;
 
 /// Version numbers a module and its libraries declare.
