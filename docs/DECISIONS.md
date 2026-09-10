@@ -33,7 +33,7 @@ and a per-entry date would not be. Entries from D067 on carry one.
 | 🟢 | D019 | [The `PARAM.SFO` alignment rule came from a source and was refuted by eleven files](decisions/D019-the-param-sfo-alignment-rule-came-from.md) | derived | ~<2026-08-29 |
 | 🟢 | D020 | [Unterminated text is a separate value variant, not a flag](decisions/D020-unterminated-text-is-a-separate-value.md) | derived | ~<2026-08-29 |
 | ⚪ | D021 | [There is a second package magic, and it is named and refused rather than guessed at](decisions/D021-there-is-a-second-package-magic-and-it.md) | unrecorded | ~<2026-08-29 |
-| 🔴 | D022 | [Package writing stays blocked, and the source that looked like it might unblock it does not](decisions/D022-package-writing-stays-blocked-and-the.md) | blocked | ~<2026-08-29 |
+| ⚪ | D022 | [Package writing stays blocked, and the source that looked like it might unblock it does not](decisions/D022-package-writing-stays-blocked-and-the.md) | unrecorded | ~<2026-08-29 |
 | ⚪ | D023 | [Sections are a separate module from `dynamic`, because they answer a different question](decisions/D023-sections-are-a-separate-module-from.md) | unrecorded | ~<2026-08-29 |
 | ⚪ | D024 | [The linker script moves here, and its constants are tested against the crate's](decisions/D024-the-linker-script-moves-here-and-its.md) | unrecorded | ~<2026-08-29 |
 | ⚪ | D025 | [The dynamic-table writer moves here, and the manifest stays with the caller](decisions/D025-the-dynamic-table-writer-moves-here-and.md) | unrecorded | ~<2026-08-29 |
@@ -45,7 +45,7 @@ and a per-entry date would not be. Entries from D067 on carry one.
 | ⚪ | D031 | [The command-line tool does not panic when a pipe closes](decisions/D031-the-command-line-tool-does-not-panic.md) | unrecorded | ~<2026-08-29 |
 | 🟢 | D032 | [This repository gets a CI workflow, and obSCEne's is marked as unable to pass](decisions/D032-this-repository-gets-a-ci-workflow-and.md) | decided | ~<2026-08-29 |
 | ⚪ | D033 | [The six unknown package entries all vary between titles, so there is no constant to fall back on](decisions/D033-the-six-unknown-package-entries-all.md) | unrecorded | ~<2026-08-29 |
-| 🟢 | D034 | [Two package entries were derived rather than cited, and there is a command that re-derives them](decisions/D034-two-package-entries-were-derived-rather.md) | derived | ~<2026-08-29 |
+| ⚪ | D034 | [Two package entries were derived rather than cited, and there is a command that re-derives them](decisions/D034-two-package-entries-were-derived-rather.md) | unrecorded | ~<2026-08-29 |
 | 🟢 | D035 | [A derivation ships with the command that re-runs it](decisions/D035-a-derivation-ships-with-the-command.md) | derived | ~<2026-08-29 |
 | ⚪ | D036 | [Entry `0x80` is a digest manifest over named things, and two of its slots are established](decisions/D036-entry-0x80-is-a-digest-manifest-over.md) | unrecorded | ~<2026-08-29 |
 | ⚪ | D037 | [A package writer that refuses to invent the entries nothing established explains](decisions/D037-a-package-writer-that-refuses-to-invent.md) | unrecorded | ~<2026-08-29 |
@@ -78,9 +78,9 @@ and a per-entry date would not be. Entries from D067 on carry one.
 | ⚪ | D064 | [A literal NUL byte in a source file made it invisible to `grep`, which hid a duplicate constant](decisions/D064-a-literal-nul-byte-in-a-source-file.md) | unrecorded | ~<2026-08-29 |
 | ⚪ | D065 | [`cargo doc` was failing, and the gate did not build docs](decisions/D065-cargo-doc-was-failing-and-the-gate-did.md) | unrecorded | ~<2026-08-29 |
 | ⚪ | D066 | [Documentation drifts in the direction of claiming less than the code does](decisions/D066-documentation-drifts-in-the-direction.md) | unrecorded | ~<2026-08-29 |
-| 🟢 | D067 | [Supporting the current generation is three-quarters done and blocked on one oracle](decisions/D067-supporting-the-current-generation-is.md) | done | ~<2026-08-29 |
+| 🟢 | D067 | [Supporting the current generation is three-quarters done and blocked on one oracle](decisions/D067-supporting-the-current-generation-is.md) | hardware | ~<2026-08-29 |
 | ⚪ | D068 | [The logo is one file, committed, and the drawn mark is gone](decisions/D068-the-logo-is-one-file-committed-and-the.md) | unrecorded | ~<2026-08-29 |
-| 🟢 | D070 | [The cache size is a ceiling measured from the image, not a constant](decisions/D070-the-cache-size-is-a-ceiling-measured.md) | measured | ~<2026-08-29 |
+| 🔴 | D070 | [The cache size is a ceiling measured from the image, not a constant](decisions/D070-the-cache-size-is-a-ceiling-measured.md) | superseded | ~<2026-08-29 |
 | ⚪ | D071 | [D070's rule was wrong, and the corrected one cannot be tested by avoiding it](decisions/D071-d070-s-rule-was-wrong-and-the-corrected.md) | unrecorded | ~<2026-08-29 |
 | ⚪ | D072 | [The inner filesystem's root pointed its parent at the super root](decisions/D072-the-inner-filesystem-s-root-pointed-its.md) | unrecorded | ~<2026-08-29 |
 | ⚪ | D073 | [The tool converts a supplied icon, rather than asking four projects to export one](decisions/D073-the-tool-converts-a-supplied-icon.md) | unrecorded | ~<2026-08-29 |
@@ -108,7 +108,7 @@ and a per-entry date would not be. Entries from D067 on carry one.
 | 🟢 | D095 | [A second reader found three disagreements, and only one of them was about the format](decisions/D095-a-second-reader-found-three-and-one.md) | decided | 2026-09-09 |
 | 🟢 | D096 | [Two answers to the symbol count, and the divergence is kept rather than reconciled](decisions/D096-two-answers-to-the-symbol-count-and.md) | decided | 2026-09-09 |
 | 🟢 | D097 | [The wrap default was justified by a population counted in the wrong place, and the default is right anyway](decisions/D097-the-wrap-default-was-justified-by-a.md) | decided | 2026-09-09 |
-| 🟢 | D098 | [Measured vendor values are recorded against the rows they refute, never as a profile a writer could reach for](decisions/D098-measured-vendor-values-are-recorded.md) | measured | 2026-09-09 |
+| 🟢 | D098 | [Measured vendor values are recorded against the rows they refute, never as a profile a writer could reach for](decisions/D098-measured-vendor-values-are-recorded.md) | decided | 2026-09-09 |
 
 | | meaning |
 |---|---|
