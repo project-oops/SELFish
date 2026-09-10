@@ -112,6 +112,7 @@ and a per-entry date would not be. Entries from D067 on carry one.
 | 🟢 | D099 | [The inner size was never unknown, and entry 0x1001 is computed like every other derivable entry](decisions/D099-the-inner-size-was-never-unknown.md) | decided | 2026-09-10 |
 | 🟢 | D100 | [`stamp` and `wrap` retire into the pipeline; `--format prx`, and `--privilege`/`--sdk` as pipeline options](decisions/D100-stamp-and-wrap-retire-into-the-pipeline.md) | decided | 2026-09-10 |
 | 🟢 | D101 | [A module built here cannot carry a weak undefined import, by construction; the forcing to GLOBAL stays](decisions/D101-a-module-built-here-cannot-carry-a-weak-import.md) | decided | 2026-09-10 |
+| 🟢 | D102 | [The title metadata a title carries gets pipeline spellings; `--root` does not](decisions/D102-title-metadata-options-on-the-pipeline.md) | decided | 2026-09-10 |
 
 | | meaning |
 |---|---|

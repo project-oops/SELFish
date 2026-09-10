@@ -74,3 +74,4 @@ otherwise rediscover the hard way.
 | 2026-09-10 | [Half of a refusal was never a refusal](worklog/064-half-of-a-refusal-was-never-a-refusal.md) |
 | 2026-09-10 | [The question I filed was answered in a file I had already cited](worklog/065-the-question-i-filed-was-answered-in.md) |
 | 2026-09-10 | [The last two verbs, and a `paid` value nothing wrote](worklog/066-the-last-two-verbs-and-a-paid-value-nothing-wrote.md) |
+| 2026-09-10 | [The pipeline learns what a title carries, and an empty content id that keyed nothing](worklog/067-the-pipeline-learns-what-a-title-carries.md) |

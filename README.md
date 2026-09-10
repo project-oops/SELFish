@@ -68,7 +68,8 @@ selfish --input <file> --target <orbis|neo|prospero|trinity>
         --format <elf|prx|eboot|title|pkg> --output <path>
         [--privilege <app|sysmodule|system|root>] [--sdk VERSION|ALIAS]
         [--category <big-app|system-app|mini-app|daemon|media-app>]
-        [--title-id ID] [--title NAME] [--entry ID=FILE]...
+        [--title-id ID] [--title NAME] [--content-id ID] [--title-version NN.NN]
+        [--icon FILE] [--deeplink URI] [--entry ID=FILE]...
 ```
 
 `--target` carries the generation, so nothing passes one: `orbis`/`neo` are the previous
@@ -91,6 +92,11 @@ beside it, and none needs a directory the caller prepares or cleans.
 `--category` applies to `title` and `pkg` only and defaults to `system-app`; it decides the
 memory budget and whether the artifact owns the display, so it is a build lever with runtime
 consequences rather than a label.
+
+`--content-id`, `--title-version`, `--icon` and `--deeplink` are title metadata, so they too
+apply to `title` and `pkg` only and are refused elsewhere. `--content-id` is not cosmetic for a
+package - the filesystem image is keyed by it - and defaults, announced, to an id built from the
+title id.
 
 `--privilege` and `--sdk` apply to `eboot`, `title` and `pkg` - the formats that build a
 container - and are refused with `elf` and `prx`, which build none. `--privilege` defaults to

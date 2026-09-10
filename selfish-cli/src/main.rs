@@ -97,10 +97,43 @@ struct Cli {
     #[arg(long, requires = "input")]
     title: Option<String>,
 
-    /// A package entry this crate cannot compute, as `ID=FILE`. `--format pkg` only.
+    /// The content id, such as `UP0000-PPSA01650_00-YOUTUBE000000000`. `--format title` and
+    /// `--format pkg` only; refused elsewhere.
     ///
-    /// **`0x200` and `0x1001` are required and have no default.** They are the one reason
-    /// `--format pkg` is not a pure function of `--input`: see the `pipeline` docs.
+    /// For `pkg` it is not cosmetic: the filesystem image is keyed by a hash of the content id,
+    /// so a package built with the wrong one produces an image a console cannot open. It also
+    /// lands in `param.json` / `param.sfo`. Defaults to an id derived from the title id.
+    #[arg(long, value_name = "ID", requires = "input")]
+    content_id: Option<String>,
+
+    /// The title version, as `NN.NN`. `--format title` and `--format pkg` only.
+    ///
+    /// Sets `param.json` / `param.sfo`'s version and master version. Defaults to `01.00`.
+    /// Spelled `--title-version` because `--version` is the tool's own build-version flag.
+    #[arg(long = "title-version", value_name = "NN.NN", requires = "input")]
+    title_version: Option<String>,
+
+    /// A PNG for the home-screen tile. `--format title` and `--format pkg` only.
+    ///
+    /// Converted to the 512x512 RGB a console wants. Without one, a default mark is used that
+    /// says selfish built this and nobody supplied artwork - which is what you want to see on a
+    /// package you are debugging. (D073)
+    #[arg(long, value_name = "FILE", requires = "input")]
+    icon: Option<PathBuf>,
+
+    /// Make the entry launch a URI instead of carrying its own executable. `--format title` and
+    /// `--format pkg` only.
+    ///
+    /// A launcher tile - the shape to use when the code is already running as a payload and the
+    /// home-screen entry only has to reach it. Sets `param.json`'s deeplink.
+    #[arg(long, value_name = "URI", requires = "input")]
+    deeplink: Option<String>,
+
+    /// A package entry, as `ID=FILE`. `--format pkg` only.
+    ///
+    /// Overrides an entry this crate would otherwise compute or generate - for rebuilding a
+    /// package to match existing material. Nothing is required: `0x200` and `0x1001` are
+    /// computed now (D099), and the icon has its own `--icon`.
     #[arg(long = "entry", value_name = "ID=FILE", requires = "input")]
     entries: Vec<String>,
 
@@ -929,6 +962,56 @@ const DEFAULT_TITLE_ID: &str = "OBSC00001";
 /// prepares or cleans - where a stage wants one (packaging does), it makes its own under the
 /// system temp directory and removes it, so `make` can call this in parallel and rebuild
 /// incrementally without two invocations colliding in a shared tree.
+/// Refuse an option the chosen format would silently ignore.
+///
+/// An option that does nothing is how somebody believes they set one, so each is an error rather
+/// than a no-op where it has no effect: `--category` and the title-metadata options only reach a
+/// `title` or `pkg`, and `--privilege`/`--sdk` only reach a format that builds a container.
+fn refuse_options_the_format_ignores(
+    cli: &Cli,
+    format: Format,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let carries_metadata = matches!(format, Format::Title | Format::Pkg);
+    let wraps = matches!(format, Format::Eboot | Format::Title | Format::Pkg);
+
+    let metadata_only = [
+        (cli.category.is_some(), "--category"),
+        (cli.content_id.is_some(), "--content-id"),
+        (cli.title_version.is_some(), "--title-version"),
+        (cli.icon.is_some(), "--icon"),
+        (cli.deeplink.is_some(), "--deeplink"),
+    ];
+    if !carries_metadata {
+        for (set, name) in metadata_only {
+            if set {
+                return Err(format!(
+                    "{name} applies to `title` and `pkg`, not to `{format:?}`; only a title \
+                     carries the metadata it lands in"
+                )
+                .into());
+            }
+        }
+    }
+
+    let container_only = [
+        (cli.privilege.is_some(), "--privilege", "declare a tier in"),
+        (cli.sdk.is_some(), "--sdk", "pin a version in"),
+    ];
+    if !wraps {
+        for (set, name, clause) in container_only {
+            if set {
+                return Err(format!(
+                    "{name} applies to `eboot`, `title` and `pkg`, not to `{format:?}`; \
+                     stamping produces no container to {clause}"
+                )
+                .into());
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn pipeline(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     // `requires_all` on `--input` means clap has already refused any partial set; these four
     // cannot be absent here, and an `expect` would be a panic in a binary that has removed
@@ -942,34 +1025,8 @@ fn pipeline(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         return Err("--input, --target, --format and --output are one invocation".into());
     };
 
-    // Refused rather than ignored. A category that silently does nothing is how somebody
-    // believes they set one.
-    if cli.category.is_some() && !matches!(format, Format::Title | Format::Pkg) {
-        return Err(format!(
-            "--category applies to `title` and `pkg`, not to `{format:?}`; a container carries \
-             no category"
-        )
-        .into());
-    }
-
-    // Same rule, same reason: these reach a container, and `elf` and `prx` produce none.
-    let wraps = matches!(format, Format::Eboot | Format::Title | Format::Pkg);
-    if !wraps {
-        if cli.privilege.is_some() {
-            return Err(format!(
-                "--privilege applies to `eboot`, `title` and `pkg`, not to `{format:?}`; \
-                 stamping produces no container to declare a tier in"
-            )
-            .into());
-        }
-        if cli.sdk.is_some() {
-            return Err(format!(
-                "--sdk applies to `eboot`, `title` and `pkg`, not to `{format:?}`; stamping \
-                 produces no container to pin a version in"
-            )
-            .into());
-        }
-    }
+    refuse_options_the_format_ignores(cli, format)?;
+    let carries_metadata = matches!(format, Format::Title | Format::Pkg);
 
     let generation = target.generation();
     let category = cli.category.unwrap_or(Category::SystemApp);
@@ -991,12 +1048,33 @@ fn pipeline(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     });
     let title = cli.title.as_deref().unwrap_or(title_id);
 
+    // The content id defaults from the title id, announced like the title id itself, because a
+    // `pkg` built with the wrong one produces a filesystem image a console cannot open - so a
+    // silent default would be the quiet failure D073 warns about. Only built for the formats
+    // that carry it.
+    let default_content_id;
+    let content_id: Option<&str> = match (carries_metadata, cli.content_id.as_deref()) {
+        (_, Some(id)) => Some(id),
+        (true, None) => {
+            default_content_id = format!("UP0000-{title_id}_00-0000000000000000");
+            say!("  content {default_content_id} (default; pass --content-id to choose)");
+            Some(&default_content_id)
+        }
+        (false, None) => None,
+    };
+
     say!("{target:?} -> {format:?}  ({generation})");
 
     let wrap = WrapOptions {
         privilege,
         sdk,
         sdk_table,
+    };
+    let meta = TitleMeta {
+        content_id,
+        version: cli.title_version.as_deref(),
+        icon: cli.icon.as_deref(),
+        deeplink: cli.deeplink.as_deref(),
     };
     match format {
         Format::Elf => stamped_elf(
@@ -1012,7 +1090,9 @@ fn pipeline(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
             selfish_elf::ObjectType::SharedLibrary,
         ),
         Format::Eboot => eboot(input, output, generation, &wrap),
-        Format::Title => title_at(input, output, generation, title_id, title, category, &wrap),
+        Format::Title => title_at(
+            input, output, generation, title_id, title, category, &wrap, &meta,
+        ),
         Format::Pkg => pkg_from_elf(
             input,
             output,
@@ -1022,8 +1102,25 @@ fn pipeline(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
             category,
             &cli.entries,
             &wrap,
+            &meta,
         ),
     }
+}
+
+/// The title metadata a `title` or `pkg` carries beyond its name, for the formats that write a
+/// `param.json` / `param.sfo`.
+///
+/// One struct for the same reason as [`WrapOptions`]: these travel together through `pkg` →
+/// `title` → `title_dir`, and the content id travels on to `pack` as well.
+struct TitleMeta<'a> {
+    /// The content id, defaulted from the title id by the caller when a format carries it.
+    content_id: Option<&'a str>,
+    /// The title version, `NN.NN`; `None` keeps `title_dir`'s own default.
+    version: Option<&'a str>,
+    /// A PNG for the tile; `None` uses the generated default.
+    icon: Option<&'a Path>,
+    /// A launch URI; `None` builds a title that carries its own executable.
+    deeplink: Option<&'a str>,
 }
 
 /// How a container is built, for the formats that build one.
@@ -1130,6 +1227,10 @@ fn eboot(
 ///
 /// So `--output` is the parent, and the artifact inside it is named by the title id. That is
 /// still "nothing beside it": one directory is created and nothing else.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a command-line command takes what the command line offers"
+)]
 fn title_at(
     input: &Path,
     output: &Path,
@@ -1138,6 +1239,7 @@ fn title_at(
     title: &str,
     category: Category,
     wrap: &WrapOptions<'_>,
+    meta: &TitleMeta<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Only the eboot needs staging - `title_dir` joins the title id on itself, so it can write
     // straight into `--output` and the directory shape comes out right with no move.
@@ -1151,10 +1253,10 @@ fn title_at(
             output,
             title_id,
             title,
-            None,
-            None,
-            None,
-            None,
+            meta.content_id,
+            meta.version,
+            meta.deeplink,
+            meta.icon,
             Some(&staged),
             category.value(),
             wrap.privilege,
@@ -1184,24 +1286,29 @@ fn pkg_from_elf(
     category: Category,
     entries: &[String],
     wrap: &WrapOptions<'_>,
+    meta: &TitleMeta<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let scratch = scratch_dir("pkg")?;
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let laid = scratch.join("title");
-        title_at(input, &laid, generation, title_id, title, category, wrap)?;
+        title_at(
+            input, &laid, generation, title_id, title, category, wrap, meta,
+        )?;
         // `title_at` writes `<laid>/<TITLE_ID>/`, and a package is made of the title's own
-        // contents rather than of the directory holding it.
+        // contents rather than of the directory holding it. The content id has to match the one
+        // the title was laid out with - the image is keyed by it - so both come from `meta`,
+        // which `run` has already defaulted for a format that carries metadata.
         let contents = laid.join(title_id);
         pack(
             None,
             Some(&contents),
             None,
             output,
-            "",
+            meta.content_id.unwrap_or(""),
             entries,
             Some(title_id),
             Some(title),
-            "01.00",
+            meta.version.unwrap_or("01.00"),
         )
     })();
     let _ = std::fs::remove_dir_all(&scratch);

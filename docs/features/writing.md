@@ -262,7 +262,35 @@ is installed: registration is `sceAppInstUtilAppInstallTitleDir("OBSC00001", "/u
 after copying the directory to `/user/app/`, and that call needs kernel privileges, so it runs
 from a payload on the target rather than from here.
 
-`--category` defaults to `system-app` and `--privilege` to `app`.
+**What the title carries is set on the same invocation.** `--icon FILE` puts a PNG on the tile
+(converted to 512x512 RGB; without it the default mark says selfish built this and nobody supplied
+artwork); `--content-id`, `--title-version` and `--deeplink` land in `param.json`:
+
+```console
+$ selfish --input payload.elf --target prospero --format title --title-id OBSC00001 --title Demo \
+    --content-id UP0000-OBSC00001_00-ABCDEF0123456789 --title-version 02.50 \
+    --deeplink http://127.0.0.1:8080/ --icon logo.png --output native
+Prospero -> Title  (current generation)
+  stamp   3 field(s)
+  wrote   <scratch> (5470368 bytes)
+1 file(s) copied from <scratch>
+privilege: App
+version: 02.50
+contentId: UP0000-OBSC00001_00-ABCDEF0123456789
+deeplinkUri: http://127.0.0.1:8080/
+native\OBSC00001\sce_sys\param.json
+native\OBSC00001\sce_sys\icon0.png (from logo.png)
+...
+```
+
+`--deeplink` makes a launcher tile - an entry that opens a URI instead of carrying its own
+executable, for when the code is already running as a payload. These four are title metadata, so
+they apply to `title` and `pkg` only; passing one to `elf`, `prx` or `eboot` is refused rather
+than ignored, naming the formats that take it.
+
+`--category` defaults to `system-app`, `--privilege` to `app`, and `--title-version` to `01.00`.
+`--content-id` defaults to an id built from the title id, announced in the output - for `pkg` it is
+not cosmetic, because the filesystem image is keyed by it.
 
 ### Choosing `--category` and `--privilege`
 
