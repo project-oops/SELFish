@@ -106,3 +106,17 @@ the shape that gets adopted quietly and blamed six months later for something un
 comes back refused on this entry, the finding reverses this decision's *value* without touching its
 argument - the field would still be the inner PFS image, and `Builder` would gain a way to override
 what it measures.
+
+### Answered: reading 1 (2026-09-10)
+
+obSCEne resolved the provenance question (REQ-20260910T0325Z-6b04): `0xAA0000` was **a default
+copied from LibOrbisPkg samples during early bring-up, before dynamic inner-image sizing existed,
+and the console accepted it without validation.** So reading 1 is the true one - the field is not
+checked, both values install, and the correction is the tidiness-backed-by-arithmetic improvement
+it looked like, not a regression risk.
+
+That also retired the value for good on their side: obSCEne deleted the hardcoded generator, and
+its `make pkg` now builds the entry through this crate - so the number it ships is the measured
+`0x630000`, not the old literal. The remaining direct check - that a package carrying the computed
+value installs end to end - rides along on obSCEne's next routine pkg sweep rather than needing a
+dedicated one (REQ-20260910T0520Z-9c33, softened to that).
