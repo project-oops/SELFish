@@ -482,6 +482,7 @@ dependencies = [
  "selfish-nid",
  "selfish-pfs",
  "selfish-pkg",
+ "selfish-shader",
  "selfish-title",
  "serde_json",
  "tracing",

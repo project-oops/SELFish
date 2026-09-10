@@ -41,6 +41,7 @@ selfish-container = { path = "crates/selfish-container" }
 selfish-title = { path = "crates/selfish-title" }
 selfish-pfs = { path = "crates/selfish-pfs" }
 selfish-pkg = { path = "crates/selfish-pkg" }
+selfish-shader = { path = "crates/selfish-shader" }
 
 # Shared with the rest of the collection. `oops-build` has no dependencies at all; `oops-log` is
 # the `tracing` facade and a subscriber, with files and OTLP behind features this does not enable.

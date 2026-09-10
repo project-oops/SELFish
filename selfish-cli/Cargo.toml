@@ -27,6 +27,7 @@ selfish-title.workspace = true
 serde_json.workspace = true
 selfish-pfs.workspace = true
 selfish-pkg.workspace = true
+selfish-shader.workspace = true
 clap.workspace = true
 png.workspace = true
 oops-build.workspace = true

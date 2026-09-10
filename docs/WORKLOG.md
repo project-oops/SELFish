@@ -77,3 +77,4 @@ otherwise rediscover the hard way.
 | 2026-09-10 | [The pipeline learns what a title carries, and an empty content id that keyed nothing](worklog/067-the-pipeline-learns-what-a-title-carries.md) |
 | 2026-09-10 | [A review caught `--icon` copied, not converted - and my evidence that it was](worklog/068-a-review-caught-icon-copied-not-converted.md) |
 | 2026-09-10 | [The shader container was citable after all, once I looked past the first two emulators](worklog/069-the-shader-container-was-citable-after-all.md) |
+| 2026-09-11 | [A CLI verb, so a C consumer can reach the shader builder](worklog/070-a-cli-verb-so-a-c-consumer-can-reach-the-shader-builder.md) |

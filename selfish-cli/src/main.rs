@@ -384,6 +384,35 @@ enum Command {
         /// Where to write them.
         out: PathBuf,
     },
+    /// Build an AGC compute shader container - the header `sceAgcCreateShader` is handed.
+    ///
+    /// The container *format* is this tool's (from `data/agc-shader-format.tsv`, D103); the
+    /// register *contents* are the shader's, read from its bytecode by whoever produced it and
+    /// passed in with `--sh-reg`. The bytecode itself is not embedded - a console fills the code
+    /// pointer at create time - so this writes the header and its sub-tables, and records the
+    /// bytecode's size.
+    ///
+    /// Only the compute stage is built; that is what has a consumer (obscene's dispatch probe).
+    Shader {
+        /// The compiled shader bytecode. Its length is recorded as `shader_size`; the bytes are
+        /// not embedded. Use `--shader-size` instead if you only have the size.
+        #[arg(long, value_name = "FILE")]
+        code: Option<PathBuf>,
+        /// The bytecode size, when `--code` is not given. One of the two is required.
+        #[arg(long, value_name = "BYTES")]
+        shader_size: Option<u32>,
+        /// The ISA target the bytecode is for. Defaults to `0x0e` (RDNA2), the one measured.
+        #[arg(long, value_name = "N", default_value = "0x0e")]
+        target: String,
+        /// An SH register, as `OFFSET=VALUE` (hex or decimal), repeatable. A compute shader needs
+        /// at least the program-address pair `0x20c=0` and `0x20d=0`, which a console patches from
+        /// the code pointer; its resource registers come from the bytecode.
+        #[arg(long = "sh-reg", value_name = "OFFSET=VALUE")]
+        sh_registers: Vec<String>,
+        /// Where to write the container.
+        #[arg(long, short)]
+        out: PathBuf,
+    },
 }
 
 /// Print a line, and exit quietly when the reader has gone away.
@@ -485,6 +514,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::Derive { files } => derive(&files),
         Command::Pkg { file, all } => pkg(&file, all),
         Command::Extract { file, out } => extract(&file, &out),
+        Command::Shader {
+            code,
+            shader_size,
+            target,
+            sh_registers,
+            out,
+        } => shader(code.as_deref(), shader_size, &target, &sh_registers, &out),
     }
 }
 
@@ -1512,6 +1548,72 @@ fn image_cmd(
     say!("{}: {} bytes", out.display(), image.len());
     say!("keyed to {content_id} - a package carrying this must declare the same id");
     Ok(())
+}
+
+/// `selfish shader`: an AGC compute shader container from a caller's bytecode size and registers.
+///
+/// The build-time counterpart of `selfish-shader` for a consumer that is not Rust: obscene's
+/// probe generates its container here rather than carrying a copy of the layout. (D103)
+fn shader(
+    code: Option<&Path>,
+    shader_size: Option<u32>,
+    target: &str,
+    sh_registers: &[String],
+    out: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let size = match (code, shader_size) {
+        (Some(path), _) => {
+            let bytes = std::fs::read(path)?;
+            u32::try_from(bytes.len())
+                .map_err(|_| "the shader bytecode is larger than shader_size (a u32) can record")?
+        }
+        (None, Some(size)) => size,
+        (None, None) => return Err("one of --code or --shader-size is required".into()),
+    };
+
+    let target = hex_or_dec_u32(target).ok_or_else(|| format!("bad --target {target:?}"))?;
+
+    let mut registers = Vec::with_capacity(sh_registers.len());
+    for spec in sh_registers {
+        let (offset, value) = spec
+            .split_once('=')
+            .ok_or_else(|| format!("--sh-reg wants OFFSET=VALUE, got {spec:?}"))?;
+        registers.push(selfish_shader::ShaderRegister {
+            offset: hex_or_dec_u32(offset)
+                .ok_or_else(|| format!("bad register offset {offset:?}"))?,
+            value: hex_or_dec_u32(value).ok_or_else(|| format!("bad register value {value:?}"))?,
+        });
+    }
+
+    // A console rejects a compute shader whose SH register table does not carry at least the
+    // program-address pair (craziiEmu: registerCount < 2 is refused). Warned rather than refused
+    // here, because this crate does not own that rule - it lays out what it is handed. (D103)
+    if registers.len() < 2 {
+        say!(
+            "warning: {} SH register(s). A console needs at least the program-address pair \
+             (0x20c=0, 0x20d=0) it patches from the code pointer, plus the shader's own resource \
+             registers - pass them with --sh-reg",
+            registers.len()
+        );
+    }
+
+    let container = selfish_shader::Container::compute(size, target, registers).build();
+    write_exactly(out, &container)?;
+    say!(
+        "{}: {} byte AGC compute container (shader_size {size}, target {target:#x})",
+        out.display(),
+        container.len()
+    );
+    Ok(())
+}
+
+/// A `0x`-prefixed hexadecimal or plain decimal `u32`.
+fn hex_or_dec_u32(text: &str) -> Option<u32> {
+    let trimmed = text.trim();
+    trimmed.strip_prefix("0x").map_or_else(
+        || trimmed.parse::<u32>().ok(),
+        |hex| u32::from_str_radix(hex, 16).ok(),
+    )
 }
 
 /// Read a directory into a tree the filesystem writer understands.
