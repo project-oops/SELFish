@@ -117,6 +117,15 @@ it looked like, not a regression risk.
 
 That also retired the value for good on their side: obSCEne deleted the hardcoded generator, and
 its `make pkg` now builds the entry through this crate - so the number it ships is the measured
-`0x630000`, not the old literal. The remaining direct check - that a package carrying the computed
-value installs end to end - rides along on obSCEne's next routine pkg sweep rather than needing a
-dedicated one (REQ-20260910T0520Z-9c33, softened to that).
+`0x630000`, not the old literal.
+
+### Confirmed on hardware (2026-09-10)
+
+The caveat this entry opened with - "the corrected value has never been on hardware" - is now
+closed. obSCEne ran a full package sweep on target hardware (REQ-20260910T0520Z-9c33, sweep
+`20260910-161904`): a package built with the auto-generated `0x1001` carrying the computed
+`0x630000` **installs and launches cleanly**, 54 sections to completion, 174 pass,
+`scePlayGoCoreGetRawContentInfo` accepting it without refusal. So the value is no longer justified
+by arithmetic alone - it is a measurement of acceptance on the console, the standard this
+repository holds a container to. The change is settled in both directions: the old value's
+provenance explained, and the new value's acceptance demonstrated.

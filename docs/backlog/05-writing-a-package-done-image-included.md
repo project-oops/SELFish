@@ -31,11 +31,13 @@ defaults. A supplied entry still wins, for a package being rebuilt to match exis
 Still open: three slots of `GENERAL_DIGESTS` digest something not present in any package, and
 are reported as gaps rather than filled, so `is_complete()` says `false`.
 
-**What the hardware has and has not seen.** A package built through this crate installs and
-launches - obSCEne's `pkg` leg runs its probe from one, and its `000-boot` checks pass
-(`reports/hardware/20260909-234847-pkg.obs.log`). What has *not* been on hardware is the
-`0x1001` inner size this crate now computes: obSCEne's own packages carried a hardcoded
-`0xAA0000` there, which is larger than the package containing it, and the measured `0x630000`
-that replaced it is so far justified by arithmetic alone. Filed as obscene
-REQ-20260910T0520Z-9c33; D099 records the limit.
+**What the hardware has seen.** A package built entirely through this crate - no `--entry`
+supplied, every entry computed, including the `0x1001` inner size (`0x630000`) this crate now
+derives from the `PFSC` header - **installs and launches on target hardware**: obSCEne's package
+sweep `20260910-161904` ran 54 sections to completion, 174 pass, with
+`scePlayGoCoreGetRawContentInfo` accepting it (obscene REQ-20260910T0520Z-9c33, closing the D099
+caveat). And a native title built through `--format title --icon` installs and launches with the
+converted tile verified on console (sweep `20260910-170907`, obscene REQ-...-2b9f). What remains
+unproven is only the three `GENERAL_DIGESTS` slots, which digest something found in no package and
+are reported as gaps rather than filled.
 
