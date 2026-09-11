@@ -12,7 +12,7 @@
 
 //! Target SDK version dictionary and procparam stamping for `SELFish`.
 //!
-//! Provides human-readable SDK names and aliases mapped to PS4 and Prospero (PPR)
+//! Provides human-readable SDK names and aliases mapped to Orbis and Prospero (PPR)
 //! packed 32-bit versions, validates target generation compatibility, and stamps
 //! `PT_SCE_PROCPARAM` directly into ELF binaries.
 
@@ -28,12 +28,12 @@ const DEFAULT_SDK_TOML: &str = include_str!("../../../data/sdk-versions.toml");
 pub struct SdkEntry {
     /// Canonical version name (e.g. "2.000.009").
     pub name: String,
-    /// Hardware generation (4 for PS4, 5 for PS5).
+    /// Hardware generation (4 for Orbis, 5 for Prospero).
     pub generation: u8,
-    /// Friendly alias (e.g. "ps5-native").
+    /// Friendly alias (e.g. "prospero").
     pub alias: Option<String>,
-    /// Packed PS4 SDK version (0xMMmmppbb).
-    pub ps4_sdk: u32,
+    /// Packed Orbis SDK version (0xMMmmppbb).
+    pub orbis_sdk: u32,
     /// Packed Prospero (PPR) SDK version (0xMMmmppbb).
     pub ppr_sdk: u32,
     /// Minimum console firmware required.
@@ -47,8 +47,8 @@ pub struct SdkEntry {
 pub struct TargetSdk {
     /// Hardware generation.
     pub generation: Generation,
-    /// Packed PS4 SDK version.
-    pub ps4_sdk: u32,
+    /// Packed Orbis SDK version.
+    pub orbis_sdk: u32,
     /// Packed Prospero (PPR) SDK version.
     pub ppr_sdk: u32,
 }
@@ -56,10 +56,10 @@ pub struct TargetSdk {
 impl TargetSdk {
     /// Create a target SDK directly from generation and packed values.
     #[must_use]
-    pub const fn new(generation: Generation, ps4_sdk: u32, ppr_sdk: u32) -> Self {
+    pub const fn new(generation: Generation, orbis_sdk: u32, ppr_sdk: u32) -> Self {
         Self {
             generation,
-            ps4_sdk,
+            orbis_sdk,
             ppr_sdk,
         }
     }
@@ -70,13 +70,13 @@ impl TargetSdk {
         match generation {
             Generation::Previous => Self {
                 generation,
-                ps4_sdk: 0x08008011,
+                orbis_sdk: 0x08008011,
                 ppr_sdk: 0x00000000,
             },
             Generation::Current => Self {
                 generation,
-                ps4_sdk: 0x08050001,
-                ppr_sdk: 0x02000009, // Universal safe PS5 baseline (SDK 2.00)
+                orbis_sdk: 0x08050001,
+                ppr_sdk: 0x02000009, // Universal safe Prospero baseline (SDK 2.00)
             },
         }
     }
@@ -113,7 +113,7 @@ impl SdkDictionary {
         let mut current_name: Option<String> = None;
         let mut cur_gen: u8 = 5;
         let mut cur_alias: Option<String> = None;
-        let mut cur_ps4: u32 = 0;
+        let mut cur_orbis: u32 = 0;
         let mut cur_ppr: u32 = 0;
         let mut cur_min_fw: String = String::new();
         let mut cur_desc: String = String::new();
@@ -122,7 +122,7 @@ impl SdkDictionary {
                      name: &Option<String>,
                      generation: u8,
                      alias: Option<String>,
-                     ps4: u32,
+                     orbis: u32,
                      ppr: u32,
                      min_fw: String,
                      desc: String| {
@@ -133,7 +133,7 @@ impl SdkDictionary {
                         name: n.clone(),
                         generation,
                         alias,
-                        ps4_sdk: ps4,
+                        orbis_sdk: orbis,
                         ppr_sdk: ppr,
                         min_firmware: min_fw,
                         description: desc,
@@ -154,7 +154,7 @@ impl SdkDictionary {
                     &current_name,
                     cur_gen,
                     cur_alias.take(),
-                    cur_ps4,
+                    cur_orbis,
                     cur_ppr,
                     std::mem::take(&mut cur_min_fw),
                     std::mem::take(&mut cur_desc),
@@ -162,7 +162,7 @@ impl SdkDictionary {
                 let name = &line[7..line.len() - 2];
                 current_name = Some(name.to_string());
                 cur_gen = 5;
-                cur_ps4 = 0;
+                cur_orbis = 0;
                 cur_ppr = 0;
                 continue;
             }
@@ -177,8 +177,8 @@ impl SdkDictionary {
                     "alias" => {
                         cur_alias = Some(val.to_string());
                     }
-                    "ps4_sdk" => {
-                        cur_ps4 = parse_packed_hex(val);
+                    "orbis_sdk" => {
+                        cur_orbis = parse_packed_hex(val);
                     }
                     "ppr_sdk" => {
                         cur_ppr = parse_packed_hex(val);
@@ -199,7 +199,7 @@ impl SdkDictionary {
             &current_name,
             cur_gen,
             cur_alias.take(),
-            cur_ps4,
+            cur_orbis,
             cur_ppr,
             cur_min_fw,
             cur_desc,
@@ -230,7 +230,8 @@ impl SdkDictionary {
                     .any(|part| part.trim().eq_ignore_ascii_case(trimmed))
             }) || match trimmed.to_ascii_lowercase().as_str() {
                 "prospero" | "prospero-default" => entry.name == "2.000.009",
-                "orbis" | "orbis-default" => entry.name == "8.008.011",
+                "trinity" => entry.name == "11.600.005",
+                "orbis" | "orbis-default" | "neo" => entry.name == "8.008.011",
                 _ => false,
             };
 
@@ -251,7 +252,7 @@ impl SdkDictionary {
                     ));
                 }
 
-                return Ok(TargetSdk::new(target_gen, entry.ps4_sdk, entry.ppr_sdk));
+                return Ok(TargetSdk::new(target_gen, entry.orbis_sdk, entry.ppr_sdk));
             }
         }
 
@@ -264,7 +265,7 @@ impl SdkDictionary {
         }
 
         Err(format!(
-            "Unrecognized SDK version '{input}'. Use a known alias (e.g. 'prospero', 'orbis', 'ps5-native', 'ps4-compat'), \
+            "Unrecognized SDK version '{input}'. Use a known alias (e.g. 'prospero', 'orbis', 'trinity', 'neo'), \
              dotted version (e.g. '2.000.009'), or hex (e.g. '0x02000009')"
         ))
     }
@@ -346,7 +347,7 @@ pub fn patch_elf_procparam(elf_bytes: &mut [u8], target_sdk: TargetSdk) -> bool 
                 if &elf_bytes[p_offset + 8..p_offset + 12] == b"ORBI" {
                     // Update sdk_version at +0x10 and sdk_version_second at +0x14
                     elf_bytes[p_offset + 0x10..p_offset + 0x14]
-                        .copy_from_slice(&target_sdk.ps4_sdk.to_le_bytes());
+                        .copy_from_slice(&target_sdk.orbis_sdk.to_le_bytes());
                     elf_bytes[p_offset + 0x14..p_offset + 0x18]
                         .copy_from_slice(&target_sdk.ppr_sdk.to_le_bytes());
                     return true;
@@ -368,7 +369,7 @@ pub fn patch_elf_procparam(elf_bytes: &mut [u8], target_sdk: TargetSdk) -> bool 
             if p_offset + 0x18 <= elf_bytes.len() && p_filesz >= 0x20 {
                 // Update sdk_version at +0x10 and sdk_version_second at +0x14
                 elf_bytes[p_offset + 0x10..p_offset + 0x14]
-                    .copy_from_slice(&target_sdk.ps4_sdk.to_le_bytes());
+                    .copy_from_slice(&target_sdk.orbis_sdk.to_le_bytes());
                 elf_bytes[p_offset + 0x14..p_offset + 0x18]
                     .copy_from_slice(&target_sdk.ppr_sdk.to_le_bytes());
                 return true;
@@ -393,28 +394,31 @@ mod tests {
         );
 
         let native = dict
-            .resolve("ps5-native", Generation::Current)
-            .expect("ps5-native must resolve");
+            .resolve("prospero", Generation::Current)
+            .expect("prospero must resolve");
         assert_eq!(native.ppr_sdk, 0x02000009);
-        assert_eq!(native.ps4_sdk, 0x08050001);
+        assert_eq!(native.orbis_sdk, 0x08050001);
 
         let current = dict
-            .resolve("ps5-current", Generation::Current)
-            .expect("ps5-current must resolve");
+            .resolve("prospero-current", Generation::Current)
+            .expect("prospero-current must resolve");
         assert_eq!(current.ppr_sdk, 0x11600005);
 
         let compat = dict
-            .resolve("ps4-compat", Generation::Previous)
-            .expect("ps4-compat must resolve");
-        assert_eq!(compat.ps4_sdk, 0x08008011);
+            .resolve("orbis", Generation::Previous)
+            .expect("orbis must resolve");
+        assert_eq!(compat.orbis_sdk, 0x08008011);
         assert_eq!(compat.ppr_sdk, 0);
     }
 
     #[test]
     fn test_generation_mismatch_rejected() {
         let dict = SdkDictionary::embedded();
-        let err = dict.resolve("ps5-native", Generation::Previous);
-        assert!(err.is_err(), "Gen 5 SDK must be rejected for Gen 4 target");
+        let err = dict.resolve("prospero", Generation::Previous);
+        assert!(
+            err.is_err(),
+            "Prospero SDK must be rejected for Orbis target"
+        );
     }
 
     #[test]

@@ -213,12 +213,12 @@ impl Param {
         self.document.get("deeplinkUri")?.as_str()
     }
 
-    /// Whether this metadata document represents a native PS5 title.
+    /// Whether this metadata document represents a native Prospero title.
     ///
     /// True when the title ID follows the current generation prefix (`PPSA` or `NPXS`)
     /// or explicitly declares native category parameters.
     #[must_use]
-    pub fn is_ps5_native(&self) -> bool {
+    pub fn is_prospero_native(&self) -> bool {
         if self.title_id().is_some_and(|id| {
             id.starts_with("PPSA") || id.starts_with("NPXS") || id.starts_with("OBSC")
         }) {
@@ -307,21 +307,6 @@ impl Param {
         if let Some(link) = deeplink {
             self.set_deeplink_uri(link);
         }
-    }
-
-    /// Backward-compatible alias for [`Self::set_prospero`].
-    pub fn set_native_ps5(
-        &mut self,
-        title_id: &str,
-        title_name: &str,
-        language: &str,
-        category: i64,
-        content_id: Option<&str>,
-        deeplink: Option<&str>,
-    ) {
-        self.set_prospero(
-            title_id, title_name, language, category, content_id, deeplink,
-        );
     }
 
     fn localized(&self) -> Option<&Map<String, Value>> {
@@ -458,27 +443,27 @@ mod tests {
     }
 
     #[test]
-    fn native_ps5_title_configuration_and_detection() {
+    fn native_prospero_title_configuration_and_detection() {
         let mut param = Param::new();
-        param.set_native_ps5(
+        param.set_prospero(
             "PPSA01650",
-            "YouTube PS5",
+            "YouTube Prospero",
             "en-US",
             0x10000,
             Some("UP0000-PPSA01650_00-YOUTUBE000000000"),
-            Some("ps5://launch/youtube"),
+            Some("prospero://launch/youtube"),
         );
         param.set_version("01.00");
         param.set_master_version("01.00");
         param.set_sdk_version("12.40.00.01");
 
-        assert!(param.is_ps5_native());
+        assert!(param.is_prospero_native());
         assert_eq!(param.title_id(), Some("PPSA01650"));
         assert_eq!(
             param.content_id(),
             Some("UP0000-PPSA01650_00-YOUTUBE000000000")
         );
-        assert_eq!(param.deeplink_uri(), Some("ps5://launch/youtube"));
+        assert_eq!(param.deeplink_uri(), Some("prospero://launch/youtube"));
         assert_eq!(param.version(), Some("01.00"));
         assert_eq!(param.master_version(), Some("01.00"));
         assert_eq!(param.sdk_version(), Some("12.40.00.01"));
@@ -486,7 +471,7 @@ mod tests {
         let bytes = param.to_bytes().expect("bytes");
         let parsed = Param::parse(&bytes).expect("document");
         assert_eq!(param, parsed);
-        assert!(parsed.is_ps5_native());
+        assert!(parsed.is_prospero_native());
     }
 
     #[test]

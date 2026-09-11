@@ -59,7 +59,8 @@ their own copy of the numbers.
 
 The library crates depend on nothing outside this repository - a format library that could
 only be built as part of a set would be a poor thing to ask anyone to depend on. `selfish-cli`
-is the exception: it takes `oops-build` and `oops-log` from `oops-libs` by relative path, so a
-clone of only this repository no longer builds the whole workspace, and needs `oops bootstrap
-selfish` first. The libraries themselves inherit none of that - see
-[BUILDING.md](../BUILDING.md), which is the full account.
+holds to the same line: a clone of only this repository builds with a Rust toolchain and
+nothing else. It briefly did not - the CLI took `oops-build` and `oops-log` from `oops-libs`
+for a `--version` commit stamp and a logging subscriber - and both are gone (D104): the stamp
+is a few lines of git in `selfish-cli/build.rs`, and the logging was dead weight, since nothing
+here emits a tracing event. See [BUILDING.md](../BUILDING.md) for the full account.

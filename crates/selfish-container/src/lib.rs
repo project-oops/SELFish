@@ -510,8 +510,8 @@ pub enum Declared {
     },
     /// The tail is not where the table says it is, or the file stops before it.
     ///
-    /// Not an error, and not a judgement about the format: `header_size - 0x70` is a
-    /// PS4-derived layout, and a container whose tail sits elsewhere reads as this.
+    /// Not an error, and not a judgement about the format: `header_size - 0x70` is an
+    /// Orbis-derived layout, and a container whose tail sits elsewhere reads as this.
     Unreachable,
 }
 
@@ -796,7 +796,7 @@ pub fn build_with_privilege(
 /// Wrap an executable in a fake container with explicit privilege tier and target SDK version.
 ///
 /// When an SDK target is provided, any `PT_SCE_PROCPARAM` segment in the ELF is stamped
-/// with the validated PS4 and PPR SDK versions.
+/// with the validated Orbis and Prospero (PPR) SDK versions.
 ///
 /// # Errors
 ///

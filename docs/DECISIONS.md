@@ -114,6 +114,7 @@ and a per-entry date would not be. Entries from D067 on carry one.
 | 🟢 | D101 | [A module built here cannot carry a weak undefined import, by construction; the forcing to GLOBAL stays](decisions/D101-a-module-built-here-cannot-carry-a-weak-import.md) | decided | 2026-09-10 |
 | 🟢 | D102 | [The title metadata a title carries gets pipeline spellings; `--root` does not](decisions/D102-title-metadata-options-on-the-pipeline.md) | decided | 2026-09-10 |
 | 🟢 | D103 | [The AGC shader container is admissible as a format, but only the part a citable source derives - not the vendor-binary part, and not because hardware accepts it](decisions/D103-the-agc-shader-container-and-where-it-may-come-from.md) | decided | 2026-09-10 |
+| 🟢 | D104 | [selfish-cli depends on nothing outside this repository again: the commit stamp is local git, the logging was dead weight](decisions/D104-selfish-cli-depends-on-nothing-outside-this-repository-again.md) | decided | 2026-09-11 |
 
 | | meaning |
 |---|---|

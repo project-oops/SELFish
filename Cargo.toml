@@ -43,16 +43,6 @@ selfish-pfs = { path = "crates/selfish-pfs" }
 selfish-pkg = { path = "crates/selfish-pkg" }
 selfish-shader = { path = "crates/selfish-shader" }
 
-# Shared with the rest of the collection. `oops-build` has no dependencies at all; `oops-log` is
-# the `tracing` facade and a subscriber, with files and OTLP behind features this does not enable.
-# Paths while nothing is published - these gain a `version` when they are.
-oops-build = { path = "../oops-libs/crates/oops-build" }
-oops-log = { path = "../oops-libs/crates/oops-log" }
-# The facade itself, for the macros. `oops-log` installs the subscriber and deliberately does not
-# wrap `info!`/`debug!`. `attributes` is off: that is `#[instrument]`, unused here, and it costs a
-# proc-macro chain for a feature nobody called.
-tracing = { version = "0.1", default-features = false, features = ["std"] }
-
 # Parsing hostile bytes without `unsafe`. Size and alignment are validated before a
 # reference exists, which is what lets `unsafe_code = "forbid"` be true rather than hopeful.
 zerocopy = { version = "0.8", features = ["derive"] }

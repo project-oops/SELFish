@@ -4,7 +4,7 @@ What was done, in order, and what surprised us. Surprises especially - a format 
 surprises are its most valuable output, because each one is a thing the next person would
 otherwise rediscover the hard way.
 **This table is generated.** Edit an item under `worklog/`, then run
-`tools/split-doc.sh --index selfish WORKLOG 2 worklog`.
+`tools/split-doc.sh --index selfish WORKLOG 1 worklog`.
 
 | date | entry |
 |---|---|
@@ -79,3 +79,4 @@ otherwise rediscover the hard way.
 | 2026-09-10 | [The shader container was citable after all, once I looked past the first two emulators](worklog/069-the-shader-container-was-citable-after-all.md) |
 | 2026-09-11 | [A CLI verb, so a C consumer can reach the shader builder](worklog/070-a-cli-verb-so-a-c-consumer-can-reach-the-shader-builder.md) |
 | 2026-09-11 | [Pixel and vertex stages, the hardware that confirmed the header, and the constants I would not ship](worklog/071-pixel-and-vertex-stages-and-the-constants-i-would-not-ship.md) |
+| 2026-09-11 | [selfish-cli stands alone again: the local commit stamp, and the logging that logged nothing](worklog/072-selfish-cli-stands-alone-again.md) |

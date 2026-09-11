@@ -1,18 +1,10 @@
 name: ci
 
-# Every job begins the same three steps: check out the collection, check this repository
-# out *into* it, and ask `oops bootstrap` for the siblings this project needs. See
-# docs/BUILDING.md.
-#
-# This workflow has never executed - there is no remote yet - and until it was looked at
-# it had **no bootstrap step at all**, on the strength of a comment saying SELFish depends
-# on nothing outside itself. That stopped being true when `selfish-cli` took `oops-build`
-# and `oops-log` from `oops-libs` by relative path, and nothing noticed, because a
-# workflow nobody runs is documentation that claims to be a gate.
-#
-# The claim is worth getting back: the crates under `crates/` still take nothing, and it
-# is two calls in one binary standing between here and the old property. See
-# docs/BUILDING.md.
+# Every job begins the same two steps: check out the collection and check this repository out
+# *into* it, so the shared `oops` entry point is on hand. This project needs no siblings to
+# build - the crates under `crates/` take nothing outside this repository, and `selfish-cli` no
+# longer does either (D104: it dropped `oops-build` and `oops-log`) - so there is no bootstrap
+# step. See docs/BUILDING.md.
 
 on:
   push:
@@ -43,12 +35,6 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq clang lld
-
-      - name: Siblings this build needs
-        run: OOPS/bin/oops bootstrap selfish
-        env:
-          # Empty unless the org secret exists, and empty is the old behaviour.
-          OOPS_CI_TOKEN: ${{ secrets.OOPS_CI_TOKEN }}
 
       # `./bin/selfish check`, reached through the shared entry point: formatting, clippy at
       # `-D warnings`, the tests, and a doc build. `-D warnings` because the lint set here is
@@ -81,11 +67,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: OOPS/selfish
-      - name: Siblings this build needs
-        run: OOPS/bin/oops bootstrap selfish
-        env:
-          # Empty unless the org secret exists, and empty is the old behaviour.
-          OOPS_CI_TOKEN: ${{ secrets.OOPS_CI_TOKEN }}
 
       # Both provenance checks, through the front door so `./bin/selfish provenance` is the
       # single source of truth and a person runs the same thing (principle 2).

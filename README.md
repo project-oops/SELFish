@@ -180,12 +180,12 @@ build dependencies, and a test that fails on a clean machine teaches people to i
 `./bin/selfish links` runs those tests and fails if they skipped, which is the only way a run
 can claim to have checked the linker script.
 
-**The libraries depend on nothing outside this repository, and that is the point of them.**
-`selfish-cli` does not: it takes `oops-build` and `oops-log` from `oops-libs` by relative path,
-so a clone of only this repository no longer builds the whole workspace. That is a regression
-against the property this repository exists to hold, and it is written down rather than
-quietly accepted - see **[docs/BUILDING.md](docs/BUILDING.md)**, which is also the full account
-of every verb and what CI runs.
+**Everything here depends on nothing outside this repository, and that is the point.** The
+library crates never did, and `selfish-cli` no longer does either: a clone of only this
+repository builds with a Rust toolchain and nothing else. It briefly took `oops-build` and
+`oops-log` from `oops-libs` for a `--version` commit stamp and a logging subscriber; both are
+gone (D104), the stamp reimplemented in a few lines of git and the unused logging removed. See
+**[docs/BUILDING.md](docs/BUILDING.md)** for the full account of every verb and what CI runs.
 
 ## Licence
 

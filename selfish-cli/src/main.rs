@@ -11,15 +11,37 @@
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use clap::{Parser, Subcommand};
 use selfish_abi::Generation;
 use selfish_pfs::{Compressed, Filesystem, Region, Slice, Source, Xts};
 
+/// This build in one line, for clap's `--version`: `v{version} - {commit}`, the commit stamped by
+/// `build.rs`.
+///
+/// A plain function rather than the shared `oops_build::line!` macro it replaced: `env!` and
+/// `option_env!` read the crate they expand in, so expanding them *here* is what makes them report
+/// this crate's own version and the `OOPS_COMMIT` its own build script set - a macro in another
+/// crate would report that crate's. Computed once and kept because clap wants a `&'static str` and
+/// the commit is only knowable after `build.rs` has run. A build made outside a repository has no
+/// commit to name and says so. (D104)
+fn version_line() -> &'static str {
+    static LINE: OnceLock<String> = OnceLock::new();
+    LINE.get_or_init(|| {
+        let version = env!("CARGO_PKG_VERSION");
+        match option_env!("OOPS_COMMIT").filter(|commit| !commit.is_empty()) {
+            Some(commit) => format!("v{version} - {commit}"),
+            None => format!("v{version} - no commit"),
+        }
+    })
+    .as_str()
+}
+
 #[derive(Parser)]
 #[command(
     name = "selfish",
-    version = oops_build::line!(),
+    version = version_line(),
     about = "Read and write the file formats Prospero-generation hardware loads"
 )]
 struct Cli {
@@ -62,7 +84,7 @@ struct Cli {
     #[arg(long, value_name = "TIER", requires = "input")]
     privilege: Option<String>,
 
-    /// Target SDK version or alias to pin, such as `2.000.009`, `ps5-native` or `ps4-compat`.
+    /// Target SDK version or alias to pin, such as `2.000.009`, `prospero` or `orbis`.
     ///
     /// Patches `PT_SCE_PROCPARAM` and the container's declared version. Same formats as
     /// `--privilege`, and the same refusal for `elf` and `prx`.
@@ -462,11 +484,6 @@ fn main() {
 /// Dispatch, which is one arm per subcommand and long for that reason alone.
 #[allow(clippy::too_many_lines)]
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    // Held for the whole of `main`: the guard keeps the writers alive, and `let _` would drop
-    // it here.
-    let _logging = oops_log::Logging::new("selfish")
-        .build(oops_build::line!())
-        .init();
     let cli = Cli::parse();
 
     // Two ways in, and they do not mix. Four options are a build; a subcommand is a
@@ -1251,7 +1268,7 @@ fn eboot(
             say!("  tier    {privilege:?}");
             say!(
                 "  sdk     0x{:08x}/0x{:08x}",
-                target_sdk.ps4_sdk,
+                target_sdk.orbis_sdk,
                 target_sdk.ppr_sdk
             );
             selfish_container::build_with_options(&bytes, generation, privilege, Some(target_sdk))?

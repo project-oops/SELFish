@@ -30,14 +30,6 @@ selfish-pkg.workspace = true
 selfish-shader.workspace = true
 clap.workspace = true
 png.workspace = true
-oops-build.workspace = true
-oops-log.workspace = true
-tracing.workspace = true
-
-[build-dependencies]
-# The other half of `oops-build`: `emit` at build time, `line!` at run time. Not target-gated,
-# unlike the icon above - a commit is wanted on every platform.
-oops-build.workspace = true
 
 [lints]
 workspace = true

@@ -1,6 +1,6 @@
-# Target SDK versions for PlayStation 4 and PlayStation 5 executables.
+# Target SDK versions for Orbis and Prospero executables.
 #
-# A caller names a version ("2.000.009", "ps5-native") instead of an opaque packed hex number,
+# A caller names a version ("2.000.009", "prospero") instead of an opaque packed hex number,
 # and this maps the name to the two 32-bit fields an executable declares. Encoded 0xMMmmppbb
 # (major, minor, patch, build).
 #
@@ -10,8 +10,8 @@
 # ## What an SDK version is, and where it lives
 #
 # It is not a runtime behaviour - it is a static field an executable carries in its
-# `PT_SCE_PROCPARAM` segment (type `0x61000001`): an `ORBI` block with `sdk_version` (PS4) at
-# `+0x10` and `sdk_version_second` (PPR) at `+0x14`. The structure is named in the OpenOrbis PS4
+# `PT_SCE_PROCPARAM` segment (type `0x61000001`): an `ORBI` block with `sdk_version` (Orbis) at
+# `+0x10` and `sdk_version_second` (Prospero) at `+0x14`. The structure is named in the OpenOrbis PS4
 # ELF specification - the same source `selfish-container`'s `patch_elf_procparam` writes from - so
 # reading one needs no vendor material.
 #
@@ -37,8 +37,8 @@
 
 [sdks."2.000.009"]
 generation = 5
-alias = "prospero, prospero-default, ps5-native"
-ps4_sdk = "08.050.001"
+alias = "prospero, prospero-default"
+orbis_sdk = "08.050.001"
 ppr_sdk = "02.000.009"
 min_firmware = "2.00"
 source = "measured: retail PPSA03416's PT_SCE_PROCPARAM"
@@ -46,8 +46,8 @@ description = "Universal safe Prospero target"
 
 [sdks."11.600.005"]
 generation = 5
-alias = "prospero-current, ps5-current"
-ps4_sdk = "12.590.001"
+alias = "prospero-current, trinity"
+orbis_sdk = "12.590.001"
 ppr_sdk = "11.600.005"
 min_firmware = "11.60"
 source = "conventional: a representative recent-firmware Prospero value, not traced to a specific title measured here"
@@ -55,8 +55,8 @@ description = "Modern Prospero target (FW 11.xx/12.xx)"
 
 [sdks."8.008.011"]
 generation = 4
-alias = "orbis, orbis-default, ps4-compat"
-ps4_sdk = "08.008.011"
+alias = "orbis, orbis-default, neo"
+orbis_sdk = "08.008.011"
 ppr_sdk = "00.000.000"
 min_firmware = "8.00"
 source = "measured: the value a launching PS4 title declares (D242); its on-console effect was tested in D244"
@@ -65,7 +65,7 @@ description = "Orbis baseline"
 [sdks."0.000.000"]
 generation = 4
 alias = "zero"
-ps4_sdk = "00.000.000"
+orbis_sdk = "00.000.000"
 ppr_sdk = "00.000.000"
 min_firmware = "0.00"
 source = "synthetic: not a title's value. obSCEne keeps zero for its own module because a real SDK version broke sceKernelDlsym resolution on the console tested (D244); kept here as the census-probe baseline"

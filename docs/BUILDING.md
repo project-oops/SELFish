@@ -10,28 +10,26 @@ There is one command and it is `bin/selfish`. Every verb is the same command CI 
 
 **A Rust toolchain**, and nothing from the hardware - no SDK, no firmware, no keys.
 
-### One sibling, and it should not be there
+### It depends on nothing outside itself
 
 `bin/selfish` says SELFish depends on nothing outside itself, and its CI comment calls that
-"the one property to preserve if anything is ever added here". **That is now false.**
-`selfish-cli` takes `oops-build` and `oops-log` from `oops-libs` by relative path, so a clone
-of only this repository does not build:
+"the one property to preserve if anything is ever added here". It holds: a clone of only this
+repository builds with a Rust toolchain and nothing else.
 
-```bash
-./bin/oops bootstrap selfish      # fetches oops-libs
-```
+It was briefly false. `selfish-cli` took `oops-build` and `oops-log` from `oops-libs` by
+relative path for two conveniences - a git-commit stamp on `--version`, and a logging
+subscriber - so a clone of only this repository did not build without fetching a sibling first.
+Both are gone (D104):
 
-It is written down here rather than quietly fixed in the prose because the claim is worth
-keeping as a goal. Being the bottom of the spine is what lets the other three take these
-formats without inheriting anything, and two small conveniences in the CLI is a thin reason to
-have given it up.
+- the commit stamp is now a few lines of git in `selfish-cli/build.rs` (`emit_commit`), reading
+  the same `OOPS_COMMIT` a CI workflow can still override;
+- the logging was **dead weight** and was removed rather than reimplemented - nothing in these
+  crates emits a tracing event, so the subscriber wrapped nothing.
 
-Nothing caught the change. CI had no bootstrap step at all, on the strength of the same
-comment, and it has never run - there is no remote yet - so the first execution would have
-failed on a missing directory. It bootstraps now.
-
-Nothing in the *libraries* depends on oops-libs; the dependency is confined to `selfish-cli`.
-Whoever wants the old property back needs to move two calls, not restructure anything.
+Being the bottom of the spine is what lets the other three take these formats without inheriting
+anything, and two conveniences in the CLI were a thin reason to have given it up. The crates
+under `crates/` never depended on oops-libs; now `selfish-cli` does not either, and CI needs no
+bootstrap step to build this project.
 
 ### `clang` and `lld`, for the tests that link
 
