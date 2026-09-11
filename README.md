@@ -111,10 +111,12 @@ selfish pack      (--image <file> | --dir <dir>) -o <file> --content-id ID
                   [--title-id ID] [--title NAME] [--passcode P] [--entry ID=FILE]...
                            assemble a package; refuses to invent what it cannot account for.
                            --dir does the whole chain from a directory of files in one step
-selfish shader    (--code <file> | --shader-size N) [--target 0xN] [--sh-reg OFF=VAL]... -o <file>
-                           build an AGC compute shader container - the header
-                           sceAgcCreateShader takes. The layout is this tool's (D103); the
-                           registers are the shader's, passed in with --sh-reg
+selfish shader    [--stage compute|pixel|vertex] (--code <file> | --shader-size N)
+                  [--target 0xN] [--sh-reg OFF=VAL]... -o <file>
+                           build an AGC shader container - the header sceAgcCreateShader
+                           takes. The layout is this tool's (D103); the registers are the
+                           shader's, passed in with --sh-reg. --stage also takes a raw type
+                           value for a stage without a citable constant
 ```
 
 **[docs/features/writing.md](docs/features/writing.md) runs one payload through each of

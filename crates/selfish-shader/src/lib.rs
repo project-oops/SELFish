@@ -43,7 +43,8 @@ pub struct ShaderRegister {
 /// arrays are placed as sub-tables; empty ones leave their pointer field zero.
 #[derive(Debug, Clone, Default)]
 pub struct Container {
-    /// The stage: 0 = compute, 1 = pixel, 2/6 = es/geometry, 4 = gs, 7 = ls.
+    /// The stage `type` byte. See [`STAGE_COMPUTE`], [`STAGE_PIXEL`], [`STAGE_VERTEX`], and the
+    /// `type` row of `data/agc-shader-format.tsv` for the values and what a source establishes.
     pub stage: u8,
     /// The ISA/target the bytecode is for.
     pub target: u32,
@@ -66,8 +67,38 @@ impl Container {
     /// pair (compute program lo/hi) a console patches from the code pointer at create time.
     #[must_use]
     pub fn compute(shader_size: u32, target: u32, sh_registers: Vec<ShaderRegister>) -> Self {
+        Self::for_stage(STAGE_COMPUTE, shader_size, target, sh_registers)
+    }
+
+    /// A pixel shader container. Stage [`STAGE_PIXEL`].
+    #[must_use]
+    pub fn pixel(shader_size: u32, target: u32, sh_registers: Vec<ShaderRegister>) -> Self {
+        Self::for_stage(STAGE_PIXEL, shader_size, target, sh_registers)
+    }
+
+    /// A vertex shader container. Stage [`STAGE_VERTEX`].
+    #[must_use]
+    pub fn vertex(shader_size: u32, target: u32, sh_registers: Vec<ShaderRegister>) -> Self {
+        Self::for_stage(STAGE_VERTEX, shader_size, target, sh_registers)
+    }
+
+    /// A container for a given stage `type` value.
+    ///
+    /// The named constructors ([`compute`](Self::compute), [`pixel`](Self::pixel),
+    /// [`vertex`](Self::vertex)) cover the stage values a citable source establishes. This is the
+    /// general primitive for any other stage: a caller that has confirmed a `type` value - from
+    /// hardware, say - passes it directly, and the container is laid out around it. The crate does
+    /// not assert what an arbitrary `type` means; only the stage values with a named constant are
+    /// ones it stands behind. The registers are the shader's, supplied by the caller.
+    #[must_use]
+    pub fn for_stage(
+        stage: u8,
+        shader_size: u32,
+        target: u32,
+        sh_registers: Vec<ShaderRegister>,
+    ) -> Self {
         Self {
-            stage: STAGE_COMPUTE,
+            stage,
             target,
             shader_size,
             sh_registers,
@@ -187,8 +218,24 @@ pub fn registers_at(container: &[u8], field: usize, count: usize) -> Option<Vec<
     Some(out)
 }
 
-/// The compute stage type.
+/// The compute stage `type`. craziiEmu maps it to the compute program registers; the 9f4c
+/// hardware probe's baseline is a compute container the console accepts.
 pub const STAGE_COMPUTE: u8 = 0;
+
+/// The pixel (fragment) stage `type`. craziiEmu's `1 => SpiShaderPgmLoPs`; obSCEne's
+/// `166-agc/primitive-draw` uses it for the fragment stage on hardware.
+pub const STAGE_PIXEL: u8 = 1;
+
+/// The vertex stage `type`. craziiEmu's `2 => SpiShaderPgmLoEs` - the "export shader", the
+/// hardware stage a vertex shader runs in; obSCEne's `166-agc/primitive-draw` draws with `type=2`
+/// as its vertex stage. Named `vertex` for the API stage it serves, `ES` for the hardware one.
+///
+/// The higher stages obSCEne's request named - geometry, hull - are deliberately **not** given
+/// constants here: their values conflict with the only citable header-byte source (craziiEmu has
+/// `4=GS`, `7=LS`, no `3`), and the 9f4c probe did not exercise them. A caller that has confirmed
+/// such a value builds it with [`Container::for_stage`] rather than a constant this crate cannot
+/// yet stand behind. (D103)
+pub const STAGE_VERTEX: u8 = 2;
 
 /// The `file_header` magic bytes, from the table.
 ///
@@ -343,7 +390,8 @@ fn read_u64(bytes: &[u8], at: usize) -> Option<u64> {
 )]
 mod tests {
     use super::{
-        Container, STAGE_COMPUTE, ShaderRegister, magic, offset_of, registers_at, relocate, version,
+        Container, STAGE_COMPUTE, STAGE_PIXEL, STAGE_VERTEX, ShaderRegister, magic, offset_of,
+        registers_at, relocate, version,
     };
 
     /// The compute program-address registers, from craziiEmu: lo at 0x20C, hi at 0x20D. Their
@@ -397,6 +445,44 @@ mod tests {
         assert_eq!(built[0x5a], STAGE_COMPUTE, "type");
         assert_eq!(built[0x5c], 2, "num_sh_registers");
         assert_eq!(built[0x5b], 0, "num_cx_registers");
+    }
+
+    #[test]
+    fn pixel_and_vertex_differ_from_compute_only_in_the_type_byte() {
+        // The container format is stage-agnostic - only `type` at 0x5a changes. So a pixel or
+        // vertex container is a compute one with one byte different, and nothing else.
+        let regs = compute_regs();
+        let compute = Container::compute(256, 0x0E, regs.clone()).build();
+        let pixel = Container::pixel(256, 0x0E, regs.clone()).build();
+        let vertex = Container::vertex(256, 0x0E, regs).build();
+
+        assert_eq!(pixel[0x5a], STAGE_PIXEL, "pixel type = 1");
+        assert_eq!(vertex[0x5a], STAGE_VERTEX, "vertex type = 2");
+
+        let differs = |a: &[u8], b: &[u8]| -> Vec<usize> {
+            (0..a.len().min(b.len()))
+                .filter(|i| a[*i] != b[*i])
+                .collect()
+        };
+        assert_eq!(
+            differs(&compute, &pixel),
+            vec![0x5a],
+            "pixel vs compute: only type"
+        );
+        assert_eq!(
+            differs(&compute, &vertex),
+            vec![0x5a],
+            "vertex vs compute: only type"
+        );
+    }
+
+    #[test]
+    fn for_stage_writes_any_type_value_it_is_given() {
+        // The general primitive: a caller with a confirmed stage value builds it directly, with
+        // no constant this crate has to stand behind. `4` is craziiEmu's GS, used here only to
+        // show the byte is written through unchanged.
+        let built = Container::for_stage(4, 256, 0x0E, compute_regs()).build();
+        assert_eq!(built[0x5a], 4, "for_stage writes the type it is handed");
     }
 
     #[test]

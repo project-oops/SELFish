@@ -78,3 +78,4 @@ otherwise rediscover the hard way.
 | 2026-09-10 | [A review caught `--icon` copied, not converted - and my evidence that it was](worklog/068-a-review-caught-icon-copied-not-converted.md) |
 | 2026-09-10 | [The shader container was citable after all, once I looked past the first two emulators](worklog/069-the-shader-container-was-citable-after-all.md) |
 | 2026-09-11 | [A CLI verb, so a C consumer can reach the shader builder](worklog/070-a-cli-verb-so-a-c-consumer-can-reach-the-shader-builder.md) |
+| 2026-09-11 | [Pixel and vertex stages, the hardware that confirmed the header, and the constants I would not ship](worklog/071-pixel-and-vertex-stages-and-the-constants-i-would-not-ship.md) |

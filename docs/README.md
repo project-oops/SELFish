@@ -43,7 +43,7 @@ and puts nothing beside it.
 **Everything else is a diagnostic** somebody runs by hand on a file they already have: `nid`,
 `elf`, `imports`, `sections`, `reloc`, `container`, `title`, `pkg`, `extract`, `derive` and
 `audit`. `image` and `pack` build a package's parts separately, and `shader` builds an AGC
-compute shader container.
+shader container (compute, pixel or vertex).
 
 There are no layer verbs for stamping or wrapping. `--format prx` is a shared library, and
 `--privilege` and `--sdk` are pipeline options for the formats that build a container - which

@@ -17,6 +17,25 @@
 # principle 1, with obSCEne's hardware sweep 20260910-203426-eboot (`166-agc/compute-dispatch`,
 # `rc-create=0x0`) as the oracle a real container passed - never a source. (selfish D103)
 #
+# # What the console validates, measured field by field
+#
+# obSCEne's differential probe (`166-agc/shader-differential`, sweep 20260911-002219) built a clean
+# container and perturbed one field at a time on live RDNA2 silicon. The oracle's verdicts, which
+# confirm the derivation above rather than replace it:
+#   - REJECTED when changed - the console checks these:
+#       magic (0x00) -> SCE_AGC_ERROR_INVALID_MAGIC (0x8a6c0003)
+#       version (0x04, must be 0x18) -> SCE_AGC_ERROR_UNSUPPORTED_VERSION (0x8a6c0004)
+#       type (0x5a) mismatched with its registers, or num_sh_registers (0x5c) = 0
+#             -> SCE_AGC_ERROR_INVALID_STAGE_REGISTERS (0x8a6c0005)
+#       user_data (0x08) = 0 and sh_registers (0x20) = 0 -> SIGSEGV (the driver dereferences them)
+#   - TOLERATED at create time - unchecked, or checked later (at dispatch), or optional:
+#       cx_registers (0x18), specials (0x28), header_size (0x40), shader_size (0x44), target (0x4c),
+#       an invalid type when the registers still match, and a non-256-aligned code pointer (the CP
+#       enforces alignment at dispatch, not creation).
+# "Tolerated at create" is not "may be wrong": shader_size/target/alignment are enforced later, so
+# they are still written correctly. The probe measured what `sceAgcCreateShader` guards, not what a
+# working shader needs.
+#
 # # Little-endian, and the pointers are self-relative until a console relocates them
 #
 # Every scalar is little-endian. The `ptr` fields do not hold an absolute address in a built
@@ -54,7 +73,7 @@ header	num_input_semantics	0x50	4	u32le	-	count of input_semantics entries
 header	scratch_size_dw_per_thread	0x54	2	u16le	-	scratch dwords per thread; supplied
 header	num_output_semantics	0x56	2	u16le	-	count of output_semantics entries
 header	special_sizes_bytes	0x58	2	u16le	-	size of the ShaderSpecialRegs block; supplied
-header	type	0x5a	1	u8	-	shader stage: 0 = compute, 1 = pixel, 2/6 = es/geometry, 4 = gs, 7 = ls
+header	type	0x5a	1	u8	-	shader stage, from craziiEmu's register switch: 0=compute, 1=pixel(PS), 2/6=ES, 4=GS, 7=LS. 1 and 2 also hardware-confirmed (166-agc/primitive-draw, and 9f4c rejects type/register mismatch). No 3. The console rejects a type that mismatches its registers (INVALID_STAGE_REGISTERS)
 header	num_cx_registers	0x5b	1	u8	-	count of cx_registers entries
 header	num_sh_registers	0x5c	1	u8	-	count of sh_registers entries
 header	(size)	-	0x60	size	-	the header rounded up to an 8-byte boundary; sub-tables follow

@@ -384,7 +384,7 @@ enum Command {
         /// Where to write them.
         out: PathBuf,
     },
-    /// Build an AGC compute shader container - the header `sceAgcCreateShader` is handed.
+    /// Build an AGC shader container - the header `sceAgcCreateShader` is handed.
     ///
     /// The container *format* is this tool's (from `data/agc-shader-format.tsv`, D103); the
     /// register *contents* are the shader's, read from its bytecode by whoever produced it and
@@ -392,8 +392,13 @@ enum Command {
     /// pointer at create time - so this writes the header and its sub-tables, and records the
     /// bytecode's size.
     ///
-    /// Only the compute stage is built; that is what has a consumer (obscene's dispatch probe).
+    /// `--stage` names the shader stage; `compute`, `pixel` and `vertex` have citable type values,
+    /// and any other stage takes a raw type value the caller has confirmed itself.
     Shader {
+        /// The shader stage: `compute` (default), `pixel`, `vertex`, or a raw `type` value (hex or
+        /// decimal) for a stage without a citable constant here.
+        #[arg(long, default_value = "compute")]
+        stage: String,
         /// The compiled shader bytecode. Its length is recorded as `shader_size`; the bytes are
         /// not embedded. Use `--shader-size` instead if you only have the size.
         #[arg(long, value_name = "FILE")]
@@ -515,12 +520,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::Pkg { file, all } => pkg(&file, all),
         Command::Extract { file, out } => extract(&file, &out),
         Command::Shader {
+            stage,
             code,
             shader_size,
             target,
             sh_registers,
             out,
-        } => shader(code.as_deref(), shader_size, &target, &sh_registers, &out),
+        } => shader(
+            &stage,
+            code.as_deref(),
+            shader_size,
+            &target,
+            &sh_registers,
+            &out,
+        ),
     }
 }
 
@@ -1554,13 +1567,32 @@ fn image_cmd(
 ///
 /// The build-time counterpart of `selfish-shader` for a consumer that is not Rust: obscene's
 /// probe generates its container here rather than carrying a copy of the layout. (D103)
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a command-line command takes what the command line offers"
+)]
 fn shader(
+    stage: &str,
     code: Option<&Path>,
     shader_size: Option<u32>,
     target: &str,
     sh_registers: &[String],
     out: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // A named stage has a value a citable source establishes; anything else is passed through as a
+    // raw type value the caller has confirmed itself, which is exactly what `for_stage` is for.
+    let (stage_value, stage_label) = match stage {
+        "compute" => (selfish_shader::STAGE_COMPUTE, "compute".to_owned()),
+        "pixel" => (selfish_shader::STAGE_PIXEL, "pixel".to_owned()),
+        "vertex" => (selfish_shader::STAGE_VERTEX, "vertex".to_owned()),
+        other => {
+            let value = hex_or_dec_u32(other)
+                .and_then(|v| u8::try_from(v).ok())
+                .ok_or_else(|| format!("bad --stage {other:?}: a name or a 0-255 type value"))?;
+            (value, format!("type {value:#x}"))
+        }
+    };
+
     let size = match (code, shader_size) {
         (Some(path), _) => {
             let bytes = std::fs::read(path)?;
@@ -1585,22 +1617,29 @@ fn shader(
         });
     }
 
-    // A console rejects a compute shader whose SH register table does not carry at least the
-    // program-address pair (craziiEmu: registerCount < 2 is refused). Warned rather than refused
-    // here, because this crate does not own that rule - it lays out what it is handed. (D103)
+    // A console rejects a shader whose SH register table lacks its stage's program-address pair
+    // (9f4c: num_sh_registers = 0 is INVALID_STAGE_REGISTERS). Warned rather than refused, because
+    // this crate lays out what it is handed and does not own that rule. The pair's offsets are
+    // stage-specific - compute's are 0x20c/0x20d - so only compute gets the concrete hint. (D103)
     if registers.len() < 2 {
+        let hint = if stage_value == selfish_shader::STAGE_COMPUTE {
+            " - for compute that is 0x20c=0, 0x20d=0"
+        } else {
+            ""
+        };
         say!(
-            "warning: {} SH register(s). A console needs at least the program-address pair \
-             (0x20c=0, 0x20d=0) it patches from the code pointer, plus the shader's own resource \
-             registers - pass them with --sh-reg",
+            "warning: {} SH register(s). A console needs at least the stage's program-address pair, \
+             which it patches from the code pointer, plus the shader's own resource registers{hint} \
+             - pass them with --sh-reg",
             registers.len()
         );
     }
 
-    let container = selfish_shader::Container::compute(size, target, registers).build();
+    let container =
+        selfish_shader::Container::for_stage(stage_value, size, target, registers).build();
     write_exactly(out, &container)?;
     say!(
-        "{}: {} byte AGC compute container (shader_size {size}, target {target:#x})",
+        "{}: {} byte AGC {stage_label} container (shader_size {size}, target {target:#x})",
         out.display(),
         container.len()
     );
