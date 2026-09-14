@@ -585,17 +585,21 @@ fn elf(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     );
     say!("entry      {:#x}", elf.entry());
     say!("segments   {}", elf.program_headers().len());
-    for phdr in elf.program_headers() {
+    for (i, phdr) in elf.program_headers().iter().enumerate() {
         let kind = phdr.p_type.get();
         say!(
-            "  {kind:#010x}{}  {:#012x} {:>10} bytes",
+            "  [{i}] {kind:#010x}{}  flags={:#x} off={:#010x} va={:#012x} fsz={:#010x} msz={:#010x} align={:#x}",
             if selfish_elf::segment::is_vendor(kind) {
                 " vendor"
             } else {
                 "       "
             },
+            phdr.flags.get(),
+            phdr.offset.get(),
             phdr.vaddr.get(),
-            phdr.filesz.get()
+            phdr.filesz.get(),
+            phdr.memsz.get(),
+            phdr.align.get()
         );
     }
 
@@ -610,7 +614,8 @@ fn elf(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         "convention {}",
         match info.table {
             Some(selfish_elf::dynamic::Table::Orbis) => "orbis - vendor tags throughout",
-            Some(selfish_elf::dynamic::Table::Prospero) => "prospero - standard tags, vendor extras",
+            Some(selfish_elf::dynamic::Table::Prospero) =>
+                "prospero - standard tags, vendor extras",
             None => "no string table, so undetermined",
         }
     );
