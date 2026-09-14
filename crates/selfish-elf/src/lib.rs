@@ -367,8 +367,8 @@ impl<'a> Elf<'a> {
     #[must_use]
     pub fn generation(&self) -> Option<Generation> {
         match self.header.ident.get(EI_ABIVERSION) {
-            Some(&b) if b == Generation::Current.abi_version() => Some(Generation::Current),
-            Some(&b) if b == Generation::Previous.abi_version() => Some(Generation::Previous),
+            Some(&b) if b == Generation::Prospero.abi_version() => Some(Generation::Prospero),
+            Some(&b) if b == Generation::Orbis.abi_version() => Some(Generation::Orbis),
             _ => None,
         }
     }
@@ -500,11 +500,11 @@ impl<'a> Elf<'a> {
         };
 
         let (bytes, origin) = match table {
-            dynamic::Table::Legacy => match self.segment(segment::SCE_DYNLIBDATA) {
+            dynamic::Table::Orbis => match self.segment(segment::SCE_DYNLIBDATA) {
                 Some(phdr) => (self.segment_bytes(phdr), 0),
                 None => return Ok(None),
             },
-            dynamic::Table::Current => {
+            dynamic::Table::Prospero => {
                 let holder = self.program_headers.iter().find(|header| {
                     header.p_type.get() == segment::LOAD
                         && info.strtab >= header.vaddr.get()
@@ -702,7 +702,7 @@ mod tests {
         let bytes = sample(ObjectType::EXECUTABLE, 2);
         let elf = Elf::parse(&bytes).expect("parses");
         assert_eq!(elf.object_type(), ObjectType::Executable);
-        assert_eq!(elf.generation(), Some(Generation::Current));
+        assert_eq!(elf.generation(), Some(Generation::Prospero));
         assert!(elf.has_platform_osabi());
         assert_eq!(elf.program_headers().len(), 1);
     }
@@ -726,8 +726,8 @@ mod tests {
     #[test]
     fn abi_version_tells_the_generations_apart() {
         for (byte, want) in [
-            (2_u8, Some(Generation::Current)),
-            (0, Some(Generation::Previous)),
+            (2_u8, Some(Generation::Prospero)),
+            (0, Some(Generation::Orbis)),
             // A byte matching neither is not a third console.
             (7, None),
         ] {

@@ -68,12 +68,12 @@ impl TargetSdk {
     #[must_use]
     pub fn default_for(generation: Generation) -> Self {
         match generation {
-            Generation::Previous => Self {
+            Generation::Orbis => Self {
                 generation,
                 orbis_sdk: 0x08008011,
                 ppr_sdk: 0x00000000,
             },
-            Generation::Current => Self {
+            Generation::Prospero => Self {
                 generation,
                 orbis_sdk: 0x08050001,
                 ppr_sdk: 0x02000009, // Universal safe Prospero baseline (SDK 2.00)
@@ -216,8 +216,8 @@ impl SdkDictionary {
         if let Some(hex_str) = trimmed.strip_prefix("0x") {
             if let Ok(val) = u32::from_str_radix(hex_str, 16) {
                 return Ok(match target_gen {
-                    Generation::Previous => TargetSdk::new(target_gen, val, 0),
-                    Generation::Current => TargetSdk::new(target_gen, 0x08050001, val),
+                    Generation::Orbis => TargetSdk::new(target_gen, val, 0),
+                    Generation::Prospero => TargetSdk::new(target_gen, 0x08050001, val),
                 });
             }
         }
@@ -237,15 +237,13 @@ impl SdkDictionary {
 
             if matches_name || matches_alias {
                 let entry_gen = match entry.generation {
-                    4 => Generation::Previous,
-                    5 => Generation::Current,
+                    4 => Generation::Orbis,
+                    5 => Generation::Prospero,
                     other => return Err(format!("Unknown generation {other} in SDK entry")),
                 };
 
                 // Enforce generation constraints:
-                if entry_gen != target_gen
-                    && entry.ppr_sdk != 0
-                    && target_gen == Generation::Previous
+                if entry_gen != target_gen && entry.ppr_sdk != 0 && target_gen == Generation::Orbis
                 {
                     return Err(format!(
                         "SDK target '{input}' is for Prospero-generation and cannot be used with an Orbis-generation target"
@@ -259,8 +257,8 @@ impl SdkDictionary {
         // 3. Fallback: Parse dotted format (e.g. "2.000.009" or "2.00")
         if let Some(packed) = parse_dotted_version(trimmed) {
             return Ok(match target_gen {
-                Generation::Previous => TargetSdk::new(target_gen, packed, 0),
-                Generation::Current => TargetSdk::new(target_gen, 0x08050001, packed),
+                Generation::Orbis => TargetSdk::new(target_gen, packed, 0),
+                Generation::Prospero => TargetSdk::new(target_gen, 0x08050001, packed),
             });
         }
 
@@ -394,18 +392,18 @@ mod tests {
         );
 
         let native = dict
-            .resolve("prospero", Generation::Current)
+            .resolve("prospero", Generation::Prospero)
             .expect("prospero must resolve");
         assert_eq!(native.ppr_sdk, 0x02000009);
         assert_eq!(native.orbis_sdk, 0x08050001);
 
         let current = dict
-            .resolve("prospero-current", Generation::Current)
+            .resolve("prospero-current", Generation::Prospero)
             .expect("prospero-current must resolve");
         assert_eq!(current.ppr_sdk, 0x11600005);
 
         let compat = dict
-            .resolve("orbis", Generation::Previous)
+            .resolve("orbis", Generation::Orbis)
             .expect("orbis must resolve");
         assert_eq!(compat.orbis_sdk, 0x08008011);
         assert_eq!(compat.ppr_sdk, 0);
@@ -414,7 +412,7 @@ mod tests {
     #[test]
     fn test_generation_mismatch_rejected() {
         let dict = SdkDictionary::embedded();
-        let err = dict.resolve("prospero", Generation::Previous);
+        let err = dict.resolve("prospero", Generation::Orbis);
         assert!(
             err.is_err(),
             "Prospero SDK must be rejected for Orbis target"
@@ -424,10 +422,10 @@ mod tests {
     #[test]
     fn test_dotted_and_hex_resolution() {
         let dict = SdkDictionary::embedded();
-        let from_hex = dict.resolve("0x02000009", Generation::Current).unwrap();
+        let from_hex = dict.resolve("0x02000009", Generation::Prospero).unwrap();
         assert_eq!(from_hex.ppr_sdk, 0x02000009);
 
-        let from_dotted = dict.resolve("2.000.009", Generation::Current).unwrap();
+        let from_dotted = dict.resolve("2.000.009", Generation::Prospero).unwrap();
         assert_eq!(from_dotted.ppr_sdk, 0x02000009);
     }
 }

@@ -25,10 +25,10 @@ use core::fmt;
 /// Deliberately has no `Default`: see the module note.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Generation {
-    /// The current console.
-    Current,
-    /// The previous console. Most published material describes this one.
-    Previous,
+    /// The Prospero (PS5) console.
+    Prospero,
+    /// The Orbis (PS4) console.
+    Orbis,
 }
 
 impl Generation {
@@ -41,8 +41,8 @@ impl Generation {
     #[must_use]
     pub const fn container_magic(self) -> [u8; 4] {
         match self {
-            Self::Current => [0x54, 0x14, 0xF5, 0xEE],
-            Self::Previous => [0x4F, 0x15, 0x3D, 0x1D],
+            Self::Prospero => [0x54, 0x14, 0xF5, 0xEE],
+            Self::Orbis => [0x4F, 0x15, 0x3D, 0x1D],
         }
     }
 
@@ -53,10 +53,10 @@ impl Generation {
     /// other is not a container at all.
     #[must_use]
     pub fn from_container_magic(bytes: [u8; 4]) -> Option<Self> {
-        if bytes == Self::Current.container_magic() {
-            Some(Self::Current)
-        } else if bytes == Self::Previous.container_magic() {
-            Some(Self::Previous)
+        if bytes == Self::Prospero.container_magic() {
+            Some(Self::Prospero)
+        } else if bytes == Self::Orbis.container_magic() {
+            Some(Self::Orbis)
         } else {
             None
         }
@@ -69,8 +69,8 @@ impl Generation {
     #[must_use]
     pub const fn abi_version(self) -> u8 {
         match self {
-            Self::Current => 2,
-            Self::Previous => 0,
+            Self::Prospero => 2,
+            Self::Orbis => 0,
         }
     }
 
@@ -78,8 +78,8 @@ impl Generation {
     #[must_use]
     pub const fn number(self) -> u8 {
         match self {
-            Self::Current => 5,
-            Self::Previous => 4,
+            Self::Prospero => 5,
+            Self::Orbis => 4,
         }
     }
 
@@ -91,8 +91,8 @@ impl Generation {
     #[must_use]
     pub const fn from_number(n: u8) -> Option<Self> {
         match n {
-            5 => Some(Self::Current),
-            4 => Some(Self::Previous),
+            5 => Some(Self::Prospero),
+            4 => Some(Self::Orbis),
             _ => None,
         }
     }
@@ -101,8 +101,8 @@ impl Generation {
 impl fmt::Display for Generation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Current => write!(f, "current generation"),
-            Self::Previous => write!(f, "previous generation"),
+            Self::Prospero => write!(f, "prospero"),
+            Self::Orbis => write!(f, "orbis"),
         }
     }
 }
@@ -116,11 +116,11 @@ mod tests {
         // The form that can fail. Asserting on a `u32` constant would pass whatever the
         // endianness, which is precisely the mistake being guarded against.
         assert_eq!(
-            Generation::Current.container_magic(),
+            Generation::Prospero.container_magic(),
             [0x54, 0x14, 0xF5, 0xEE]
         );
         assert_eq!(
-            Generation::Previous.container_magic(),
+            Generation::Orbis.container_magic(),
             [0x4F, 0x15, 0x3D, 0x1D]
         );
     }
@@ -128,16 +128,16 @@ mod tests {
     #[test]
     fn the_two_generations_are_never_confused_for_each_other() {
         assert_ne!(
-            Generation::Current.container_magic(),
-            Generation::Previous.container_magic()
+            Generation::Prospero.container_magic(),
+            Generation::Orbis.container_magic()
         );
         assert_eq!(
             Generation::from_container_magic([0x54, 0x14, 0xF5, 0xEE]),
-            Some(Generation::Current)
+            Some(Generation::Prospero)
         );
         assert_eq!(
             Generation::from_container_magic([0x4F, 0x15, 0x3D, 0x1D]),
-            Some(Generation::Previous)
+            Some(Generation::Orbis)
         );
     }
 
@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn a_generation_survives_a_round_trip_through_its_magic() {
-        for g in [Generation::Current, Generation::Previous] {
+        for g in [Generation::Prospero, Generation::Orbis] {
             assert_eq!(
                 Generation::from_container_magic(g.container_magic()),
                 Some(g)
@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn the_build_flag_number_round_trips_and_refuses_anything_else() {
-        for g in [Generation::Current, Generation::Previous] {
+        for g in [Generation::Prospero, Generation::Orbis] {
             assert_eq!(Generation::from_number(g.number()), Some(g));
         }
         assert_eq!(Generation::from_number(3), None);
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn abi_version_differs_because_a_loader_reads_it_before_anything_runs() {
-        assert_eq!(Generation::Current.abi_version(), 2);
-        assert_eq!(Generation::Previous.abi_version(), 0);
+        assert_eq!(Generation::Prospero.abi_version(), 2);
+        assert_eq!(Generation::Orbis.abi_version(), 0);
     }
 }

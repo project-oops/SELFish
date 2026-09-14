@@ -8,8 +8,8 @@
 //!
 //! # Two conventions, and which one a module uses is not cosmetic
 //!
-//! [`Table::Legacy`] gives every table a vendor tag in the `0x6100_00xx` range.
-//! [`Table::Current`] uses the **ordinary ELF numbers** for the standard tables and keeps
+//! [`Table::Orbis`] gives every table a vendor tag in the `0x6100_00xx` range.
+//! [`Table::Prospero`] uses the **ordinary ELF numbers** for the standard tables and keeps
 //! vendor tags only for the four things the standard has no name for. Both appear in the
 //! wild; a loader that assumes one reads garbage from the other, and the garbage is
 //! plausible - an offset is an offset.
@@ -28,7 +28,7 @@ use selfish_nid::Nid;
 
 use crate::reloc::Rela;
 
-/// Standard ELF dynamic tags, used verbatim by [`Table::Current`].
+/// Standard ELF dynamic tags, used verbatim by [`Table::Prospero`].
 pub mod standard {
     /// A library this module needs.
     pub const NEEDED: u64 = 1;
@@ -138,40 +138,40 @@ pub mod vendor {
     /// import libraries. Nothing was malformed; the reader simply looked in the wrong place
     /// and found nothing there, which is what a wrong tag number always looks like.
     pub const MODULE_INFO: u64 = 0x6100_000D;
-    /// A module this one needs. Legacy convention.
-    pub const NEEDED_MODULE_LEGACY: u64 = 0x6100_000F;
-    /// Module attributes. Legacy convention.
-    pub const MODULE_ATTR_LEGACY: u64 = 0x6100_0011;
-    /// A library this module exports. Legacy convention.
-    pub const EXPORT_LIB_LEGACY: u64 = 0x6100_0013;
-    /// The library table an import's library id indexes. Legacy convention.
-    pub const IMPORT_LIB_LEGACY: u64 = 0x6100_0015;
+    /// A module this one needs. Orbis convention.
+    pub const NEEDED_MODULE_ORBIS: u64 = 0x6100_000F;
+    /// Module attributes. Orbis convention.
+    pub const MODULE_ATTR_ORBIS: u64 = 0x6100_0011;
+    /// A library this module exports. Orbis convention.
+    pub const EXPORT_LIB_ORBIS: u64 = 0x6100_0013;
+    /// The library table an import's library id indexes. Orbis convention.
+    pub const IMPORT_LIB_ORBIS: u64 = 0x6100_0015;
     /// Attributes of an exported library.
     pub const EXPORT_LIB_ATTR: u64 = 0x6100_0017;
     /// Attributes of an imported library.
     pub const IMPORT_LIB_ATTR: u64 = 0x6100_0019;
 
-    /// This module's own name and version, in the current convention.
-    pub const MODULE_INFO_CURRENT: u64 = 0x6100_0043;
+    /// This module's own name and version, in the prospero convention.
+    pub const MODULE_INFO_PROSPERO: u64 = 0x6100_0043;
     /// A module this one needs, indexed by an import's module id.
     ///
     /// One reader calls this `SCE_IMPORT_MODULE` and one writer calls it `NEEDED_MODULE`.
     /// Same tag, two names, and neither is wrong - recorded here rather than resolved,
     /// because a name is a reading and the number is the fact.
-    pub const NEEDED_MODULE_CURRENT: u64 = 0x6100_0045;
+    pub const NEEDED_MODULE_PROSPERO: u64 = 0x6100_0045;
     /// Module attributes.
-    pub const MODULE_ATTR_CURRENT: u64 = 0x6100_0047;
+    pub const MODULE_ATTR_PROSPERO: u64 = 0x6100_0047;
     /// The library table an import's library id indexes.
     ///
     /// **Not `DT_NEEDED`.** Identified by counting: it holds exactly as many entries as
     /// there are distinct library ids, where `DT_NEEDED` does not.
-    pub const IMPORT_LIB_CURRENT: u64 = 0x6100_0049;
+    pub const IMPORT_LIB_PROSPERO: u64 = 0x6100_0049;
     /// A library this module exports.
     ///
-    /// **Not established for the current convention.** Retail main executables export
-    /// nothing or one library and no tag for it was identified, so this value is the legacy
+    /// **Not established for the prospero convention.** Retail main executables export
+    /// nothing or one library and no tag for it was identified, so this value is the orbis
     /// one in both conventions rather than a guess.
-    pub const EXPORT_LIB_CURRENT: u64 = 0x6100_004D;
+    pub const EXPORT_LIB_PROSPERO: u64 = 0x6100_004D;
 }
 
 /// The relocation form every module uses: `Elf64_Rela`.
@@ -187,12 +187,12 @@ pub const ENTRY_SIZE: u64 = 0x18;
 /// here is read as plausible offsets rather than as an error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Table {
-    /// Vendor tags for everything. What every loader examined accepts.
-    Legacy,
-    /// Standard tags for the standard tables, vendor tags for the vendor's own.
+    /// Vendor tags for everything. What every loader examined accepts (Orbis / PS4).
+    Orbis,
+    /// Standard tags for the standard tables, vendor tags for the vendor's own (Prospero / PS5).
     ///
     /// Every number in this convention was read out of a retail module rather than chosen.
-    Current,
+    Prospero,
 }
 
 /// The tag numbers for one convention, resolved together.
@@ -234,7 +234,7 @@ impl Tags {
     #[must_use]
     pub const fn of(table: Table) -> Self {
         match table {
-            Table::Legacy => Self {
+            Table::Orbis => Self {
                 strtab: vendor::STRTAB,
                 strsz: vendor::STRSZ,
                 symtab: vendor::SYMTAB,
@@ -250,12 +250,12 @@ impl Tags {
                 relasz: vendor::RELASZ,
                 relaent: vendor::RELAENT,
                 module_info: vendor::MODULE_INFO,
-                needed_module: vendor::NEEDED_MODULE_LEGACY,
-                module_attr: vendor::MODULE_ATTR_LEGACY,
-                import_lib: vendor::IMPORT_LIB_LEGACY,
-                export_lib: vendor::EXPORT_LIB_LEGACY,
+                needed_module: vendor::NEEDED_MODULE_ORBIS,
+                module_attr: vendor::MODULE_ATTR_ORBIS,
+                import_lib: vendor::IMPORT_LIB_ORBIS,
+                export_lib: vendor::EXPORT_LIB_ORBIS,
             },
-            Table::Current => Self {
+            Table::Prospero => Self {
                 strtab: standard::STRTAB,
                 strsz: standard::STRSZ,
                 symtab: standard::SYMTAB,
@@ -270,44 +270,44 @@ impl Tags {
                 rela: standard::RELA,
                 relasz: standard::RELASZ,
                 relaent: standard::RELAENT,
-                module_info: vendor::MODULE_INFO_CURRENT,
-                needed_module: vendor::NEEDED_MODULE_CURRENT,
-                module_attr: vendor::MODULE_ATTR_CURRENT,
-                import_lib: vendor::IMPORT_LIB_CURRENT,
-                export_lib: vendor::EXPORT_LIB_CURRENT,
+                module_info: vendor::MODULE_INFO_PROSPERO,
+                needed_module: vendor::NEEDED_MODULE_PROSPERO,
+                module_attr: vendor::MODULE_ATTR_PROSPERO,
+                import_lib: vendor::IMPORT_LIB_PROSPERO,
+                export_lib: vendor::EXPORT_LIB_PROSPERO,
             },
         }
     }
 
     /// Which convention a module is using, from the tags it actually carries.
     ///
-    /// # The current convention is identified by its *identity* tags, not its string table
+    /// # The prospero convention is identified by its *identity* tags, not its string table
     ///
     /// The first version of this decided on the string table alone, reasoning that it is
     /// mandatory and that the two conventions number it unmistakably - `5` against
-    /// `0x6100_0035`. Half of that is true. The legacy number is unmistakable; **`5` is also
+    /// `0x6100_0035`. Half of that is true. The orbis number is unmistakable; **`5` is also
     /// plain `DT_STRTAB`**, which every ordinary ELF on earth carries, so an unrelated shared
-    /// object was reported as a current-convention vendor module.
+    /// object was reported as a prospero-convention vendor module.
     ///
-    /// The current convention's identity tags - module info, needed module, import library -
+    /// The prospero convention's identity tags - module info, needed module, import library -
     /// are all in the vendor range and cannot be confused with anything standard. They are
-    /// what a current-convention module is recognised by. The string table stays as the
-    /// legacy test, where it genuinely is unambiguous.
+    /// what a prospero-convention module is recognised by. The string table stays as the
+    /// orbis test, where it genuinely is unambiguous.
     ///
     /// `None` for a module that carries neither, which is the honest answer for an ordinary
     /// ELF rather than a coin toss between two conventions it uses neither of.
     #[must_use]
     pub fn detect(entries: &[(u64, u64)]) -> Option<Table> {
-        let current = Self::of(Table::Current);
+        let prospero = Self::of(Table::Prospero);
         for (tag, _) in entries {
             if *tag == vendor::STRTAB {
-                return Some(Table::Legacy);
+                return Some(Table::Orbis);
             }
-            if *tag == current.module_info
-                || *tag == current.needed_module
-                || *tag == current.import_lib
+            if *tag == prospero.module_info
+                || *tag == prospero.needed_module
+                || *tag == prospero.import_lib
             {
-                return Some(Table::Current);
+                return Some(Table::Prospero);
             }
         }
         None
@@ -376,7 +376,7 @@ impl Info {
     #[must_use]
     pub fn from_entries(entries: &[(u64, u64)]) -> Self {
         let table = Tags::detect(entries);
-        let tags = Tags::of(table.unwrap_or(Table::Legacy));
+        let tags = Tags::of(table.unwrap_or(Table::Orbis));
         let mut info = Self {
             table,
             syment: ENTRY_SIZE,
@@ -678,11 +678,11 @@ pub const fn tag_name(tag: u64) -> Option<&'static str> {
         vendor::SYMENT => "DT_SCE_SYMENT",
         vendor::HASHSZ => "DT_SCE_HASHSZ",
         vendor::SYMTABSZ => "DT_SCE_SYMTABSZ",
-        vendor::MODULE_INFO | vendor::MODULE_INFO_CURRENT => "DT_SCE_MODULE_INFO",
-        vendor::NEEDED_MODULE_LEGACY | vendor::NEEDED_MODULE_CURRENT => "DT_SCE_NEEDED_MODULE",
-        vendor::MODULE_ATTR_LEGACY | vendor::MODULE_ATTR_CURRENT => "DT_SCE_MODULE_ATTR",
-        vendor::EXPORT_LIB_LEGACY => "DT_SCE_EXPORT_LIB",
-        vendor::IMPORT_LIB_LEGACY | vendor::IMPORT_LIB_CURRENT => "DT_SCE_IMPORT_LIB",
+        vendor::MODULE_INFO | vendor::MODULE_INFO_PROSPERO => "DT_SCE_MODULE_INFO",
+        vendor::NEEDED_MODULE_ORBIS | vendor::NEEDED_MODULE_PROSPERO => "DT_SCE_NEEDED_MODULE",
+        vendor::MODULE_ATTR_ORBIS | vendor::MODULE_ATTR_PROSPERO => "DT_SCE_MODULE_ATTR",
+        vendor::EXPORT_LIB_ORBIS => "DT_SCE_EXPORT_LIB",
+        vendor::IMPORT_LIB_ORBIS | vendor::IMPORT_LIB_PROSPERO => "DT_SCE_IMPORT_LIB",
         vendor::EXPORT_LIB_ATTR => "DT_SCE_EXPORT_LIB_ATTR",
         vendor::IMPORT_LIB_ATTR => "DT_SCE_IMPORT_LIB_ATTR",
         _ => return None,
@@ -789,39 +789,31 @@ mod tests {
 
     #[test]
     fn the_two_conventions_disagree_where_it_matters_and_agree_where_it_does_not() {
-        let legacy = Tags::of(Table::Legacy);
-        let current = Tags::of(Table::Current);
+        let orbis = Tags::of(Table::Orbis);
+        let prospero = Tags::of(Table::Prospero);
 
         // The standard tables get different numbers.
-        assert_ne!(legacy.strtab, current.strtab);
-        assert_ne!(legacy.symtab, current.symtab);
-        assert_ne!(legacy.rela, current.rela);
+        assert_ne!(orbis.strtab, prospero.strtab);
+        assert_ne!(orbis.symtab, prospero.symtab);
+        assert_ne!(orbis.rela, prospero.rela);
 
-        // The vendor's own tables get vendor tags in both - but **not the same ones**. This
-        // assertion originally read `assert_eq!`, which is the bug this file was written
-        // with: the low range belongs to the legacy convention and the high range to the
-        // current one, and treating them as shared reports zero import libraries on a
-        // module carrying three hundred and fifty-two.
-        assert_ne!(legacy.import_lib, current.import_lib);
-        assert_ne!(legacy.module_info, current.module_info);
-        assert_ne!(legacy.needed_module, current.needed_module);
+        // The vendor's own tables get vendor tags in both - but **not the same ones**.
+        assert_ne!(orbis.import_lib, prospero.import_lib);
+        assert_ne!(orbis.module_info, prospero.module_info);
+        assert_ne!(orbis.needed_module, prospero.needed_module);
 
         // Two genuinely are shared, and both were read from retail material carrying them
         // alongside standard tags.
-        assert_eq!(legacy.symtabsz, current.symtabsz);
-        assert_eq!(legacy.hashsz, current.hashsz);
+        assert_eq!(orbis.symtabsz, prospero.symtabsz);
+        assert_eq!(orbis.hashsz, prospero.hashsz);
     }
 
     #[test]
-    fn the_string_table_alone_identifies_only_the_legacy_convention() {
-        // This test used to assert that `standard::STRTAB` means the current convention, and
-        // that assertion **was the bug**: `5` is also plain `DT_STRTAB`, so it reported every
-        // ordinary shared object as a vendor module. Corrected rather than deleted, so the
-        // distinction it now states cannot be quietly re-lost.
+    fn the_string_table_alone_identifies_only_the_orbis_convention() {
         assert_eq!(
             Tags::detect(&[(vendor::STRTAB, 0x100)]),
-            Some(Table::Legacy),
-            "the legacy number is in the vendor range and means only one thing"
+            Some(Table::Orbis),
+            "the orbis number is in the vendor range and means only one thing"
         );
         assert_eq!(
             Tags::detect(&[(standard::STRTAB, 0x100)]),
@@ -833,17 +825,17 @@ mod tests {
     }
 
     #[test]
-    fn a_current_convention_table_is_not_read_with_vendor_tags() {
+    fn a_prospero_convention_table_is_not_read_with_vendor_tags() {
         // The failure this exists to prevent. Read with the wrong convention, every table
         // address comes back zero and the module looks empty rather than misparsed.
         let entries = [
             (standard::STRTAB, 0x1000),
             (standard::SYMTAB, 0x2000),
             (standard::RELA, 0x3000),
-            (vendor::IMPORT_LIB_CURRENT, 0x0001_0000_0000_0020),
+            (vendor::IMPORT_LIB_PROSPERO, 0x0001_0000_0000_0020),
         ];
         let info = Info::from_entries(&entries);
-        assert_eq!(info.table, Some(Table::Current));
+        assert_eq!(info.table, Some(Table::Prospero));
         assert_eq!(info.strtab, 0x1000);
         assert_eq!(info.symtab, 0x2000);
         assert_eq!(info.rela, 0x3000);
@@ -851,14 +843,14 @@ mod tests {
     }
 
     #[test]
-    fn a_legacy_table_reads_the_same_fields_from_different_numbers() {
+    fn an_orbis_table_reads_the_same_fields_from_different_numbers() {
         let entries = [
             (vendor::STRTAB, 0x1000),
             (vendor::SYMTAB, 0x2000),
             (vendor::RELA, 0x3000),
         ];
         let info = Info::from_entries(&entries);
-        assert_eq!(info.table, Some(Table::Legacy));
+        assert_eq!(info.table, Some(Table::Orbis));
         assert_eq!(info.strtab, 0x1000);
         assert_eq!(info.symtab, 0x2000);
         assert_eq!(info.rela, 0x3000);
@@ -873,7 +865,7 @@ mod tests {
             (vendor::STRTAB, 0x1000),
             (standard::NEEDED, 0x10),
             (standard::NEEDED, 0x20),
-            (vendor::IMPORT_LIB_LEGACY, 0x0002_0000_0000_0030),
+            (vendor::IMPORT_LIB_ORBIS, 0x0002_0000_0000_0030),
         ];
         let info = Info::from_entries(&entries);
         assert_eq!(info.needed.len(), 2, "DT_NEEDED entries");
@@ -1116,13 +1108,13 @@ mod tests {
     fn each_convention_is_recognised_by_something_only_it_can_carry() {
         assert_eq!(
             Tags::detect(&[(vendor::STRTAB, 0)]),
-            Some(Table::Legacy),
-            "the legacy string-table tag is in the vendor range and unambiguous"
+            Some(Table::Orbis),
+            "the orbis string-table tag is in the vendor range and unambiguous"
         );
         assert_eq!(
-            Tags::detect(&[(standard::STRTAB, 0), (vendor::IMPORT_LIB_CURRENT, 0)]),
-            Some(Table::Current),
-            "the current convention is known by its identity tags, which are vendor-range"
+            Tags::detect(&[(standard::STRTAB, 0), (vendor::IMPORT_LIB_PROSPERO, 0)]),
+            Some(Table::Prospero),
+            "the prospero convention is known by its identity tags, which are vendor-range"
         );
     }
 }

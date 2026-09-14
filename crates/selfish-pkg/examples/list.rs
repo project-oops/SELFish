@@ -86,20 +86,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Which generation do real files actually use? Worth counting rather than assuming: the
     // one eboot examined by hand reported the *previous* generation, on a current-generation
     // package, which is either a general truth or a property of that one title.
-    let mut current = 0_u32;
-    let mut previous = 0_u32;
+    let mut prospero = 0_u32;
+    let mut orbis = 0_u32;
     let mut plain = 0_u32;
     for found in &files {
         let Ok(raw) = inner.contents(found.inode) else {
             continue;
         };
         match selfish_container::Container::parse(&raw) {
-            Ok(c) if c.generation() == selfish_abi::Generation::Current => current += 1,
-            Ok(_) => previous += 1,
+            Ok(c) if c.generation() == selfish_abi::Generation::Prospero => prospero += 1,
+            Ok(_) => orbis += 1,
             Err(_) => plain += 1,
         }
     }
-    println!("containers: {current} current generation, {previous} previous, {plain} neither");
+    println!("containers: {prospero} prospero, {orbis} orbis, {plain} neither");
 
     if let Some(found) = files.iter().find(|f| f.path.ends_with("eboot.bin")) {
         let raw = inner.contents(found.inode)?;

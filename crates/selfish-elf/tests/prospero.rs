@@ -184,22 +184,22 @@ fn build(bytes: &mut Vec<u8>, table: Table, generation: Generation) -> dynlib::I
 }
 
 #[test]
-fn a_current_convention_module_reads_back_through_the_reader() {
-    let dir = std::env::temp_dir().join("selfish-current-test");
+fn a_prospero_convention_module_reads_back_through_the_reader() {
+    let dir = std::env::temp_dir().join("selfish-prospero-test");
     let Some(mut bytes) = link(&dir) else {
         return;
     };
-    let installed = build(&mut bytes, Table::Current, Generation::Current);
+    let installed = build(&mut bytes, Table::Prospero, Generation::Prospero);
 
     // The half that distinguishes the conventions: the tables are *mapped*, so the tags hold
     // virtual addresses rather than offsets and the segment is an ordinary `PT_LOAD`.
     assert_ne!(
         installed.table_base, 0,
-        "the current convention places the tables in the address space"
+        "the prospero convention places the tables in the address space"
     );
 
     let elf = selfish_elf::Elf::parse(&bytes).expect("the rebuilt module");
-    assert_eq!(elf.generation(), Some(Generation::Current));
+    assert_eq!(elf.generation(), Some(Generation::Prospero));
     assert!(
         elf.vendor_segment().is_none(),
         "there is no PT_SCE_DYNLIBDATA under this convention, which is why `tables` exists"
@@ -209,7 +209,7 @@ fn a_current_convention_module_reads_back_through_the_reader() {
         .tables()
         .expect("a readable dynamic table")
         .expect("a module that carries vendor tables");
-    assert_eq!(info.table, Some(Table::Current));
+    assert_eq!(info.table, Some(Table::Prospero));
 
     // Rebased: the tags held addresses and what comes back are offsets into the segment.
     assert!(
@@ -240,15 +240,15 @@ fn the_two_conventions_disagree_about_the_bytes_and_agree_about_the_meaning() {
     // The same source, built both ways. Every tag number and every table value differs; the
     // imports that come back out are identical. That is the whole claim of having two
     // conventions in one crate, and nothing else in the suite states it end to end.
-    let dir = std::env::temp_dir().join("selfish-current-both");
+    let dir = std::env::temp_dir().join("selfish-conventions-both");
     let Some(linked) = link(&dir) else {
         return;
     };
 
-    let mut legacy = linked.clone();
-    build(&mut legacy, Table::Legacy, Generation::Previous);
-    let mut current = linked;
-    build(&mut current, Table::Current, Generation::Current);
+    let mut orbis = linked.clone();
+    build(&mut orbis, Table::Orbis, Generation::Orbis);
+    let mut prospero = linked;
+    build(&mut prospero, Table::Prospero, Generation::Prospero);
 
     let read = |bytes: &[u8]| {
         let elf = selfish_elf::Elf::parse(bytes).expect("a module");
@@ -269,14 +269,14 @@ fn the_two_conventions_disagree_about_the_bytes_and_agree_about_the_meaning() {
         (entries, names)
     };
 
-    let (legacy_entries, legacy_imports) = read(&legacy);
-    let (current_entries, current_imports) = read(&current);
+    let (orbis_entries, orbis_imports) = read(&orbis);
+    let (prospero_entries, prospero_imports) = read(&prospero);
 
     assert_eq!(
-        legacy_imports, current_imports,
+        orbis_imports, prospero_imports,
         "the same module, so the same imports"
     );
-    assert!(!legacy_imports.is_empty(), "and there are some to compare");
+    assert!(!orbis_imports.is_empty(), "and there are some to compare");
 
     let tags = |entries: &[(u64, u64)]| {
         entries
@@ -285,29 +285,29 @@ fn the_two_conventions_disagree_about_the_bytes_and_agree_about_the_meaning() {
             .collect::<std::collections::BTreeSet<_>>()
     };
     assert_ne!(
-        tags(&legacy_entries),
-        tags(&current_entries),
+        tags(&orbis_entries),
+        tags(&prospero_entries),
         "the conventions use different tag numbers, which is the thing that gets confused"
     );
 }
 
 #[test]
-fn the_display_library_gets_its_measured_version_only_on_the_previous_generation() {
+fn the_display_library_gets_its_measured_version_only_on_the_orbis_generation() {
     // `data/library-versions.tsv` has exactly one row and this is what it is for: declaring
-    // 1.1 for this library on the previous generation binds a module to the current
+    // 1.1 for this library on the orbis generation binds a module to the prospero
     // generation's registration, which has no way to present a frame. The module runs and
     // draws nothing, which is the worst kind of wrong.
-    let dir = std::env::temp_dir().join("selfish-current-version");
+    let dir = std::env::temp_dir().join("selfish-display-version");
     let Some(linked) = link(&dir) else {
         return;
     };
 
     let version_for = |generation| {
         let mut bytes = linked.clone();
-        build(&mut bytes, Table::Legacy, generation);
+        build(&mut bytes, Table::Orbis, generation);
         let elf = selfish_elf::Elf::parse(&bytes).expect("a module");
         let entries = elf.dynamic_entries().expect("a dynamic table");
-        let tags = dynamic::Tags::of(Table::Legacy);
+        let tags = dynamic::Tags::of(Table::Orbis);
         entries
             .iter()
             .filter(|(tag, _)| *tag == tags.needed_module)
@@ -317,6 +317,6 @@ fn the_display_library_gets_its_measured_version_only_on_the_previous_generation
             .expect("a needed-module entry for the display library")
     };
 
-    assert_eq!(version_for(Generation::Previous), 0x0000, "0.0");
-    assert_eq!(version_for(Generation::Current), 0x0101, "1.1");
+    assert_eq!(version_for(Generation::Orbis), 0x0000, "0.0");
+    assert_eq!(version_for(Generation::Prospero), 0x0101, "1.1");
 }

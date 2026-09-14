@@ -15,7 +15,12 @@ New here? The [root README](../README.md) has the pitch. Then:
 
 ## Guide
 
-- **[reading.md](features/reading.md)** - point it at a file and find out what is there.
+- **[features/README.md](features/README.md)** - Feature matrix and packaging cookbook index.
+- **[features/user-guide.md](features/user-guide.md)** - Four-axis command syntax, portable mode, and diagnostic tools.
+- **[features/eboot.md](features/eboot.md)** - Signed executable container wrapping (`--format eboot`).
+- **[features/title.md](features/title.md)** - Full retail title directory layout (`--format title`).
+- **[features/pkg.md](features/pkg.md)** - Encrypted PFS package authoring (`--format pkg`).
+- **[features/reading.md](features/reading.md)** - point it at a file and find out what is there.
   Containers, executables, imports, relocations, packages, and what a title says about
   itself.
 - **[writing.md](features/writing.md)** - the steps between a compiler and something the

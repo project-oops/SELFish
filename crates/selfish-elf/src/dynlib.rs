@@ -159,8 +159,8 @@ const LIBRARY_VERSIONS: &str = include_str!("../../../data/library-versions.tsv"
 #[must_use]
 pub fn module_version(library: &str, generation: Generation) -> (u8, u8) {
     let wanted = match generation {
-        Generation::Current => "5",
-        Generation::Previous => "4",
+        Generation::Prospero => "5",
+        Generation::Orbis => "4",
     };
     for line in LIBRARY_VERSIONS.lines() {
         if line.starts_with('#') {
@@ -780,11 +780,11 @@ pub fn install(
     init: Option<u64>,
 ) -> Result<Installed, BuildError> {
     // Appended past everything else, aligned so the segment starts somewhere a loader is
-    // comfortable with: legacy unmapped vendor segments use 16-byte alignment, while
-    // current-generation mapped PT_LOAD segments require page alignment (0x4000).
+    // comfortable with: orbis unmapped vendor segments use 16-byte alignment, while
+    // prospero-generation mapped PT_LOAD segments require page alignment (0x4000).
     let align = match table {
-        Table::Legacy => 16,
-        Table::Current => usize::try_from(crate::layout::ALLOCATION_GRANULARITY).unwrap_or(0x4000),
+        Table::Orbis => 16,
+        Table::Prospero => usize::try_from(crate::layout::ALLOCATION_GRANULARITY).unwrap_or(0x4000),
     };
     let padding = module
         .len()
@@ -814,8 +814,8 @@ pub fn install(
         //
         // The two conventions differ here as much as they differ in tag numbers, and the two
         let base = match table {
-            Table::Legacy => 0,
-            Table::Current => {
+            Table::Orbis => 0,
+            Table::Prospero => {
                 let first_load_bias = elf
                     .program_headers()
                     .iter()
@@ -1273,14 +1273,14 @@ mod tests {
         .expect("a segment");
 
         let entries = segment.entries(
-            Table::Legacy,
-            Generation::Previous,
+            Table::Orbis,
+            Generation::Orbis,
             0,
             None,
             crate::ObjectType::SharedLibrary,
         );
         let info = dynamic::Info::from_entries(&entries);
-        assert_eq!(info.table, Some(Table::Legacy));
+        assert_eq!(info.table, Some(Table::Orbis));
 
         let imports = dynamic::imports(&segment.bytes, &info).expect("imports");
         assert_eq!(imports.len(), 1, "one undefined symbol, so one import");
@@ -1359,8 +1359,8 @@ mod tests {
         .expect("a segment");
 
         let entries = segment.entries(
-            Table::Legacy,
-            Generation::Previous,
+            Table::Orbis,
+            Generation::Orbis,
             0,
             None,
             crate::ObjectType::SharedLibrary,
@@ -1398,13 +1398,13 @@ mod tests {
         .expect("a segment");
 
         let entries = segment.entries(
-            Table::Legacy,
-            Generation::Previous,
+            Table::Orbis,
+            Generation::Orbis,
             0,
             None,
             crate::ObjectType::SharedLibrary,
         );
-        let tags = dynamic::Tags::of(Table::Legacy);
+        let tags = dynamic::Tags::of(Table::Orbis);
         let strtab = entries.iter().position(|(tag, _)| *tag == tags.strtab);
         let module_info = entries.iter().position(|(tag, _)| *tag == tags.module_info);
         // The fingerprint precedes it and names nothing; nothing else may.
@@ -1439,13 +1439,13 @@ mod tests {
         .expect("a segment");
 
         let entries = segment.entries(
-            Table::Legacy,
-            Generation::Previous,
+            Table::Orbis,
+            Generation::Orbis,
             0,
             None,
             crate::ObjectType::SharedLibrary,
         );
-        let tags = dynamic::Tags::of(Table::Legacy);
+        let tags = dynamic::Tags::of(Table::Orbis);
         assert!(entries.iter().any(|(tag, _)| *tag == tags.pltrel));
         assert!(!entries.iter().any(|(tag, _)| *tag == tags.jmprel));
         assert!(!entries.iter().any(|(tag, _)| *tag == tags.rela));
@@ -1477,8 +1477,8 @@ mod tests {
         let one = build(linked, "probe", &libraries(), &resolve_all)
             .expect("a segment")
             .entries(
-                Table::Legacy,
-                Generation::Previous,
+                Table::Orbis,
+                Generation::Orbis,
                 0,
                 None,
                 crate::ObjectType::SharedLibrary,
@@ -1487,8 +1487,8 @@ mod tests {
         let both = build(linked, "probe", &two, &resolve_all)
             .expect("a segment")
             .entries(
-                Table::Legacy,
-                Generation::Previous,
+                Table::Orbis,
+                Generation::Orbis,
                 0,
                 None,
                 crate::ObjectType::SharedLibrary,
@@ -1516,16 +1516,16 @@ mod tests {
         )
         .expect("a segment");
 
-        let legacy = segment.entries(
-            Table::Legacy,
-            Generation::Previous,
+        let orbis = segment.entries(
+            Table::Orbis,
+            Generation::Orbis,
             0,
             None,
             crate::ObjectType::SharedLibrary,
         );
-        let current = segment.entries(
-            Table::Current,
-            Generation::Previous,
+        let prospero = segment.entries(
+            Table::Prospero,
+            Generation::Prospero,
             0x1000,
             None,
             crate::ObjectType::SharedLibrary,
@@ -1540,13 +1540,13 @@ mod tests {
                 .copied()
                 .expect("a string table")
         };
-        let (legacy_tag, legacy_value) = find(&legacy, Table::Legacy);
-        let (current_tag, current_value) = find(&current, Table::Current);
-        assert_ne!(legacy_tag, current_tag, "different tag numbers");
+        let (orbis_tag, orbis_value) = find(&orbis, Table::Orbis);
+        let (prospero_tag, prospero_value) = find(&prospero, Table::Prospero);
+        assert_ne!(orbis_tag, prospero_tag, "different tag numbers");
         assert_eq!(
-            current_value - legacy_value,
+            prospero_value - orbis_value,
             0x1000,
-            "and the current convention's values are addresses"
+            "and the prospero convention's values are addresses"
         );
     }
 
@@ -1570,15 +1570,15 @@ mod tests {
         .expect("a segment");
 
         let without = segment.entries(
-            Table::Legacy,
-            Generation::Previous,
+            Table::Orbis,
+            Generation::Orbis,
             0,
             None,
             crate::ObjectType::SharedLibrary,
         );
         let with = segment.entries(
-            Table::Legacy,
-            Generation::Previous,
+            Table::Orbis,
+            Generation::Orbis,
             0,
             Some(0x2000),
             crate::ObjectType::SharedLibrary,
@@ -1609,10 +1609,10 @@ mod tests {
 
         let exports = |kind| {
             segment
-                .entries(Table::Legacy, Generation::Previous, 0, None, kind)
+                .entries(Table::Orbis, Generation::Orbis, 0, None, kind)
                 .iter()
                 .any(|(tag, _)| {
-                    *tag == dynamic::vendor::EXPORT_LIB_LEGACY
+                    *tag == dynamic::vendor::EXPORT_LIB_ORBIS
                         || *tag == dynamic::vendor::EXPORT_LIB_ATTR
                 })
         };
@@ -1667,15 +1667,12 @@ mod tests {
         // and a mismatch resolves *nothing* from that library - silently. This library is the
         // one that decides whether anything appears on screen, so the symptom is a module
         // that runs perfectly and draws a black window.
+        assert_eq!(module_version("libSceVideoOut", Generation::Orbis), (0, 0));
         assert_eq!(
-            module_version("libSceVideoOut", Generation::Previous),
-            (0, 0)
-        );
-        assert_eq!(
-            module_version("libSceVideoOut", Generation::Current),
+            module_version("libSceVideoOut", Generation::Prospero),
             (1, 1)
         );
-        assert_eq!(module_version("libkernel", Generation::Previous), (1, 1));
+        assert_eq!(module_version("libkernel", Generation::Orbis), (1, 1));
     }
 
     #[test]
@@ -1702,11 +1699,11 @@ mod tests {
         )
         .expect("a segment");
 
-        let tags = dynamic::Tags::of(Table::Legacy);
+        let tags = dynamic::Tags::of(Table::Orbis);
         let version_of = |generation| {
             segment
                 .entries(
-                    Table::Legacy,
+                    Table::Orbis,
                     generation,
                     0,
                     None,
@@ -1717,8 +1714,8 @@ mod tests {
                 .map(|(_, value)| (value >> 32) & 0xFFFF)
                 .expect("a needed-module entry")
         };
-        assert_eq!(version_of(Generation::Previous), 0x0000, "0.0");
-        assert_eq!(version_of(Generation::Current), 0x0101, "1.1");
+        assert_eq!(version_of(Generation::Orbis), 0x0000, "0.0");
+        assert_eq!(version_of(Generation::Prospero), 0x0101, "1.1");
     }
 
     /// An import library's attribute word is not the export one, and 0x1 is the bug.

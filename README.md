@@ -2,210 +2,114 @@
   <img src="assets/logo.png" alt="SELFish" width="200">
 </p>
 
-# selfish
+# SELFish
 
-**Rust libraries and a command-line tool for the platform's own file formats** - plus the
-linker scripts that go with them. The target-side runtime that used to live here now lives in
-the sibling `oops-sdk`.
+**Clean-Room File Format Compiler, Container Signer, and Packaging Toolchain.**
+
+SELFish is a clean-room Rust toolchain for reading, writing, and authoring 8th and 9th generation console file formats (Orbis and Prospero). It transforms standard ELF binaries produced by compilers into signed executables (`eboot.bin`), structured title directories with conforming metadata (`param.json`, `keystone`, `nptitle.dat`), and installable packages (`.pkg`).
 
 Site: **[project-oops.github.io/SELFish](https://project-oops.github.io/SELFish/)**
 
-**Reading:** point it at a file and it says what is there - what an executable imports, how its
-relocations break down, what is inside a package, what a title says about itself.
+| 📖 **[User Guide & Packaging Cookbook](docs/USER_GUIDE.md)** | ⚙️ **[Technical Reference & Format Specs](docs/README.md)** |
+| :--- | :--- |
+| *Copy-paste recipes for eboot, title directory, PKG, and ELF audit.* | *Crypto headers, container layout, NID hashes, and decision records.* |
 
-**Writing:** hand it a freshly compiled binary and it produces something the hardware will install -
-the platform identity no linker sets, the signed-executable container, the filesystem image, and
-the package around it.
+---
 
-Between a compiler and the hardware there are a handful of format steps. This does all of them, and the readers
-that let you check each one.
+## Role in THE LOOP
 
-Named for what it mostly produces: a container that resembles a signed executable without
-being one. A **SELF-ish** file, declaring itself fake in the field the format provides for
-exactly that.
-
-## What is here
-
-A dependency spine, in build order. Each crate depends only on those above it, and the split
-is not organisational - it is what keeps cryptography out of a loader.
-
-| crate | what it holds |
-|---|---|
-| `selfish-abi` | the generation split. Depends on nothing |
-| `selfish-nid` | the import hash, and the library and module ids a symbol name encodes |
-| `selfish-elf` | the executable format: headers and the identity a loader checks, segments, sections, the vendor dynamic table read **and** written, relocations, and the segment layout rules |
-| `selfish-container` | the signed-executable wrapper, both directions |
-| `selfish-title` | what a title says about itself: `PARAM.SFO` and `param.json` |
-| `selfish-pfs` | the filesystem inside a package |
-| `selfish-pkg` | packages. The only crate that pulls in RSA, AES and zlib |
-| `selfish-cli` | one binary over the above, so the libraries can be pointed at real files |
-| `data/` | the format tables - one row per field, each with a header naming where it came from |
-| `link/` | the linker scripts, one per output shape |
-
-## Try it
-
-Reading:
+Within the [OOPS ecosystem](../docs/THE_LOOP.md), SELFish is the **Packaging and Binary Layout Engine**:
 
 ```
-selfish elf       <file>   describe an executable, unwrapping a container if there is one
-selfish imports   <file>   what it imports, resolved to library and module names
-selfish reloc     <file>   census its relocation tables, and join the linkage table to the imports
-selfish sections  <file>   an object's sections and its link-time symbol table
-selfish container <file>   the container's entries, segment by segment
-selfish title     <file>   what a title says about itself, from a package, a .sfo or a .json
-selfish pkg       <file>   what is inside a package
-selfish extract   <file> <dir>
-selfish audit     <file>   check a real container against the format table, and say which
-                           rows it settles - a contradiction is a finding, not a new fact
-selfish derive    <file>...  re-derive what a package's entries mean, from packages you supply
-selfish nid       <name>...
+Compiled ELF (from oops-apps or obSCEne)
+                 │
+                 ▼
+┌────────────────────────────────────────┐
+│ SELFish Toolchain                      │
+│ - Wraps ELF in SELF container header   │
+│ - Synthesizes param.json & keystone    │
+│ - Sets BIG_APP category & permissions  │
+│ - Creates conforming title layout      │
+└────────────────┬───────────────────────┘
+                 │
+       [Conforming Container]
+                 │
+                 ├───────────────────────────────┐
+                 ▼                               ▼
+     Prosperous (pros restore)        Orbistoun (orbistoun run)
+     Deployed to Physical PS5         Executed in Native Emulator
 ```
 
-Building - one invocation, four axes:
+1. **Eliminating Leaked SDK Tools**: Traditional homebrew relies on leaked vendor utilities (`orbis-pub-cmd`) to create packages. SELFish replaces them with 100% clean-room, mathematically verified Rust libraries.
+2. **First-Party Dogfooding**: Every title in [oops-apps](../oops-apps/) and every test leg in [obSCEne](../obscene/) is packaged via `selfish`.
+3. **Format Integrity**: Because both the real console and the [Orbistoun](../orbistoun/) emulator read the containers authored by SELFish, format inconsistencies are caught at build time.
 
-```
-selfish --input <file> --target <orbis|neo|prospero|trinity>
-        --format <elf|prx|eboot|title|pkg> --output <path>
-        [--privilege <app|sysmodule|system|root>] [--sdk VERSION|ALIAS]
-        [--category <big-app|system-app|mini-app|daemon|media-app>]
-        [--title-id ID] [--title NAME] [--content-id ID] [--title-version NN.NN]
-        [--icon FILE] [--deeplink URI] [--entry ID=FILE]...
-```
+---
 
-`--target` carries the generation, so nothing passes one: `orbis`/`neo` are the previous
-generation, `prospero`/`trinity` the current. The two refreshes are **not** synonyms for the
-base machines - an artifact for any previous-generation console is `orbis`.
+## Developer Quickstart
 
-Each format is a pure function of its input: it writes exactly `--output` and puts nothing
-beside it, and none needs a directory the caller prepares or cleans.
-
-```
---format elf     the executable, stamped with the target's platform identity
---format prx     a shared library, stamped as one
---format eboot   the executable inside a signed-executable container
---format title   a title directory at <output>/<TITLE_ID>/ - the shape
-                 sceAppInstUtilAppInstallTitleDir takes
---format pkg     an installable package. Nothing needs supplying: the entry name table and
-                 the playgo chunk table are both computed (D099)
-```
-
-`--category` applies to `title` and `pkg` only and defaults to `system-app`; it decides the
-memory budget and whether the artifact owns the display, so it is a build lever with runtime
-consequences rather than a label.
-
-`--content-id`, `--title-version`, `--icon` and `--deeplink` are title metadata, so they too
-apply to `title` and `pkg` only and are refused elsewhere. `--content-id` is not cosmetic for a
-package - the filesystem image is keyed by it - and defaults, announced, to an id built from the
-title id.
-
-`--privilege` and `--sdk` apply to `eboot`, `title` and `pkg` - the formats that build a
-container - and are refused with `elf` and `prx`, which build none. `--privilege` defaults to
-`app`; `--sdk` takes a literal version or an alias from `data/sdk-versions.toml`.
-
-Package layers - the filesystem image and the package, each on its own:
-
-```
-selfish image     --root <dir> -o <file> --content-id ID
-                           build the filesystem image a package carries, from a directory
-selfish pack      (--image <file> | --dir <dir>) -o <file> --content-id ID
-                  [--title-id ID] [--title NAME] [--passcode P] [--entry ID=FILE]...
-                           assemble a package; refuses to invent what it cannot account for.
-                           --dir does the whole chain from a directory of files in one step
-selfish shader    [--stage compute|pixel|vertex] (--code <file> | --shader-size N)
-                  [--target 0xN] [--sh-reg OFF=VAL]... -o <file>
-                           build an AGC shader container - the header sceAgcCreateShader
-                           takes. The layout is this tool's (D103); the registers are the
-                           shader's, passed in with --sh-reg. --stage also takes a raw type
-                           value for a stage without a citable constant
-```
-
-**[docs/features/writing.md](docs/features/writing.md) runs one payload through each of
-these**, with the real output of each command, including the one gap `pack` reports rather
-than fills, and why.
-
-## What is not here
-
-**A consuming project's data.** The import hash is a format and lives here. A corpus of mined
-identifiers is a measurement product and stays with the project that mines it.
-
-**Anything retail.** The public fake-package keyset only, and nothing here should be made to
-work on signed material.
-
-## Provenance
-
-Every structure comes from published documentation or open-source implementations, cited by
-project and commit in **[ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md)**. No format here was worked
-out by reading a vendor binary, and no vendor signature is forged.
-
-Real files are an **oracle, never a source** - used to confirm or refute a structure taken from
-cited sources, never to derive one - and none of that material is committed here.
-
-The rules in full, including what *is* signed and why that is the opposite of a forgery, are in
-**[CLAUDE.md](CLAUDE.md)** and the shared
-**[OOPS conventions](https://github.com/project-oops/OOPS/blob/main/docs/CONVENTIONS.md)**.
-
-## Working on it
-
-See [CLAUDE.md](CLAUDE.md) for the constraints, [docs/DECISIONS.md](docs/DECISIONS.md) for why
-things are the way they are, and [docs/BACKLOG.md](docs/BACKLOG.md) for what is missing and
-what blocks it.
-
-**The recommended way in is [OOPS](https://github.com/project-oops/OOPS)**, which holds all four
-side by side and carries one entry point over them:
-
+### 1. Build and Verify
 ```bash
-./bin/oops check selfish      # also: build, test, fmt, clean
+./bin/selfish check    # compiles crates and runs verification tests
 ```
+The compiled binary lives at `target/release/selfish.exe` (Windows) or `target/release/selfish` (Linux/macOS).
 
-That relays to this repository's own entry point rather than reimplementing anything, so the
-two cannot disagree - and it is what CI runs, for the same reason.
-[docs/BUILDING.md](https://github.com/project-oops/OOPS/blob/main/docs/BUILDING.md) has every verb.
+### 2. Common Packaging Workflows
 
-**From inside this repository the entry point is `bin/selfish`**, carrying the same verbs:
-
+#### Author a Full Title Directory
 ```bash
-./bin/selfish check   # everything that has to pass. What CI runs.
+selfish --input gl-cube.elf \
+        --target prospero \
+        --format title \
+        --title-id GLCB00001 \
+        --title "GL Cube" \
+        --category big-app \
+        --output build/title
+```
+Automatically generates:
+- `build/title/GLCB00001/eboot.bin` (Signed executable)
+- `build/title/GLCB00001/sce_sys/param.json` (Title metadata)
+- `build/title/GLCB00001/sce_sys/keystone` (Fake-signed passcode anchor)
+- `build/title/GLCB00001/sce_sys/icon0.png` (Default application icon)
+- `build/title/GLCB00001/sce_sys/nptitle.dat` and `pfs-version.dat`
+
+#### Create a Signed `eboot.bin`
+```bash
+selfish --input payload.elf --format eboot --output eboot.bin
 ```
 
-`check` is `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test
---workspace`, and a doc build. `unsafe_code` is forbidden workspace-wide.
+#### Inspect Binary Files
+```bash
+selfish elf <file>         # inspect ELF headers, segments, and dynamic tags
+selfish imports <file>     # list imported library symbols resolved by NID hash
+selfish title <file>       # read title metadata from param.json or PARAM.SFO
+selfish pkg <file>         # inspect contents of an installable package
+```
 
-It is a script rather than a pipeline because a pipeline swallowed a failure twice - `cargo test
-| grep` reports the exit status of `grep`. The script runs each step under `set -e` and filters
-the output afterwards.
+---
 
-The integration tests that link shell out to `clang` and `ld.lld` to build a module with the
-script here and read the result back. They **skip** rather than fail when those are absent - they are not
-build dependencies, and a test that fails on a clean machine teaches people to ignore failures.
-`./bin/selfish links` runs those tests and fails if they skipped, which is the only way a run
-can claim to have checked the linker script.
+## Architecture & Crates
 
-**Everything here depends on nothing outside this repository, and that is the point.** The
-library crates never did, and `selfish-cli` no longer does either: a clone of only this
-repository builds with a Rust toolchain and nothing else. It briefly took `oops-build` and
-`oops-log` from `oops-libs` for a `--version` commit stamp and a logging subscriber; both are
-gone (D104), the stamp reimplemented in a few lines of git and the unused logging removed. See
-**[docs/BUILDING.md](docs/BUILDING.md)** for the full account of every verb and what CI runs.
+A modular crate spine where each layer depends only on those below it:
 
-## Licence
-
-Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option -
-the Rust ecosystem convention.
-
-## Part of OOPS
-
-SELFish is one of four projects aimed at the same platform's operating system. They are developed
-together in **[OOPS](https://github.com/project-oops/OOPS)** and released separately.
-
-| | |
+| Crate | Purpose |
 |---|---|
-| **[Orbistoun](https://github.com/project-oops/Orbistoun)** | the emulator - attempts to reimplement what a title runs on |
-| **[obSCEne](https://github.com/project-oops/obSCEne)** | the probe - a guest that interrogates whatever runs it and reports what it found |
-| **[Prosperous](https://github.com/project-oops/Prosperous)** | the instrument - remote management for anything that runs Orbis software |
+| **`selfish-abi`** | Target generation constants (`orbis`, `neo`, `prospero`, `trinity`). |
+| **`selfish-nid`** | 64-bit Murmur/SHA symbol NID hashing and candidate cracking. |
+| **`selfish-elf`** | ELF64 header validation, vendor dynamic table, and relocation tables. |
+| **`selfish-container`** | SELF (Signed ELF) container reading and writing. |
+| **`selfish-title`** | Title metadata generation (`param.json` and legacy `PARAM.SFO`). |
+| **`selfish-pfs`** | PlayGo / PFS package filesystem structure. |
+| **`selfish-pkg`** | Cryptographic authoring and packaging of `.pkg` archives. |
+| **`selfish-cli`** | The unified `selfish` command-line executable. |
 
-**Developing any of them?** Clone [OOPS](https://github.com/project-oops/OOPS) - it holds all four side by side, arranged so
-they build against each other. Cloning this repository alone gets you this project; it is
-the right thing for using it and the wrong thing for changing it.
+---
 
-Shared rules - provenance, naming, decision logs, worklogs, gates - live in
-[the OOPS conventions](https://github.com/project-oops/OOPS/blob/main/docs/CONVENTIONS.md) and are not restated here.
+## Cross-Project Links
+
+- **[Master OOPS Front Door](../README.md)** — Collection overview and building instructions.
+- **[The OOPS Loop](../docs/THE_LOOP.md)** — Master ecosystem loop specification.
+- **[oops-apps](../oops-apps/)** — Applications packaged using SELFish.
+- **[obSCEne](../obscene/)** — Conformance probe legs packaged using SELFish.
+- **[Prosperous](../prosperous/)** — Deployment tool that transfers SELFish title trees.
+- **[Orbistoun](../orbistoun/)** — Clean-room emulator executing SELFish containers.

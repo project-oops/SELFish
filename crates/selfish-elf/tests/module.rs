@@ -177,15 +177,15 @@ fn a_linked_module_becomes_one_the_reader_understands() {
     let installed = dynlib::install(
         &mut bytes,
         &segment,
-        Table::Legacy,
-        selfish_abi::Generation::Previous,
+        Table::Orbis,
+        selfish_abi::Generation::Orbis,
         init,
     )
     .expect("an installed module");
     assert!(installed.tags > 0);
     assert_eq!(
         installed.table_base, 0,
-        "the legacy convention leaves the tables unmapped"
+        "the orbis convention leaves the tables unmapped"
     );
 
     // The identity a loader checks before it reads anything else. A linker leaves `e_type` as
@@ -193,7 +193,7 @@ fn a_linked_module_becomes_one_the_reader_understands() {
     let stamped = selfish_elf::identity::stamp(
         &mut bytes,
         selfish_elf::ObjectType::Executable,
-        selfish_abi::Generation::Previous,
+        selfish_abi::Generation::Orbis,
     )
     .expect("a stamped module");
     assert!(
@@ -213,7 +213,7 @@ fn a_linked_module_becomes_one_the_reader_understands() {
 
     let entries = elf.dynamic_entries().expect("a dynamic table");
     let info = dynamic::Info::from_entries(&entries);
-    assert_eq!(info.table, Some(Table::Legacy));
+    assert_eq!(info.table, Some(Table::Orbis));
 
     let vendor = elf.vendor_segment().expect("the appended segment");
     let imports = dynamic::imports(vendor, &info).expect("imports");

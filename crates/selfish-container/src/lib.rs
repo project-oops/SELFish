@@ -1222,7 +1222,7 @@ mod tests {
     fn a_container_round_trips_through_its_own_parser() {
         // The reason both directions live in one crate. A writer checked only against
         // itself is checked against nothing.
-        for generation in [Generation::Current, Generation::Previous] {
+        for generation in [Generation::Prospero, Generation::Orbis] {
             let built = build(&payload(), generation).expect("builds");
             let parsed = Container::parse(&built).expect("parses");
             assert_eq!(parsed.generation(), generation);
@@ -1242,7 +1242,7 @@ mod tests {
     fn the_data_entry_carries_the_bit_a_loader_searches_for() {
         // A container with all-zero props is structurally valid and dies inside a loader's
         // segment walk with no indication why. This is that bug, as a test.
-        let built = build(&payload(), Generation::Current).expect("builds");
+        let built = build(&payload(), Generation::Prospero).expect("builds");
         let parsed = Container::parse(&built).expect("parses");
         assert!(
             parsed.entries().iter().any(Entry::carries_segment_data),
@@ -1252,7 +1252,7 @@ mod tests {
 
     #[test]
     fn the_data_entry_points_at_its_program_header_not_at_itself() {
-        let built = build(&payload(), Generation::Current).expect("builds");
+        let built = build(&payload(), Generation::Prospero).expect("builds");
         let parsed = Container::parse(&built).expect("parses");
         let data = parsed
             .entries()
@@ -1272,7 +1272,7 @@ mod tests {
         // load. A segment that is never mapped declares `p_memsz` zero, and copying that
         // here asks for zero blocks of a segment that has bytes in it - which the
         // authentication manager rejects before it decrypts anything. (D075)
-        let built = build(&payload(), Generation::Current).expect("builds");
+        let built = build(&payload(), Generation::Prospero).expect("builds");
         let parsed = Container::parse(&built).expect("parses");
         for entry in parsed.entries() {
             if !entry.carries_segment_data() {
@@ -1292,7 +1292,7 @@ mod tests {
     #[test]
     fn the_segment_bytes_survive_the_wrapping() {
         let source = payload();
-        let built = build(&source, Generation::Current).expect("builds");
+        let built = build(&source, Generation::Prospero).expect("builds");
         let parsed = Container::parse(&built).expect("parses");
         let data = parsed
             .entries()
@@ -1314,16 +1314,16 @@ mod tests {
 
     #[test]
     fn the_two_generations_produce_different_files() {
-        let current = build(&payload(), Generation::Current).expect("builds");
-        let previous = build(&payload(), Generation::Previous).expect("builds");
+        let prospero = build(&payload(), Generation::Prospero).expect("builds");
+        let orbis = build(&payload(), Generation::Orbis).expect("builds");
         assert_ne!(
-            current.get(..4),
-            previous.get(..4),
+            prospero.get(..4),
+            orbis.get(..4),
             "the magic must differ, or one of them is built for the wrong console"
         );
         assert_eq!(
-            current.len(),
-            previous.len(),
+            prospero.len(),
+            orbis.len(),
             "everything except the magic is identical between generations"
         );
     }
@@ -1334,7 +1334,7 @@ mod tests {
         // Turn the only PT_LOAD into something that never becomes an entry.
         bytes[64..68].copy_from_slice(&segment::INTERP.to_le_bytes());
         assert_eq!(
-            build(&bytes, Generation::Current).expect_err("nothing to describe"),
+            build(&bytes, Generation::Prospero).expect_err("nothing to describe"),
             ContainerError::NoSegments
         );
     }
@@ -1345,7 +1345,7 @@ mod tests {
         // fixed row. If it does not, the writer and the row reader disagree about the format,
         // which is the bug the whole `data/` discipline exists to catch. This is the same round
         // trip as principle 4, reached from the reading side.
-        for generation in [Generation::Current, Generation::Previous] {
+        for generation in [Generation::Prospero, Generation::Orbis] {
             let built = build(&payload(), generation).expect("builds");
             let result = audit(&built).expect("audits");
             assert_eq!(result.generation, generation);
@@ -1363,7 +1363,7 @@ mod tests {
         // The magic differs by generation on purpose. An audit that counted it as a mismatch
         // would report the generation split itself as an error against every file of the other
         // generation. It is read to identify the generation and then left out of the tally.
-        let built = build(&payload(), Generation::Current).expect("builds");
+        let built = build(&payload(), Generation::Prospero).expect("builds");
         let result = audit(&built).expect("audits");
         assert!(
             result.header.iter().all(|row| row.field != "magic"),
@@ -1375,7 +1375,7 @@ mod tests {
     fn a_changed_header_byte_is_reported_as_a_difference() {
         // The point of the tool on a real file: a byte that does not match the table is found
         // and named. Here the `flags` field at 0x1A is corrupted and the audit must catch it.
-        let mut built = build(&payload(), Generation::Current).expect("builds");
+        let mut built = build(&payload(), Generation::Prospero).expect("builds");
         built[0x1A] ^= 0xFF;
         let result = audit(&built).expect("audits");
         assert!(
@@ -1392,7 +1392,7 @@ mod tests {
         // its own comment calls that a round trip - but `audit` reported only the count, so a
         // reader holding nine-of-nine had nothing telling them which of the two they had. It
         // was read as a confirmation against vendor material and had to be reversed. (D092)
-        for generation in [Generation::Current, Generation::Previous] {
+        for generation in [Generation::Prospero, Generation::Orbis] {
             let built = build(&payload(), generation).expect("builds");
             let result = audit(&built).expect("audits");
 
@@ -1422,7 +1422,7 @@ mod tests {
         // *known* ptype fails on exactly the material worth having - a genuine vendor
         // container - and then reads as a fact about the format instead of about the reader.
         // That is how a whole sweep came back "not located" on nine files.
-        let mut built = build(&payload(), Generation::Current).expect("builds");
+        let mut built = build(&payload(), Generation::Prospero).expect("builds");
         let header_size = usize::from(u16::from_le_bytes([built[12], built[13]]));
         let at = header_size - 0x70 + 8;
         built[at..at + 8].copy_from_slice(&0x1234_u64.to_le_bytes());
@@ -1452,7 +1452,7 @@ mod tests {
         // A valid container whose header_size points past the end of the file: the tail is
         // named but not there. Truncating the file instead does not reach this - `parse`
         // rejects it as `EntriesOutOfBounds` first, which is the right refusal earlier on.
-        let mut built = build(&payload(), Generation::Current).expect("builds");
+        let mut built = build(&payload(), Generation::Prospero).expect("builds");
         built[12..14].copy_from_slice(&u16::MAX.to_le_bytes());
         let result = audit(&built).expect("audits");
         assert_eq!(result.declared, Declared::Unreachable);
@@ -1465,7 +1465,7 @@ mod tests {
         // The header half of this has been asserted since D084. The tail was pinned by the
         // same table and never checked, which is how `selfish audit` came to have nothing to
         // say about the block a whole sweep was reporting as "not located".
-        for generation in [Generation::Current, Generation::Previous] {
+        for generation in [Generation::Prospero, Generation::Orbis] {
             let built = build(&payload(), generation).expect("builds");
             let result = audit(&built).expect("audits");
 
@@ -1488,7 +1488,7 @@ mod tests {
         // construction, and "differs" without the value is not something anybody can act on.
         // Six system apps came back with `paid` values this table has never seen, and the
         // values are the whole of what that measurement was worth.
-        let mut built = build(&payload(), Generation::Current).expect("builds");
+        let mut built = build(&payload(), Generation::Prospero).expect("builds");
         let base = usize::from(u16::from_le_bytes([built[12], built[13]])) - 0x70;
         built[base..base + 8].copy_from_slice(&0x1b_ac98_u64.to_le_bytes());
 
@@ -1505,7 +1505,7 @@ mod tests {
         // `tail` and `declared` must agree about whether there was anything to read. If the
         // tail could be read while the kind could not, an audit could report four confirmed
         // rows from bytes it never located.
-        let mut built = build(&payload(), Generation::Current).expect("builds");
+        let mut built = build(&payload(), Generation::Prospero).expect("builds");
         built[12..14].copy_from_slice(&u16::MAX.to_le_bytes());
 
         let result = audit(&built).expect("audits");
@@ -1525,7 +1525,7 @@ mod tests {
         // `to_elf` splices the payloads back. It is used by the CLI and nine examples and was
         // asserted nowhere, so the one behaviour that makes a container readable end to end
         // was resting on those nine examples being run by hand. (D095)
-        for generation in [Generation::Current, Generation::Previous] {
+        for generation in [Generation::Prospero, Generation::Orbis] {
             let original = payload();
             let built = build(&original, generation).expect("builds");
             let inner = Container::parse(&built)

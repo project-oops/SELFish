@@ -192,8 +192,8 @@ impl Target {
     /// The container generation this machine loads.
     const fn generation(self) -> Generation {
         match self {
-            Self::Orbis | Self::Neo => Generation::Previous,
-            Self::Prospero | Self::Trinity => Generation::Current,
+            Self::Orbis | Self::Neo => Generation::Orbis,
+            Self::Prospero | Self::Trinity => Generation::Prospero,
         }
     }
 }
@@ -609,8 +609,8 @@ fn elf(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     say!(
         "convention {}",
         match info.table {
-            Some(selfish_elf::dynamic::Table::Legacy) => "legacy - vendor tags throughout",
-            Some(selfish_elf::dynamic::Table::Current) => "current - standard tags, vendor extras",
+            Some(selfish_elf::dynamic::Table::Orbis) => "orbis - vendor tags throughout",
+            Some(selfish_elf::dynamic::Table::Prospero) => "prospero - standard tags, vendor extras",
             None => "no string table, so undetermined",
         }
     );

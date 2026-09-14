@@ -65,7 +65,7 @@ fn module(e_type: u16, segments: &[Segment], size: usize) -> Vec<u8> {
     out[EI_DATA] = DATA_LSB;
     out[6] = 1; // EI_VERSION
     out[EI_OSABI] = OSABI_FREEBSD;
-    out[EI_ABIVERSION] = Generation::Current.abi_version();
+    out[EI_ABIVERSION] = Generation::Prospero.abi_version();
     out[at::E_TYPE..at::E_TYPE + 2].copy_from_slice(&e_type.to_le_bytes());
     out[at::E_MACHINE..at::E_MACHINE + 2].copy_from_slice(&MACHINE_X86_64.to_le_bytes());
     out[at::E_ENTRY..at::E_ENTRY + 8].copy_from_slice(&0x1234_u64.to_le_bytes());
@@ -206,7 +206,7 @@ fn every_way_of_not_being_a_module_has_its_own_answer() {
 #[test]
 fn a_refusal_says_what_the_file_actually_began_with() {
     let mut container = shaped();
-    let magic = Generation::Current.container_magic();
+    let magic = Generation::Prospero.container_magic();
     container[..4].copy_from_slice(&magic);
 
     let error = Elf::parse(&container).expect_err("a container is not an ELF");
@@ -307,7 +307,7 @@ fn the_header_is_reported_as_it_stands() {
     assert_eq!(elf.header().machine.get(), MACHINE_X86_64);
     assert_eq!(elf.object_type(), ObjectType::SharedLibrary);
     assert!(elf.has_platform_osabi());
-    assert_eq!(elf.generation(), Some(Generation::Current));
+    assert_eq!(elf.generation(), Some(Generation::Prospero));
     assert_eq!(elf.program_headers().len(), 3);
 }
 
@@ -326,7 +326,7 @@ fn an_ordinary_elf_is_described_rather_than_refused() {
     assert!(!elf.has_platform_osabi());
     assert_eq!(
         elf.generation(),
-        Some(Generation::Previous),
+        Some(Generation::Orbis),
         "**zero is the previous generation's own value**, so an ordinary ELF cannot be told          from a previous-generation module by this byte alone"
     );
     // What actually separates them is the pair below, and this is the module that proves the
@@ -569,11 +569,11 @@ fn a_gnu_segment_is_not_vendor_data() {
 fn only_a_byte_belonging_to_neither_generation_reads_as_neither() {
     let mut bytes = shaped();
     for (value, want) in [
-        (Generation::Current.abi_version(), Some(Generation::Current)),
         (
-            Generation::Previous.abi_version(),
-            Some(Generation::Previous),
+            Generation::Prospero.abi_version(),
+            Some(Generation::Prospero),
         ),
+        (Generation::Orbis.abi_version(), Some(Generation::Orbis)),
         (1, None),
         (3, None),
         (0xFF, None),

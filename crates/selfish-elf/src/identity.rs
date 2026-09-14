@@ -142,7 +142,7 @@ pub fn stamp(
     });
     slice.copy_from_slice(&target.to_le_bytes());
 
-    if generation == Generation::Current {
+    if generation == Generation::Prospero {
         stamp_prospero_segments(bytes, &mut changes);
     }
 
@@ -232,26 +232,26 @@ mod tests {
 
     #[test]
     fn a_linked_object_gets_all_three_fields() {
-        // The current generation, because the previous one's ABI version is zero - which is
+        // The prospero generation, because the orbis one's ABI version is zero - which is
         // what a linker already leaves, so targeting it changes only two fields. That is
         // correct and it is a poor test of "all three".
         let mut bytes = linked();
         let changes =
-            stamp(&mut bytes, ObjectType::Executable, Generation::Current).expect("stamped");
+            stamp(&mut bytes, ObjectType::Executable, Generation::Prospero).expect("stamped");
 
         assert_eq!(changes.len(), 3, "{changes:?}");
         assert_eq!(bytes[EI_OSABI], OSABI_FREEBSD);
-        assert_eq!(bytes[EI_ABIVERSION], Generation::Current.abi_version());
+        assert_eq!(bytes[EI_ABIVERSION], Generation::Prospero.abi_version());
         assert_eq!(e_type(&bytes), ObjectType::EXECUTABLE);
     }
 
     #[test]
-    fn targeting_the_previous_generation_leaves_the_abi_version_alone() {
+    fn targeting_the_orbis_generation_leaves_the_abi_version_alone() {
         // Its ABI version is zero, which is what a linker leaves. Reporting a change here
         // would be a tool claiming credit for a byte it did not touch.
         let mut bytes = linked();
         let changes =
-            stamp(&mut bytes, ObjectType::Executable, Generation::Previous).expect("stamped");
+            stamp(&mut bytes, ObjectType::Executable, Generation::Orbis).expect("stamped");
 
         assert_eq!(changes.len(), 2, "{changes:?}");
         assert!(!changes.iter().any(|change| change.field == "EI_ABIVERSION"));
@@ -264,9 +264,19 @@ mod tests {
         // different files. The two constants were named the wrong way round for months in a
         // sibling project, and the result loaded, ran its initialisers, and was never entered.
         let mut executable = linked();
-        stamp(&mut executable, ObjectType::Executable, Generation::Current).expect("stamped");
+        stamp(
+            &mut executable,
+            ObjectType::Executable,
+            Generation::Prospero,
+        )
+        .expect("stamped");
         let mut library = linked();
-        stamp(&mut library, ObjectType::SharedLibrary, Generation::Current).expect("stamped");
+        stamp(
+            &mut library,
+            ObjectType::SharedLibrary,
+            Generation::Prospero,
+        )
+        .expect("stamped");
 
         assert_eq!(e_type(&executable), 0xFE10);
         assert_eq!(e_type(&library), 0xFE18);
@@ -275,22 +285,21 @@ mod tests {
 
     #[test]
     fn the_generation_comes_from_the_caller_because_the_loaders_disagree() {
-        // One loader reads 2 as the current generation; another refuses anything but 0. A
+        // One loader reads 2 as prospero; another refuses anything but 0. A
         // module claiming the wrong one is lying to whichever it meets.
-        let mut current = linked();
-        stamp(&mut current, ObjectType::Executable, Generation::Current).expect("stamped");
-        let mut previous = linked();
-        stamp(&mut previous, ObjectType::Executable, Generation::Previous).expect("stamped");
+        let mut prospero = linked();
+        stamp(&mut prospero, ObjectType::Executable, Generation::Prospero).expect("stamped");
+        let mut orbis = linked();
+        stamp(&mut orbis, ObjectType::Executable, Generation::Orbis).expect("stamped");
 
-        assert_ne!(current[EI_ABIVERSION], previous[EI_ABIVERSION]);
+        assert_ne!(prospero[EI_ABIVERSION], orbis[EI_ABIVERSION]);
     }
 
     #[test]
     fn stamping_twice_changes_nothing_the_second_time() {
         let mut bytes = linked();
-        stamp(&mut bytes, ObjectType::Executable, Generation::Previous).expect("stamped");
-        let again =
-            stamp(&mut bytes, ObjectType::Executable, Generation::Previous).expect("stamped");
+        stamp(&mut bytes, ObjectType::Executable, Generation::Orbis).expect("stamped");
+        let again = stamp(&mut bytes, ObjectType::Executable, Generation::Orbis).expect("stamped");
         assert!(again.is_empty(), "{again:?}");
     }
 
@@ -299,9 +308,9 @@ mod tests {
         // Changing a library into an executable is a real thing to want, and the change is
         // reported so a caller can say it happened.
         let mut bytes = linked();
-        stamp(&mut bytes, ObjectType::SharedLibrary, Generation::Previous).expect("stamped");
+        stamp(&mut bytes, ObjectType::SharedLibrary, Generation::Orbis).expect("stamped");
         let changes =
-            stamp(&mut bytes, ObjectType::Executable, Generation::Previous).expect("stamped");
+            stamp(&mut bytes, ObjectType::Executable, Generation::Orbis).expect("stamped");
 
         assert_eq!(
             changes,
@@ -320,7 +329,7 @@ mod tests {
         let mut bytes = linked();
         bytes[E_TYPE..E_TYPE + 2].copy_from_slice(&1_u16.to_le_bytes()); // ET_REL
         assert!(matches!(
-            stamp(&mut bytes, ObjectType::Executable, Generation::Previous),
+            stamp(&mut bytes, ObjectType::Executable, Generation::Orbis),
             Err(ElfError::UnexpectedObjectType(1))
         ));
     }
@@ -328,18 +337,18 @@ mod tests {
     #[test]
     fn a_truncated_header_is_an_error_rather_than_a_partial_stamp() {
         let mut bytes = vec![0_u8; 8];
-        assert!(stamp(&mut bytes, ObjectType::Executable, Generation::Previous).is_err());
+        assert!(stamp(&mut bytes, ObjectType::Executable, Generation::Orbis).is_err());
     }
 
     #[test]
     fn what_is_stamped_reads_back_through_the_reader() {
         let mut bytes = linked();
-        stamp(&mut bytes, ObjectType::SharedLibrary, Generation::Current).expect("stamped");
+        stamp(&mut bytes, ObjectType::SharedLibrary, Generation::Prospero).expect("stamped");
 
         // Enough of a header for the parser: phnum stays zero, so there is no table to read.
         let elf = crate::Elf::parse(&bytes).expect("a readable header");
         assert_eq!(elf.object_type(), ObjectType::SharedLibrary);
-        assert_eq!(elf.generation(), Some(Generation::Current));
+        assert_eq!(elf.generation(), Some(Generation::Prospero));
         assert!(elf.has_platform_osabi());
     }
 }

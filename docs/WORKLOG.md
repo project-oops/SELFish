@@ -4,7 +4,7 @@ What was done, in order, and what surprised us. Surprises especially - a format 
 surprises are its most valuable output, because each one is a thing the next person would
 otherwise rediscover the hard way.
 **This table is generated.** Edit an item under `worklog/`, then run
-`tools/split-doc.sh --index selfish WORKLOG 1 worklog`.
+`tools/split-doc.sh --index selfish WORKLOG 2 worklog`.
 
 | date | entry |
 |---|---|

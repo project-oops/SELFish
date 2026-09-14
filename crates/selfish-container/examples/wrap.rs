@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get(3)
         .and_then(|g| g.parse::<u8>().ok())
         .and_then(Generation::from_number)
-        .unwrap_or(Generation::Current);
+        .unwrap_or(Generation::Prospero);
 
     let payload = std::fs::read(input)?;
     let container = selfish_container::build(&payload, generation)?;
