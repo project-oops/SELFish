@@ -97,7 +97,7 @@ content id, so it is derived rather than written twice.
 
 ```text
 .pkg  ->  header + entry table
-      ->  filesystem image at 0x700000     <- encrypted
+      ->  filesystem image at 0x80000      <- encrypted
       ->  a compressed image inside that
       ->  the real filesystem: files, each executable a container
 ```

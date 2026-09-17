@@ -75,7 +75,7 @@ Automatically generates:
 
 #### Create a Signed `eboot.bin`
 ```bash
-selfish --input payload.elf --format eboot --output eboot.bin
+selfish --input payload.elf --target prospero --format eboot --output eboot.bin
 ```
 
 #### Inspect Binary Files
@@ -95,12 +95,13 @@ A modular crate spine where each layer depends only on those below it:
 | Crate | Purpose |
 |---|---|
 | **`selfish-abi`** | Target generation constants (`orbis`, `neo`, `prospero`, `trinity`). |
-| **`selfish-nid`** | 64-bit Murmur/SHA symbol NID hashing and candidate cracking. |
+| **`selfish-nid`** | SHA-1 symbol NID import-hash computation and encoding (name cracking lives in obSCEne, not here). |
 | **`selfish-elf`** | ELF64 header validation, vendor dynamic table, and relocation tables. |
 | **`selfish-container`** | SELF (Signed ELF) container reading and writing. |
-| **`selfish-title`** | Title metadata generation (`param.json` and legacy `PARAM.SFO`). |
+| **`selfish-title`** | Title metadata generation (`param.json` and `PARAM.SFO`). |
 | **`selfish-pfs`** | PlayGo / PFS package filesystem structure. |
 | **`selfish-pkg`** | Cryptographic authoring and packaging of `.pkg` archives. |
+| **`selfish-shader`** | AGC shader container (`sceAgcCreateShader`) authoring, off to the side. |
 | **`selfish-cli`** | The unified `selfish` command-line executable. |
 
 ---

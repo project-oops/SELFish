@@ -8,12 +8,17 @@ PlayStation software packages (`.pkg`) combine an outer header table, playgo chu
 
 ## Recipe: Author an Installable Package
 
+Like every pipeline format, `--format pkg` takes the compiled **ELF** as `--input`; it lays out the title internally and assembles the package around it.
+
 ```bash
-selfish --input build/title/GLCB00001 \
+selfish --input build/gl-cube.elf \
         --target prospero \
         --format pkg \
+        --title-id GLCB00001 \
         --output build/GLCB00001.pkg
 ```
+
+To assemble a package around an existing tree of files instead of a single ELF, use the `selfish pack --dir <root>` command.
 
 ### What SELFish Synthesizes:
 1. **PFS Filesystem Image**: Packs all application files into an encrypted 64KB block filesystem with inode tables and Merkle tree hashes.

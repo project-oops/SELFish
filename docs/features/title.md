@@ -14,17 +14,17 @@ selfish --input build/gl-cube.elf \
         --format title \
         --title-id GLCB00001 \
         --category big-app \
-        --name "GL-Cube 3D Demo" \
-        --output build/title/GLCB00001
+        --title "GL-Cube 3D Demo" \
+        --output build/title
 ```
+
+`--output` is the parent directory; the title is laid out at `<output>/<TITLE_ID>/`, so `build/title` yields `build/title/GLCB00001/`.
 
 ### Generated Layout
 
 ```text
 build/title/GLCB00001/
 ├── eboot.bin                <- Signed executable container
-├── sce_module/
-│   └── libc.prx             <- Companion runtime module
 └── sce_sys/
     ├── param.json           <- Conforming metadata (titleId, category: 0, appVersion)
     ├── icon0.png            <- Conforming 512x512 RGB application icon

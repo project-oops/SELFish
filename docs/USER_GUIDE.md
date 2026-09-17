@@ -30,7 +30,7 @@ selfish --input <file> --target <generation> --format <format> --output <path>
 ```
 
 ### Supported Parameters:
-- `--target`: Platform generation: `prospero` (default, PS5), `orbis` (PS4), `neo` (PS4 Pro), or `trinity` (PS5 Pro).
+- `--target`: Platform generation, always required (there is no default — a container stamped with the wrong generation's magic is rejected by the hardware): `prospero` (PS5), `orbis` (PS4), `neo` (PS4 Pro), or `trinity` (PS5 Pro).
 - `--format`: Desired output format:
   - `eboot`: Main signed application container (`eboot.bin`).
   - `prx`: Dynamic shared module (`.prx`).
@@ -72,16 +72,16 @@ selfish --input build/gl-cube.elf \
         --format title \
         --title-id GLCB00001 \
         --category big-app \
-        --name "GL-Cube 3D Demo" \
-        --output build/title/GLCB00001
+        --title "GL-Cube 3D Demo" \
+        --output build/title
 ```
+
+`--output` is the *parent*: the title is laid out at `<output>/<TITLE_ID>/`, so passing `build/title` produces `build/title/GLCB00001/`.
 
 #### What SELFish Automatically Generates:
 ```
 build/title/GLCB00001/
 ├── eboot.bin                <- Signed executable container
-├── sce_module/
-│   └── libc.prx             <- Companion runtime module
 └── sce_sys/
     ├── param.json           <- Conforming metadata (titleId, category: 0, appVersion)
     ├── icon0.png            <- Conforming 512x512 RGB application icon
@@ -96,14 +96,17 @@ You can now stage this entire directory directly with `pros restore`!
 
 ### Recipe 4: Author an Installable Package (`.pkg`)
 
-Package your homebrew into an installable `.pkg` archive:
+Package your homebrew into an installable `.pkg` archive. Like every pipeline format, `--format pkg` takes the compiled **ELF** as `--input` — it lays out the title internally and assembles the package around it:
 
 ```bash
-selfish --input build/title/GLCB00001 \
+selfish --input build/gl-cube.elf \
         --target prospero \
         --format pkg \
+        --title-id GLCB00001 \
         --output build/GLCB00001.pkg
 ```
+
+To build a package around an existing tree of files rather than a single ELF, use the `selfish pack --dir <root>` command instead.
 
 ---
 
@@ -114,28 +117,21 @@ SELFish includes built-in diagnostic tools to inspect unknown binaries, check im
 ### Check File Headers & Container Type
 ```bash
 selfish container build/eboot.bin
-# Output:
-# Target: Prospero
-# Container Magic: 54 14 F5 EE (SELF)
-# Segments: 3 loaded, 1 digest
 ```
+Reports the container's generation, its entry count, the header/metadata/stated sizes, one line per entry (segment data or digest), and where the inner executable begins.
 
 ### Inspect NID Imports & Symbol Hashes
 ```bash
-selfish imports build/my_app.elf
-# Output:
-# libkernel:
-#   0x2E68BD659B8B690A (sceKernelUsleep)
-#   0x3E18C7E7608670A1 (sceKernelAllocateDirectMemory)
+selfish imports build/my_app.elf         # a count per library/module
+selfish imports build/my_app.elf --all   # every import: encoded NID, library, module
 ```
+Each undefined symbol in a vendor module is named by its import hash; the tool resolves it back to a library and module name where it can.
 
 ### Audit Relocations
 ```bash
 selfish reloc build/my_app.elf
-# Output:
-# Total relocations: 142
-# Conformance: 100% standard x86-64 R_X86_64_RELATIVE / R_X86_64_64
 ```
+Censuses the data and PLT relocation tables by type, then reports how many PLT slots resolve to a named import. An unexpected relocation type in the census is a loader requirement nobody has implemented yet.
 
 ---
 

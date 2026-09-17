@@ -10,5 +10,5 @@ Feature documentation and packaging recipes for SELFish. Each page covers comman
 | **Retail Package** | `--format pkg` | `.pkg` (Encrypted PFS container) | [pkg.md](pkg.md) |
 | **Reading & Audit** | `selfish container`, `elf`, `imports` | Diagnostic header dumps | [reading.md](reading.md) |
 | **Pipeline Writing** | `selfish --input ...` | Four-axis compilation pipeline | [writing.md](writing.md) |
-| **Crate Spine** | Rust dependencies | `selfish-core`, `selfish-elf`, `selfish-pfs` | [library.md](library.md) |
+| **Crate Spine** | Rust dependencies | `selfish-abi`, `selfish-elf`, `selfish-pfs` | [library.md](library.md) |
 

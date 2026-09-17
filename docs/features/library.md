@@ -21,6 +21,10 @@ Each crate depends only on the ones before it.
 about *itself* - `PARAM.SFO` and `param.json`. `selfish-pkg` uses it because a package
 carries a `PARAM.SFO`; nothing else does.
 
+`selfish-shader` sits off to the side too, depending on nothing: it is the AGC shader
+container `sceAgcCreateShader` is handed, from `data/agc-shader-format.tsv`. It owns the
+container *format* and takes the register contents from the caller.
+
 **An emulator reading a bare executable takes `elf` and stops.** It never links a
 cryptography dependency it has no use for, because the crate that needs one is further
 along the spine and it never reaches it.

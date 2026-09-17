@@ -18,13 +18,13 @@ selfish --input build/my_app.elf \
 ### What SELFish Does:
 1. **ELF Validation**: Inspects program headers (`PT_LOAD`) and verifies all segments are 4KB-aligned.
 2. **Container Header**: Writes standard 32-byte header with generation magic (`54 14 F5 EE` for Prospero).
-3. **Digest Blocks**: Computes SHA-256 block digests across all loadable segments.
-4. **Signature Metadata**: Stamps fake RSA signatures accepted by jailbroken hardware loaders and Orbistoun.
+3. **Digest Area**: Reserves one digest entry per segment. The container declares itself **fake** in the field the format provides for that, so the digest area is left **zero** — nothing is hashed.
+4. **Signature Area**: Left **zero** as well. No vendor signature is forged and none could be; the fake marker is what a homebrew loader (and Orbistoun) accepts.
 
 ---
 
 ## Command Flags
 
-- `--privilege <app|system|root>`: Controls security privilege tier (defaults to `app`).
+- `--privilege <app|sysmodule|system|root>`: Controls the privilege tier the container declares (defaults to `app`; `sysmodule` currently produces bytes identical to `app`).
 - `--sdk <version>`: Sets expected platform SDK version stamp (e.g. `0x12400000` for FW 12.40).
 

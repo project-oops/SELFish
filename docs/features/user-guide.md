@@ -33,7 +33,7 @@ Sets the platform hardware generation. Never defaulted, because a container stam
 SELFish reads and writes only the paths specified on the command line:
 - `--output` specifies the exact file or directory to produce. Nothing is ever written beside it.
 - Portable mode is active by default because `selfish` has no global registry and writes no host files outside the `--output` destination.
-- When invoked in pipelines, temporary scratch files are placed under the working directory or system temp root without persisting.
+- When invoked in pipelines, temporary scratch files are placed under the system temp root (never beside `--output`) and removed before the command returns.
 
 ---
 

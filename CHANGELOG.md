@@ -18,7 +18,8 @@ CI that would produce one has never run.
   depends on nothing), `nid`, `elf`, `container`, `title`, `pfs`, `pkg`. Each depends only on
   those before it, which is what keeps cryptography out of a loader: an emulator reading a bare
   executable takes `elf` and stops. `title` sits off to one side, holding what a title says
-  about itself.
+  about itself, and `shader` sits off to the side too, holding the AGC shader container
+  `sceAgcCreateShader` is handed.
 - **`selfish`, one command line** over all of it. `selfish <command> --help` is generated from
   the code, so it cannot drift from what the code does.
 - **`data/`, the format tables**, one row per field with a provenance header naming every
