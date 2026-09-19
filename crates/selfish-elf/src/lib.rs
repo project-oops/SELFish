@@ -355,7 +355,7 @@ impl<'a> Elf<'a> {
     ///
     /// **Zero is the previous generation's own value, so an ordinary ELF is indistinguishable
     /// from a previous-generation module by this byte alone.** Both read as
-    /// [`Generation::Previous`]. A caller that needs to tell them apart has to ask something
+    /// [`Generation::Orbis`]. A caller that needs to tell them apart has to ask something
     /// else - [`Self::has_platform_osabi`] and [`Self::object_type`] between them do it, since
     /// an ordinary object carries neither the platform's `EI_OSABI` nor one of its three
     /// `e_type` values.

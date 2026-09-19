@@ -1580,6 +1580,21 @@ fn title_dir(
         say!("{} (generated)", logo_path.display());
     }
 
+    write_generated_system_files(&sce_sys, title_id)?;
+
+    // No install advice here. This lays a directory out and reports where things went; the
+    // pipeline calls it into a scratch directory it then moves, so advice naming `base` would
+    // name a path that no longer exists by the time anybody read it. `selfish title` reports it instead.
+    Ok(())
+}
+
+/// The `sce_sys` files a title carries no matter what the caller supplied - a fake-passcode
+/// keystone, the pfs version stamp, and the NP title descriptor. Each is written only if
+/// absent, so one the caller dropped into `root` itself is left as authored.
+fn write_generated_system_files(
+    sce_sys: &Path,
+    title_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let keystone_path = sce_sys.join("keystone");
     if !keystone_path.exists() {
         let keystone = selfish_pkg::keystone::create(selfish_pkg::keys::FAKE_PASSCODE)?;
@@ -1612,9 +1627,6 @@ fn title_dir(
         say!("{} (generated)", nptitle_path.display());
     }
 
-    // No install advice here. This lays a directory out and reports where things went; the
-    // pipeline calls it into a scratch directory it then moves, so advice naming `base` would
-    // name a path that no longer exists by the time anybody read it. `selfish title` reports it instead.
     Ok(())
 }
 

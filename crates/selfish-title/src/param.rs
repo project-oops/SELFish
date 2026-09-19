@@ -197,7 +197,10 @@ impl Param {
     /// The title subtitle in one specific locale.
     #[must_use]
     pub fn title_sub_name_in(&self, language: &str) -> Option<&str> {
-        self.localized()?.get(language)?.get("titleSubName")?.as_str()
+        self.localized()?
+            .get(language)?
+            .get("titleSubName")?
+            .as_str()
     }
 
     /// Every locale the file carries a name for.
@@ -343,7 +346,10 @@ impl Param {
                 .entry(language.to_owned())
                 .or_insert_with(|| Value::Object(Map::new()));
             if let Some(locale) = locale.as_object_mut() {
-                locale.insert("titleSubName".to_owned(), Value::String(sub_name.to_owned()));
+                locale.insert(
+                    "titleSubName".to_owned(),
+                    Value::String(sub_name.to_owned()),
+                );
             }
         }
     }

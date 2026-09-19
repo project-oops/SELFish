@@ -393,11 +393,7 @@ mod tests {
     #[test]
     fn the_default_logo_is_rgba() {
         let logo = super::default_logo().expect("default logo normalises");
-        assert_eq!(
-            logo.get(25),
-            Some(&6),
-            "IHDR colour type must be RGBA (6)"
-        );
+        assert_eq!(logo.get(25), Some(&6), "IHDR colour type must be RGBA (6)");
     }
 
     #[test]
