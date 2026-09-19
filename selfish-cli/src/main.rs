@@ -145,6 +145,24 @@ struct Cli {
     #[arg(long, value_name = "FILE", requires = "input")]
     icon: Option<PathBuf>,
 
+    /// A 1920x1080 or 3840x2160 PNG for the home-screen background wallpaper. `--format title` only.
+    ///
+    /// Flattened to RGB over black without transparency. Without one, a default ambient background is used.
+    #[arg(long, value_name = "FILE", requires = "input")]
+    pic0: Option<PathBuf>,
+
+    /// A transparent RGBA PNG for the secondary title logo graphic. `--format title` only.
+    ///
+    /// Rendered on the lower-left above the action buttons. Without one, a default title badge is used.
+    #[arg(long, value_name = "FILE", requires = "input")]
+    logo: Option<PathBuf>,
+
+    /// Subtitle or descriptive info text for the title. `--format title` only.
+    ///
+    /// Stored in `param.json`'s `titleSubName`. Defaults to "OOPS Native Title".
+    #[arg(long, value_name = "TEXT", requires = "input")]
+    subtitle: Option<String>,
+
     /// Make the entry launch a URI instead of carrying its own executable. `--format title` and
     /// `--format pkg` only.
     ///
@@ -1119,6 +1137,28 @@ fn pipeline(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
         DEFAULT_TITLE_ID
     });
+    // **Four capital letters, then five digits.** The id goes into `param.json` and `PARAM.SFO`
+    // and is the name of the directory the console indexes by, and a malformed one fails in the
+    // worst available way: every file installs, the directory is complete and correct, and the
+    // console declines to index it while saying so only in its own log. Measured on 2026-09-17,
+    // where `GL1P00001` - four characters, but with a digit among the letters - staged perfectly
+    // and produced `20 Invalid TitleId : [GL1P00001]` and `AppPromote Error ... 0x80bd000a` on
+    // the target, while four-letter ids beside it indexed normally.
+    //
+    // Checked only for the formats that carry an id: an `elf`, `prx` or `eboot` has none, and
+    // refusing one for the shape of a value it never writes would be refusing the wrong thing.
+    if carries_metadata
+        && !(title_id.len() == 9
+            && title_id[..4].bytes().all(|b| b.is_ascii_uppercase())
+            && title_id[4..].bytes().all(|b| b.is_ascii_digit()))
+    {
+        return Err(format!(
+            "--title-id {title_id} is not a title id: it must be four capital letters then five \
+             digits, like GLCB00001. A malformed id installs cleanly and is then never indexed"
+        )
+        .into());
+    }
+
     let title = cli.title.as_deref().unwrap_or(title_id);
 
     // The content id defaults from the title id, announced like the title id itself, because a
@@ -1148,6 +1188,9 @@ fn pipeline(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         version: cli.title_version.as_deref(),
         icon: cli.icon.as_deref(),
         deeplink: cli.deeplink.as_deref(),
+        pic0: cli.pic0.as_deref(),
+        logo: cli.logo.as_deref(),
+        subtitle: cli.subtitle.as_deref(),
     };
     match format {
         Format::Elf => stamped_elf(
@@ -1194,6 +1237,12 @@ struct TitleMeta<'a> {
     icon: Option<&'a Path>,
     /// A launch URI; `None` builds a title that carries its own executable.
     deeplink: Option<&'a str>,
+    /// A PNG for the background wallpaper (`pic0.png`); `None` uses the default background.
+    pic0: Option<&'a Path>,
+    /// A transparent PNG for the secondary title logo (`logo.png`); `None` uses the default badge.
+    logo: Option<&'a Path>,
+    /// The subtitle / description; `None` uses the default subtitle.
+    subtitle: Option<&'a str>,
 }
 
 /// How a container is built, for the formats that build one.
@@ -1326,13 +1375,10 @@ fn title_at(
             output,
             title_id,
             title,
-            meta.content_id,
-            meta.version,
-            meta.deeplink,
-            meta.icon,
             Some(&staged),
             category.value(),
             wrap.privilege,
+            meta,
         )
     })();
     let _ = std::fs::remove_dir_all(&scratch);
@@ -1440,13 +1486,10 @@ fn title_dir(
     out: &Path,
     title_id: &str,
     title: &str,
-    content_id: Option<&str>,
-    version: Option<&str>,
-    deeplink: Option<&str>,
-    icon: Option<&Path>,
     root: Option<&Path>,
     category: i64,
     privilege: selfish_container::Privilege,
+    meta: &TitleMeta<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let base = out.join(title_id);
     let sce_sys = base.join("sce_sys");
@@ -1470,18 +1513,22 @@ fn title_dir(
         title,
         DEFAULT_LANGUAGE,
         category,
-        content_id,
-        deeplink,
+        meta.content_id,
+        meta.deeplink,
     );
-    if let Some(ver) = version {
+    let sub = meta.subtitle.unwrap_or("OOPS Native Title");
+    param.set_title_sub_name(DEFAULT_LANGUAGE, sub);
+    say!("subtitle: {sub}");
+
+    if let Some(ver) = meta.version {
         param.set_version(ver);
         param.set_master_version(ver);
         say!("version: {ver}");
     }
-    if let Some(cid) = content_id {
+    if let Some(cid) = meta.content_id {
         say!("contentId: {cid}");
     }
-    if let Some(uri) = deeplink {
+    if let Some(uri) = meta.deeplink {
         say!("deeplinkUri: {uri}");
     }
     let param_path = sce_sys.join("param.json");
@@ -1489,7 +1536,7 @@ fn title_dir(
     say!("{}", param_path.display());
 
     let icon_path = sce_sys.join("icon0.png");
-    if let Some(path) = icon {
+    if let Some(path) = meta.icon {
         // Normalised, not copied. A console wants 512x512 with no alpha, and an icon that is
         // neither is accepted and then composited wrongly - square on a home screen, found on a
         // television. So a supplied icon goes through the same conversion the `pack` entry path
@@ -1509,6 +1556,28 @@ fn title_dir(
     } else {
         std::fs::write(&icon_path, icon::default_icon()?)?;
         say!("{} (generated)", icon_path.display());
+    }
+
+    let pic0_path = sce_sys.join("pic0.png");
+    if let Some(path) = meta.pic0 {
+        let raw = std::fs::read(path)?;
+        let converted = icon::normalise_background(&raw, &path.display().to_string())?;
+        std::fs::write(&pic0_path, &converted)?;
+        say!("{} (from {})", pic0_path.display(), path.display());
+    } else {
+        std::fs::write(&pic0_path, icon::default_background()?)?;
+        say!("{} (generated)", pic0_path.display());
+    }
+
+    let logo_path = sce_sys.join("logo.png");
+    if let Some(path) = meta.logo {
+        let raw = std::fs::read(path)?;
+        let converted = icon::normalise_logo(&raw, &path.display().to_string())?;
+        std::fs::write(&logo_path, &converted)?;
+        say!("{} (from {})", logo_path.display(), path.display());
+    } else {
+        std::fs::write(&logo_path, icon::default_logo()?)?;
+        say!("{} (generated)", logo_path.display());
     }
 
     let keystone_path = sce_sys.join("keystone");

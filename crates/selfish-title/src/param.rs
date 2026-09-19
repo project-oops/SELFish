@@ -177,6 +177,29 @@ impl Param {
         self.localized()?.get(language)?.get("titleName")?.as_str()
     }
 
+    /// The title subtitle in the default language, falling back to any locale that has one.
+    #[must_use]
+    pub fn title_sub_name(&self) -> Option<&str> {
+        let locales = self.localized()?;
+        if let Some(name) = self
+            .default_language()
+            .and_then(|language| locales.get(language))
+            .and_then(|locale| locale.get("titleSubName"))
+            .and_then(Value::as_str)
+        {
+            return Some(name);
+        }
+        locales
+            .values()
+            .find_map(|locale| locale.get("titleSubName")?.as_str())
+    }
+
+    /// The title subtitle in one specific locale.
+    #[must_use]
+    pub fn title_sub_name_in(&self, language: &str) -> Option<&str> {
+        self.localized()?.get(language)?.get("titleSubName")?.as_str()
+    }
+
     /// Every locale the file carries a name for.
     #[must_use]
     pub fn languages(&self) -> Vec<&str> {
@@ -306,6 +329,22 @@ impl Param {
         }
         if let Some(link) = deeplink {
             self.set_deeplink_uri(link);
+        }
+    }
+
+    /// Set the subtitle in a specific locale.
+    pub fn set_title_sub_name(&mut self, language: &str, sub_name: &str) {
+        let locales = self
+            .document
+            .entry("localizedParameters")
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Some(locales) = locales.as_object_mut() {
+            let locale = locales
+                .entry(language.to_owned())
+                .or_insert_with(|| Value::Object(Map::new()));
+            if let Some(locale) = locale.as_object_mut() {
+                locale.insert("titleSubName".to_owned(), Value::String(sub_name.to_owned()));
+            }
         }
     }
 
@@ -488,5 +527,30 @@ mod tests {
 
         param.set_basics("CUSA00002", "System Tool", "en-US", category::SYSTEM_APP);
         assert_eq!(param.category(), Some(category::SYSTEM_APP));
+    }
+
+    #[test]
+    fn title_sub_name_reads_and_sets() {
+        let mut param = Param::new();
+        param.set_basics("GLCB00001", "GL1 Cube", "en-US", 0);
+        assert_eq!(param.title_sub_name(), None);
+
+        param.set_title_sub_name("en-US", "Freestanding OpenGL 1.3 demonstration");
+        assert_eq!(
+            param.title_sub_name(),
+            Some("Freestanding OpenGL 1.3 demonstration")
+        );
+        assert_eq!(
+            param.title_sub_name_in("en-US"),
+            Some("Freestanding OpenGL 1.3 demonstration")
+        );
+        assert_eq!(param.title_sub_name_in("ja-JP"), None);
+
+        let bytes = param.to_bytes().expect("bytes");
+        let again = Param::parse(&bytes).expect("document");
+        assert_eq!(
+            again.title_sub_name(),
+            Some("Freestanding OpenGL 1.3 demonstration")
+        );
     }
 }

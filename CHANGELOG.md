@@ -14,6 +14,31 @@ CI that would produce one has never run.
 
 ### Added
 
+- **Fallback presentation assets and subtitle for flat title directories** (2026-09-17):
+  `selfish --format title` now ensures every packaged title directory has full OS ShellUI
+  presentation assets (`pic0.png`, `logo.png`, `icon0.png`) and descriptive subtitle metadata
+  (`titleSubName` in `param.json`).
+  - When an application does not supply a custom background (`--pic0`), `selfish` generates a
+    default dark ambient 1080p background (`background.png`), preventing the OS home menu from
+    falling back to a grey void (`bg_hub_default.dds`). Custom backgrounds are validated and
+    normalized (1920x1080 or 3840x2160, 16:9, RGB without alpha).
+  - When an application does not supply a secondary logo (`--logo`), `selfish` generates a
+    subtle 540x140 translucent glass badge with pixel mascot and OOPS/SELFish typography
+    (`badge.png`), floating above the title text in ShellUI. Custom logos are validated within
+    1920x1080 and normalized to 32-bit RGBA.
+  - `--subtitle <TEXT>` writes `titleSubName` under `localizedParameters` in `param.json`,
+    defaulting to `"OOPS Native Title"` when not specified.
+- **`--title-id` is checked for shape when the format carries one** (2026-09-17): four capital
+  letters then five digits, and anything else is refused with the reason. The id is written into
+  `param.json` and `PARAM.SFO` and names the directory the console indexes by, and a malformed
+  one fails in the worst available way - every file installs, the directory is complete and
+  correct, and the console declines to index it while saying so only in its own log. Measured
+  that day on oops-apps' `gl1-probe`, whose `GL1P00001` has a digit among the letters: it staged
+  onto a retail console perfectly and produced `20 Invalid TitleId : [GL1P00001]` and
+  `AppPromote Error [GL1P00001] ret = [0x80bd000a]` on the target, while four-letter ids beside
+  it indexed normally. Renaming it `GLPB00001` and changing nothing else made it install.
+  Checked only for `title` and `pkg`: an `elf`, `prx` or `eboot` carries no id, and refusing one
+  for the shape of a value it never writes would be refusing the wrong thing.
 - **Seven crates in a dependency spine**, in build order: `abi` (the generation split, and it
   depends on nothing), `nid`, `elf`, `container`, `title`, `pfs`, `pkg`. Each depends only on
   those before it, which is what keeps cryptography out of a loader: an emulator reading a bare
