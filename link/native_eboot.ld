@@ -40,10 +40,20 @@ SECTIONS
     .sce_dynlibdata : { KEEP(*(.sce_dynlibdata)) } :dynlibdata
     .dynamic        : { *(.dynamic); . += 0x20000; } :data :dynamic
 
+    /* .eh_frame is deliberately NOT discarded. libunwind built freestanding
+       (_LIBUNWIND_IS_BAREMETAL) finds its frame table by scanning between
+       __eh_frame_start and __eh_frame_end rather than through dl_iterate_phdr,
+       so discarding the section left both symbols equal and every table lookup
+       empty. The visible effect was that a `throw` never reached any `catch`,
+       not even `catch (...)`: with no frame table the unwinder cannot walk out
+       of the throwing frame at all, so it calls std::terminate instead. The
+       loader's "corrupted eh_frame_hdr or eh_frame" warning is the same fact
+       reported one layer down. Costs ~19 KiB on a title that uses exceptions
+       and nothing on one that does not. */
+
     /DISCARD/ : {
         *(.comment)
         *(.note .note.*)
-        *(.eh_frame .eh_frame_hdr)
         *(.gnu.version*)
     }
 }
