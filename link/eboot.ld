@@ -54,6 +54,7 @@ PHDRS
     dynamic   PT_DYNAMIC FLAGS(6);
     interp    PT_INTERP FLAGS(4);
     procparam 0x61000001 FLAGS(4);
+    tls       PT_TLS FLAGS(4);
 }
 
 SECTIONS
@@ -95,6 +96,9 @@ SECTIONS
      * segment, which is the only way a loader finds it. */
     .sce_process_param : { KEEP(*(.sce_process_param)) } :data :procparam
 
+    .tdata          : { *(.tdata .tdata.*) }   :data :tls
+    .tbss           : { *(.tbss .tbss.* .tcommon) } :data :tls
+
     .data           : { *(.data .data.*) }    :data
     /* Two sections, not one.
      *
@@ -114,7 +118,6 @@ SECTIONS
      * currently depends on it. */
     .got            : { *(.got) }             :data
     .got.plt        : { *(.got.plt) }         :data
-    .bss            : { *(.bss .bss.* COMMON) } :data
 
     /* Sized for the number of libraries, which is what actually drives it.
      *
@@ -127,6 +130,10 @@ SECTIONS
      */
     .sce_dynlibdata : { KEEP(*(.sce_dynlibdata)) } :dynlibdata
     .dynamic        : { *(.dynamic); . += 0x20000; } :data :dynamic
+
+    /* .bss MUST be placed last in the :data segment so it remains NOBITS without
+       forcing zero-padding into the file before subsequent PROGBITS sections (REQ-20260923T2350Z-6c1a). */
+    .bss            : { *(.bss .bss.* COMMON) } :data
 
     /* Nothing here belongs in a loaded module, and leaving them in makes the file
      * larger and the segment layout harder to read. */

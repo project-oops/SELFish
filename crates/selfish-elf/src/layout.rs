@@ -18,6 +18,12 @@
 /// The script, compiled in so the test below reads the real file.
 pub const SCRIPT: &str = include_str!("../../../link/module.ld");
 
+/// Linker script for native current-generation (Prospero) eboots.
+pub const NATIVE_EBOOT_SCRIPT: &str = include_str!("../../../link/native_eboot.ld");
+
+/// Linker script for older-generation (Orbis) eboots.
+pub const EBOOT_SCRIPT: &str = include_str!("../../../link/eboot.ld");
+
 /// The console's allocation granularity.
 ///
 /// **Not the host's 4 KiB.** A segment that begins part-way into one of these cannot be
@@ -110,5 +116,40 @@ mod tests {
         // Without FILEHDR and PHDRS the header table is not inside any segment, and a loader
         // that maps only what the segments describe cannot read the table it just used.
         assert!(SCRIPT.contains("PT_LOAD FILEHDR PHDRS"));
+    }
+
+    #[test]
+    fn eboot_scripts_declare_pt_tls_and_keep_bss_last_in_data() {
+        for (name, script) in [
+            ("native_eboot.ld", super::NATIVE_EBOOT_SCRIPT),
+            ("eboot.ld", super::EBOOT_SCRIPT),
+        ] {
+            // Must declare PT_TLS segment (REQ-20260915T0001Z-8d72)
+            assert!(
+                script.contains("tls       PT_TLS FLAGS(4);"),
+                "{name} should declare `tls PT_TLS FLAGS(4);`"
+            );
+            // Must place .tdata and .tbss in :data :tls
+            assert!(
+                script.contains(".tdata          : { *(.tdata .tdata.*) }   :data :tls"),
+                "{name} should place .tdata in :data :tls"
+            );
+            assert!(
+                script.contains(".tbss           : { *(.tbss .tbss.* .tcommon) } :data :tls"),
+                "{name} should place .tbss in :data :tls"
+            );
+
+            // .bss MUST be placed after .dynamic so NOBITS is not forced to write zeros to the file (REQ-20260923T2350Z-6c1a)
+            let bss_pos = script
+                .find(".bss            :")
+                .unwrap_or_else(|| panic!("{name} missing .bss section"));
+            let dynamic_pos = script
+                .find(".dynamic        :")
+                .unwrap_or_else(|| panic!("{name} missing .dynamic section"));
+            assert!(
+                bss_pos > dynamic_pos,
+                "{name}: .bss must be placed after .dynamic in the :data segment"
+            );
+        }
     }
 }

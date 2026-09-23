@@ -82,14 +82,31 @@ impl Container {
         Self::for_stage(STAGE_VERTEX, shader_size, target, sh_registers)
     }
 
+    /// A geometry shader container. Stage [`STAGE_GEOMETRY`].
+    #[must_use]
+    pub fn geometry(shader_size: u32, target: u32, sh_registers: Vec<ShaderRegister>) -> Self {
+        Self::for_stage(STAGE_GEOMETRY, shader_size, target, sh_registers)
+    }
+
+    /// An export shader container. Stage [`STAGE_EXPORT`].
+    #[must_use]
+    pub fn export(shader_size: u32, target: u32, sh_registers: Vec<ShaderRegister>) -> Self {
+        Self::for_stage(STAGE_EXPORT, shader_size, target, sh_registers)
+    }
+
+    /// A hull shader container. Stage [`STAGE_HULL`].
+    #[must_use]
+    pub fn hull(shader_size: u32, target: u32, sh_registers: Vec<ShaderRegister>) -> Self {
+        Self::for_stage(STAGE_HULL, shader_size, target, sh_registers)
+    }
+
     /// A container for a given stage `type` value.
     ///
     /// The named constructors ([`compute`](Self::compute), [`pixel`](Self::pixel),
-    /// [`vertex`](Self::vertex)) cover the stage values a citable source establishes. This is the
-    /// general primitive for any other stage: a caller that has confirmed a `type` value - from
-    /// hardware, say - passes it directly, and the container is laid out around it. The crate does
-    /// not assert what an arbitrary `type` means; only the stage values with a named constant are
-    /// ones it stands behind. The registers are the shader's, supplied by the caller.
+    /// [`vertex`](Self::vertex), [`geometry`](Self::geometry), [`export`](Self::export),
+    /// [`hull`](Self::hull)) cover the stage values confirmed on hardware. This is the general
+    /// primitive for any stage: a caller passes the stage byte directly, and the container is laid
+    /// out around it. The registers are the shader's, supplied by the caller.
     #[must_use]
     pub fn for_stage(
         stage: u8,
@@ -218,24 +235,29 @@ pub fn registers_at(container: &[u8], field: usize, count: usize) -> Option<Vec<
     Some(out)
 }
 
-/// The compute stage `type`. craziiEmu maps it to the compute program registers; the 9f4c
-/// hardware probe's baseline is a compute container the console accepts.
+/// The compute stage `type` (CS). Matches `COMP_PGM_LO` (0x20c).
 pub const STAGE_COMPUTE: u8 = 0;
 
-/// The pixel (fragment) stage `type`. craziiEmu's `1 => SpiShaderPgmLoPs`; obSCEne's
-/// `166-agc/primitive-draw` uses it for the fragment stage on hardware.
+/// The pixel (fragment) stage `type` (PS). Matches `SPI_SHADER_PGM_LO_PS` (0x08).
 pub const STAGE_PIXEL: u8 = 1;
 
-/// The vertex stage `type`. craziiEmu's `2 => SpiShaderPgmLoEs` - the "export shader", the
-/// hardware stage a vertex shader runs in; obSCEne's `166-agc/primitive-draw` draws with `type=2`
-/// as its vertex stage. Named `vertex` for the API stage it serves, `ES` for the hardware one.
-///
-/// The higher stages obSCEne's request named - geometry, hull - are deliberately **not** given
-/// constants here: their values conflict with the only citable header-byte source (craziiEmu has
-/// `4=GS`, `7=LS`, no `3`), and the 9f4c probe did not exercise them. A caller that has confirmed
-/// such a value builds it with [`Container::for_stage`] rather than a constant this crate cannot
-/// yet stand behind. (D103)
+/// The vertex stage `type` (VS). Matches `SPI_SHADER_PGM_LO_VS` (0xc8).
 pub const STAGE_VERTEX: u8 = 2;
+
+/// The geometry stage `type` (GS). Matches `SPI_SHADER_PGM_LO_GS` (0x148).
+pub const STAGE_GEOMETRY: u8 = 3;
+
+/// The local shader stage `type` (LS, unfused VS half). Accepted unconditionally by `sceAgcCreateShader`.
+pub const STAGE_LOCAL: u8 = 4;
+
+/// The hull half stage `type` (HS half, unfused Hull half). Accepted unconditionally by `sceAgcCreateShader`.
+pub const STAGE_HULL_HALF: u8 = 5;
+
+/// The export shader stage `type` (ES). Matches `SPI_SHADER_PGM_LO_ES` (0x88).
+pub const STAGE_EXPORT: u8 = 6;
+
+/// The hull shader stage `type` (HS). Matches `SPI_SHADER_PGM_LO_HS` (0x108).
+pub const STAGE_HULL: u8 = 7;
 
 /// The `file_header` magic bytes, from the table.
 ///
@@ -390,8 +412,9 @@ fn read_u64(bytes: &[u8], at: usize) -> Option<u64> {
 )]
 mod tests {
     use super::{
-        Container, STAGE_COMPUTE, STAGE_PIXEL, STAGE_VERTEX, ShaderRegister, magic, offset_of,
-        registers_at, relocate, version,
+        Container, STAGE_COMPUTE, STAGE_EXPORT, STAGE_GEOMETRY, STAGE_HULL, STAGE_HULL_HALF,
+        STAGE_LOCAL, STAGE_PIXEL, STAGE_VERTEX, ShaderRegister, magic, offset_of, registers_at,
+        relocate, version,
     };
 
     /// The compute program-address registers, from craziiEmu: lo at 0x20C, hi at 0x20D. Their
@@ -448,32 +471,47 @@ mod tests {
     }
 
     #[test]
-    fn pixel_and_vertex_differ_from_compute_only_in_the_type_byte() {
-        // The container format is stage-agnostic - only `type` at 0x5a changes. So a pixel or
-        // vertex container is a compute one with one byte different, and nothing else.
+    fn all_eight_stages_differ_from_compute_only_in_the_type_byte() {
+        // The container format is stage-agnostic - only `type` at 0x5a changes.
         let regs = compute_regs();
         let compute = Container::compute(256, 0x0E, regs.clone()).build();
         let pixel = Container::pixel(256, 0x0E, regs.clone()).build();
-        let vertex = Container::vertex(256, 0x0E, regs).build();
+        let vertex = Container::vertex(256, 0x0E, regs.clone()).build();
+        let geometry = Container::geometry(256, 0x0E, regs.clone()).build();
+        let local = Container::for_stage(STAGE_LOCAL, 256, 0x0E, regs.clone()).build();
+        let hull_half = Container::for_stage(STAGE_HULL_HALF, 256, 0x0E, regs.clone()).build();
+        let export = Container::export(256, 0x0E, regs.clone()).build();
+        let hull = Container::hull(256, 0x0E, regs).build();
 
+        assert_eq!(compute[0x5a], STAGE_COMPUTE, "compute type = 0");
         assert_eq!(pixel[0x5a], STAGE_PIXEL, "pixel type = 1");
         assert_eq!(vertex[0x5a], STAGE_VERTEX, "vertex type = 2");
+        assert_eq!(geometry[0x5a], STAGE_GEOMETRY, "geometry type = 3");
+        assert_eq!(local[0x5a], STAGE_LOCAL, "local type = 4");
+        assert_eq!(hull_half[0x5a], STAGE_HULL_HALF, "hull_half type = 5");
+        assert_eq!(export[0x5a], STAGE_EXPORT, "export type = 6");
+        assert_eq!(hull[0x5a], STAGE_HULL, "hull type = 7");
 
         let differs = |a: &[u8], b: &[u8]| -> Vec<usize> {
             (0..a.len().min(b.len()))
                 .filter(|i| a[*i] != b[*i])
                 .collect()
         };
-        assert_eq!(
-            differs(&compute, &pixel),
-            vec![0x5a],
-            "pixel vs compute: only type"
-        );
-        assert_eq!(
-            differs(&compute, &vertex),
-            vec![0x5a],
-            "vertex vs compute: only type"
-        );
+        for (name, stage_buf) in [
+            ("pixel", pixel),
+            ("vertex", vertex),
+            ("geometry", geometry),
+            ("local", local),
+            ("hull_half", hull_half),
+            ("export", export),
+            ("hull", hull),
+        ] {
+            assert_eq!(
+                differs(&compute, &stage_buf),
+                vec![0x5a],
+                "{name} vs compute: only type byte differs"
+            );
+        }
     }
 
     #[test]

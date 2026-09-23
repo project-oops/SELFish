@@ -73,7 +73,7 @@ header	num_input_semantics	0x50	4	u32le	-	count of input_semantics entries
 header	scratch_size_dw_per_thread	0x54	2	u16le	-	scratch dwords per thread; supplied
 header	num_output_semantics	0x56	2	u16le	-	count of output_semantics entries
 header	special_sizes_bytes	0x58	2	u16le	-	size of the ShaderSpecialRegs block; supplied
-header	type	0x5a	1	u8	-	shader stage, from craziiEmu's register switch: 0=compute, 1=pixel(PS), 2/6=ES, 4=GS, 7=LS. 1 and 2 also hardware-confirmed (166-agc/primitive-draw, and 9f4c rejects type/register mismatch). No 3. The console rejects a type that mismatches its registers (INVALID_STAGE_REGISTERS)
+header	type	0x5a	1	u8	-	shader stage (0..7), hardware-confirmed via retail libSceAgc sceAgcCreateShader (obSCEne 166-agc/shader-graphics-stages): 0=compute (CS), 1=pixel (PS), 2=vertex (VS), 3=geometry (GS), 4=local (LS), 5=hull-half (HS half), 6=export (ES), 7=hull (HS). The console rejects a type that mismatches its registers (INVALID_STAGE_REGISTERS)
 header	num_cx_registers	0x5b	1	u8	-	count of cx_registers entries
 header	num_sh_registers	0x5c	1	u8	-	count of sh_registers entries
 header	(size)	-	0x60	size	-	the header rounded up to an 8-byte boundary; sub-tables follow
