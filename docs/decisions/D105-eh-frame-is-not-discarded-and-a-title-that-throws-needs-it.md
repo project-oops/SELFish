@@ -67,12 +67,24 @@ The check that means something is the **width**:
 `cxx-throw` now asserts that, reading the link map rather than the ELF because `make title`
 rewrites the ELF into a console module and moves its symbol table out of reach.
 
-## Where else this line lived
+## Where else this line lived, and why those copies kept it
 
 Four copies of this script exist under `oops-apps`, as `local_tls.ld` - this script plus a
 `PT_TLS`, for titles that need thread-local storage. All four carried the same `/DISCARD/`
-entry and all four are changed in the same breath, each with a comment saying they must stay in
-step with this one.
+entry, and the first instinct was to change all four in the same breath. **That was measured
+and reversed within the hour.**
+
+`oops-libunwind.mk` is included by `oops-utilities/cxx-throw` and by nothing else. The four
+`local_tls.ld` titles - `mesa-demos`, `mesa-cube`, `mesa-dri-probe`, `mesa-winsys-probe` - link
+no unwinder at all, which `grep -c libunwind build/mesa-demos.map` answers as `0`. So for them
+`.eh_frame` has no reader in the image, and keeping it cost **1,386,512 bytes** on the
+mesa-demos eboot: 26,733,824 to 28,120,336, measured by relinking `textures` before and after.
+
+That is the rule above applied honestly rather than a second exception to it. A section is
+discarded exactly where nothing in the linked image reads it; the base script cannot know
+whether a title links an unwinder, so the base script must keep it, and a title that knows it
+does not may drop it. Each of the four now says so, and says what to change if it ever includes
+`oops-libunwind.mk`.
 
 `link/eboot.ld`, `link/library.ld` and `link/module.ld` still carry the entry. They are left
 alone deliberately: no title built through them has been observed to throw, and changing a
