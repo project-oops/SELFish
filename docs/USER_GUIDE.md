@@ -4,7 +4,7 @@ Welcome to the **SELFish** user guide.
 
 This guide provides clean, copy-pasteable recipes for **homebrew developers and packagers** who want to transform raw compiled ELF binaries into bootable signed containers (`eboot.bin`), structured retail title directories, and installable packages (`.pkg`).
 
-If you are an LLM agent, format researcher, or compiler engineer seeking internal crypto specifications, segment header tables, or decision records, see the **[Technical Reference](README.md)** and **[DECISIONS.md](DECISIONS.md)** instead.
+For the format internals, the container layout and the decision records, see the **[Technical Reference](README.md)** and **[DECISIONS.md](DECISIONS.md)**.
 
 ---
 
