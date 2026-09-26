@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/selfish-bytes",
     "crates/selfish-abi",
     "crates/selfish-nid",
     "crates/selfish-elf",
@@ -22,6 +23,7 @@ publish = false
 # The dependency spine, in build order. Each crate depends only on those above it, and the
 # split is not organisational: it is what keeps cryptography out of a loader.
 #
+#   bytes       bounds-checked integer reads and writes. Depends on nothing.
 #   abi         the generation split, ABI constants. Depends on nothing.
 #   nid         the import hash. Depends on nothing either, and sits here because a module's
 #               undefined symbols are named by it - see D015.
@@ -34,6 +36,7 @@ publish = false
 # An emulator loading a bare executable takes `elf` and stops there. Nothing makes it
 # compile a cipher it will never call.
 [workspace.dependencies]
+selfish-bytes = { path = "crates/selfish-bytes" }
 selfish-abi = { path = "crates/selfish-abi" }
 selfish-nid = { path = "crates/selfish-nid" }
 selfish-elf = { path = "crates/selfish-elf" }

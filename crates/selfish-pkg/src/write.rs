@@ -37,6 +37,7 @@
 //! *wrapped* under public keys - a public key cannot unwrap, so producing them gains no ability
 //! to read anything (D054). The container's own signature area stays zero. (principle 6)
 
+use selfish_bytes::{write_be, write_slice};
 use sha2::{Digest, Sha256};
 
 use crate::derive::{self, DIGEST};
@@ -611,17 +612,17 @@ impl Builder {
         out.get_mut(..MAGIC.len())
             .ok_or(WriteError::TooLarge)?
             .copy_from_slice(&MAGIC);
-        put32(
+        write_be(
             &mut out,
             COUNT_AT,
             u32::try_from(count).map_err(|_| WriteError::TooLarge)?,
         );
-        put32(
+        write_be(
             &mut out,
             TABLE_AT,
             u32::try_from(table_at).map_err(|_| WriteError::TooLarge)?,
         );
-        put64(&mut out, IMAGE_AT, image_at.try_into().unwrap_or(u64::MAX));
+        write_be(&mut out, IMAGE_AT, image_at.try_into().unwrap_or(u64::MAX));
 
         write_header_fields(
             &mut out, count, entries, image_at, image_len, kind, cache_size,
@@ -634,12 +635,7 @@ impl Builder {
 
         for (slot, entry) in entries.iter().enumerate() {
             let record = table_at.saturating_add(slot.saturating_mul(ENTRY_SIZE));
-            put32(&mut out, record, entry.id);
-            put32(&mut out, record.saturating_add(0x04), entry.name_offset);
-            put32(&mut out, record.saturating_add(0x08), entry.flags1);
-            put32(&mut out, record.saturating_add(0x0C), entry.flags2);
-            put32(&mut out, record.saturating_add(0x10), entry.offset);
-            put32(&mut out, record.saturating_add(0x14), entry.size);
+            write_slice(&mut out, record, &entry.row());
         }
         for (id, body) in contents {
             if let Some(entry) = entries.iter().find(|e| e.id == *id) {
@@ -825,7 +821,7 @@ fn encrypt_licences(
             entry_id::IMAGE_KEY => keys::IMAGE_KEY_INDEX,
             _ => continue,
         };
-        let row = entry_row(entry);
+        let row = entry.row();
         if let Some((_, body)) = contents.iter_mut().find(|(id, _)| *id == entry.id) {
             // The builder's passcode, not the fake one. Hardcoding the fake passcode here
             // encrypted these entries under a key the package's own key blobs do not lead to,
@@ -937,21 +933,6 @@ fn resolve_name_offset(id: u32, contents: &[(u32, Vec<u8>)]) -> u32 {
     0
 }
 
-/// One entry's table row, as it will be written.
-///
-/// The derivation hashes the row, so a writer has to produce the same thirty-two bytes the
-/// reader will later find in the table - not the entry it came from.
-fn entry_row(entry: &Entry) -> [u8; ENTRY_SIZE] {
-    let mut row = [0_u8; ENTRY_SIZE];
-    put32(&mut row, 0x00, entry.id);
-    put32(&mut row, 0x04, entry.name_offset);
-    put32(&mut row, 0x08, entry.flags1);
-    put32(&mut row, 0x0C, entry.flags2);
-    put32(&mut row, 0x10, entry.offset);
-    put32(&mut row, 0x14, entry.size);
-    row
-}
-
 /// The content id as the licence wants it: the bytes, NUL padded to its field.
 fn content_id_bytes(id: &str) -> Vec<u8> {
     let mut out = vec![0_u8; CONTENT_ID_LEN];
@@ -1038,14 +1019,14 @@ fn write_header_fields(
         .checked_add(image_len64)
         .ok_or(WriteError::TooLarge)?;
 
-    put32(out, header::FLAGS, header_value::FLAGS);
-    put32(out, header::UNK_0C, header_value::UNK_0C);
+    write_be(out, header::FLAGS, header_value::FLAGS);
+    write_be(out, header::UNK_0C, header_value::UNK_0C);
     // **Not the entry count.** This crate wrote the total here, and three real packages hold
     // `6` regardless of how many entries they carry (14, 23, 14). It counts the *SC* entries -
     // the format's own, ahead of the title's - and a console reads it to find them. Writing the
     // total made an installer read past them and reject the package. (measured 3/3)
-    put16(out, header::SC_ENTRY_COUNT, header_value::SC_ENTRY_COUNT);
-    put16(
+    write_be(out, header::SC_ENTRY_COUNT, header_value::SC_ENTRY_COUNT);
+    write_be(
         out,
         header::ENTRY_COUNT_2,
         u16::try_from(count).unwrap_or(u16::MAX),
@@ -1061,12 +1042,12 @@ fn write_header_fields(
         .take(usize::from(header_value::SC_ENTRY_COUNT))
         .map(|entry| usize::try_from(entry.size).unwrap_or(0))
         .sum();
-    put32(
+    write_be(
         out,
         header::MAIN_ENTRY_DATA_SIZE,
         u32::try_from(sc_data & !0x1FF).unwrap_or(0),
     );
-    put64(out, header::BODY_OFFSET, header_value::BODY_OFFSET);
+    write_be(out, header::BODY_OFFSET, header_value::BODY_OFFSET);
     // **Derived, not constant.** This was `0x7E000`, on the strength of two packages holding it -
     // and the third holds `0x57E000`. The rule all three fit is that the body runs from
     // `BODY_OFFSET` to where the image begins:
@@ -1085,33 +1066,33 @@ fn write_header_fields(
         .checked_sub(usize::try_from(header_value::BODY_OFFSET).unwrap_or(0))
         .and_then(|len| u64::try_from(len).ok())
         .unwrap_or(header_value::BODY_SIZE);
-    put64(out, header::BODY_SIZE, body_size);
-    put32(out, header::DRM_TYPE, u32::from(drm_type));
-    put32(out, header::CONTENT_TYPE, u32::from(content_type));
-    put32(out, header::CONTENT_FLAGS, header_value::CONTENT_FLAGS);
+    write_be(out, header::BODY_SIZE, body_size);
+    write_be(out, header::DRM_TYPE, u32::from(drm_type));
+    write_be(out, header::CONTENT_TYPE, u32::from(content_type));
+    write_be(out, header::CONTENT_FLAGS, header_value::CONTENT_FLAGS);
     // What the installer promotes, which is everything ahead of the image.
     //
     // Zero here is what this crate wrote, and it is the field an installer reads to decide there
     // is nothing to promote. In all three real packages it equals the image offset exactly
     // (0x80000, 0x580000, 0x80000). (measured 3/3)
-    put32(
+    write_be(
         out,
         header::PROMOTE_SIZE,
         u32::try_from(image_at).unwrap_or(0),
     );
-    put32(out, header::VERSION_DATE, header_value::VERSION_DATE);
-    put32(out, header::VERSION_HASH, header_value::VERSION_HASH);
-    put32(out, header::EKC_VERSION, header_value::EKC_VERSION);
+    write_be(out, header::VERSION_DATE, header_value::VERSION_DATE);
+    write_be(out, header::VERSION_HASH, header_value::VERSION_HASH);
+    write_be(out, header::EKC_VERSION, header_value::EKC_VERSION);
 
-    put32(out, header::UNK_400, header_value::UNK_400);
-    put32(out, header::IMAGE_COUNT, header_value::IMAGE_COUNT);
-    put64(out, header::PFS_FLAGS, header_value::PFS_FLAGS);
-    put64(out, header::IMAGE_SIZE, image_len64);
-    put64(out, header::MOUNT_IMAGE_OFFSET, 0);
-    put64(out, header::MOUNT_IMAGE_SIZE, total);
-    put64(out, header::PACKAGE_SIZE, total);
-    put32(out, header::SIGNED_SIZE, header_value::SIGNED_SIZE);
-    put32(
+    write_be(out, header::UNK_400, header_value::UNK_400);
+    write_be(out, header::IMAGE_COUNT, header_value::IMAGE_COUNT);
+    write_be(out, header::PFS_FLAGS, header_value::PFS_FLAGS);
+    write_be(out, header::IMAGE_SIZE, image_len64);
+    write_be(out, header::MOUNT_IMAGE_OFFSET, 0_u64);
+    write_be(out, header::MOUNT_IMAGE_SIZE, total);
+    write_be(out, header::PACKAGE_SIZE, total);
+    write_be(out, header::SIGNED_SIZE, header_value::SIGNED_SIZE);
+    write_be(
         out,
         header::CACHE_SIZE,
         cache_size.unwrap_or(header_value::CACHE_SIZE),
@@ -1301,24 +1282,6 @@ fn layout_rank(id: u32) -> usize {
         0x1200,
     ];
     ORDER.iter().position(|&x| x == id).unwrap_or(ORDER.len())
-}
-
-fn put16(out: &mut [u8], at: usize, value: u16) {
-    if let Some(slot) = out.get_mut(at..at.saturating_add(2)) {
-        slot.copy_from_slice(&value.to_be_bytes());
-    }
-}
-
-fn put32(out: &mut [u8], at: usize, value: u32) {
-    if let Some(slot) = out.get_mut(at..at.saturating_add(4)) {
-        slot.copy_from_slice(&value.to_be_bytes());
-    }
-}
-
-fn put64(out: &mut [u8], at: usize, value: u64) {
-    if let Some(slot) = out.get_mut(at..at.saturating_add(8)) {
-        slot.copy_from_slice(&value.to_be_bytes());
-    }
 }
 
 /// Why a package could not be assembled.

@@ -106,6 +106,41 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// The six big-endian words of a table row, in field order.
+    const FIELDS: [usize; 6] = [0x00, 0x04, 0x08, 0x0C, 0x10, 0x14];
+
+    /// Read one from a table row, or `None` if the row is short.
+    fn from_row(row: &[u8]) -> Option<Self> {
+        let [id, name_offset, flags1, flags2, offset, size] =
+            Self::FIELDS.map(|at| selfish_bytes::read_be(row, at));
+        Some(Self {
+            id: id?,
+            name_offset: name_offset?,
+            flags1: flags1?,
+            flags2: flags2?,
+            offset: offset?,
+            size: size?,
+        })
+    }
+
+    /// The table row a reader finds for this entry. The trailing eight bytes are zero.
+    pub(crate) fn row(&self) -> [u8; ENTRY_SIZE] {
+        let mut row = [0_u8; ENTRY_SIZE];
+        let values = [
+            self.id,
+            self.name_offset,
+            self.flags1,
+            self.flags2,
+            self.offset,
+            self.size,
+        ];
+        for (at, value) in Self::FIELDS.into_iter().zip(values) {
+            // A row holds every field.
+            let _ = selfish_bytes::write_be(&mut row, at, value);
+        }
+        row
+    }
+
     /// Whether this entry's data is encrypted.
     #[must_use]
     pub const fn is_encrypted(&self) -> bool {
@@ -178,8 +213,9 @@ impl<'a> Package<'a> {
             return Err(PackageError::NotAPackage(found));
         }
 
-        let count = read_u32_be(bytes, ENTRY_COUNT_OFFSET)?;
-        let table = read_u32_be(bytes, TABLE_OFFSET_OFFSET)?;
+        let word = |at| selfish_bytes::read_be::<u32>(bytes, at).ok_or(PackageError::TooShort);
+        let count = word(ENTRY_COUNT_OFFSET)?;
+        let table = word(TABLE_OFFSET_OFFSET)?;
 
         // A count is a claim, and a wrong one asks for an allocation before anything has been
         // validated. Bounded against what is actually present rather than trusted.
@@ -200,17 +236,8 @@ impl<'a> Package<'a> {
                 .and_then(|i| i.checked_mul(ENTRY_SIZE))
                 .and_then(|o| o.checked_add(table_at))
                 .ok_or(PackageError::TableOutOfBounds)?;
-            entries.push(Entry {
-                id: read_u32_be(bytes, at)?,
-                name_offset: read_u32_be(
-                    bytes,
-                    at.checked_add(0x04).ok_or(PackageError::TooShort)?,
-                )?,
-                flags1: read_u32_be(bytes, at.checked_add(0x08).ok_or(PackageError::TooShort)?)?,
-                flags2: read_u32_be(bytes, at.checked_add(0x0C).ok_or(PackageError::TooShort)?)?,
-                offset: read_u32_be(bytes, at.checked_add(0x10).ok_or(PackageError::TooShort)?)?,
-                size: read_u32_be(bytes, at.checked_add(0x14).ok_or(PackageError::TooShort)?)?,
-            });
+            let row = bytes.get(at..).ok_or(PackageError::TooShort)?;
+            entries.push(Entry::from_row(row).ok_or(PackageError::TooShort)?);
         }
 
         Ok(Self {
@@ -304,14 +331,6 @@ impl<'a> Package<'a> {
             .filter(|id| self.entry(*id).is_none())
             .collect()
     }
-}
-
-fn read_u32_be(bytes: &[u8], at: usize) -> Result<u32, PackageError> {
-    let end = at.checked_add(4).ok_or(PackageError::TooShort)?;
-    let raw = bytes.get(at..end).ok_or(PackageError::TooShort)?;
-    let mut out = [0_u8; 4];
-    out.copy_from_slice(raw);
-    Ok(u32::from_be_bytes(out))
 }
 
 /// Why a package could not be read.

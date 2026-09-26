@@ -1,13 +1,12 @@
 [package]
-name = "selfish-shader"
+name = "selfish-bytes"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "The AGC shader container sceAgcCreateShader is handed"
+description = "Bounds-checked fixed-width integer reads and writes"
 
 [dependencies]
-selfish-bytes.workspace = true
 
 [lints]
 workspace = true

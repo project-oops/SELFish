@@ -389,6 +389,10 @@ name = "selfish-abi"
 version = "0.1.0"
 
 [[package]]
+name = "selfish-bytes"
+version = "0.1.0"
+
+[[package]]
 name = "selfish-cli"
 version = "0.1.0"
 dependencies = [
@@ -411,6 +415,7 @@ name = "selfish-container"
 version = "0.1.0"
 dependencies = [
  "selfish-abi",
+ "selfish-bytes",
  "selfish-elf",
 ]
 
@@ -419,6 +424,7 @@ name = "selfish-elf"
 version = "0.1.0"
 dependencies = [
  "selfish-abi",
+ "selfish-bytes",
  "selfish-nid",
  "zerocopy",
 ]
@@ -438,6 +444,7 @@ dependencies = [
  "flate2",
  "hmac",
  "selfish-abi",
+ "selfish-bytes",
  "sha2",
 ]
 
@@ -450,6 +457,7 @@ dependencies = [
  "hmac",
  "num-bigint",
  "selfish-abi",
+ "selfish-bytes",
  "selfish-container",
  "selfish-pfs",
  "selfish-title",
@@ -459,11 +467,15 @@ dependencies = [
 [[package]]
 name = "selfish-shader"
 version = "0.1.0"
+dependencies = [
+ "selfish-bytes",
+]
 
 [[package]]
 name = "selfish-title"
 version = "0.1.0"
 dependencies = [
+ "selfish-bytes",
  "serde",
  "serde_json",
 ]

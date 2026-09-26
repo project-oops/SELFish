@@ -58,6 +58,8 @@ resolves which name, and the `$` sigil marking a symbol whose name is the identi
   source of truth; code reads them and carries no copy.
 - `crates/` - the dependency spine, in build order; each depends only on those before it, which
   keeps cryptography out of a loader:
+  - `selfish-bytes` - bounds-checked integer reads and writes at an offset; depends on nothing.
+    Every crate reads and writes fields through it.
   - `selfish-abi` - the generation split; depends on nothing.
   - `selfish-nid` - the import hash. It precedes `elf` because a vendor module's undefined
     symbols are named by the hash (D015).
@@ -66,7 +68,7 @@ resolves which name, and the `$` sigil marking a symbol whose name is the identi
   - `selfish-container` - the signed-executable container.
   - `selfish-pfs` - the filesystem inside a package.
   - `selfish-pkg` - packages.
-- Off the spine, depending on nothing in this repository:
+- Off the spine, depending on nothing in this repository but `selfish-bytes`:
   - `selfish-title` - what a title says about itself: `PARAM.SFO` and `param.json`. `pkg` uses
     it; nothing else does.
   - `selfish-shader` - the shader container, from `data/agc-shader-format.tsv`. It owns the

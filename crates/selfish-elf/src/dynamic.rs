@@ -24,6 +24,7 @@
 
 use core::fmt;
 
+use selfish_bytes::read_le;
 use selfish_nid::Nid;
 
 use crate::reloc::Rela;
@@ -517,44 +518,18 @@ pub fn symbols(segment: &[u8], info: &Info) -> Result<Vec<Symbol>, DynamicError>
         let raw = segment
             .get(at..at.saturating_add(SYMBOL_SIZE))
             .ok_or(DynamicError::TableOutOfRange)?;
+        let bad = || DynamicError::TableOutOfRange;
         out.push(Symbol {
-            name_offset: read_u32(raw, 0)?,
+            name_offset: read_le(raw, 0).ok_or_else(bad)?,
             info: raw.get(4).copied().unwrap_or(0),
             other: raw.get(5).copied().unwrap_or(0),
-            section: read_u16(raw, 6)?,
-            value: read_u64(raw, 8)?,
-            size: read_u64(raw, 16)?,
+            section: read_le(raw, 6).ok_or_else(bad)?,
+            value: read_le(raw, 8).ok_or_else(bad)?,
+            size: read_le(raw, 16).ok_or_else(bad)?,
         });
         at = at.saturating_add(entry);
     }
     Ok(out)
-}
-
-fn read_u16(bytes: &[u8], at: usize) -> Result<u16, DynamicError> {
-    let raw = bytes
-        .get(at..at.saturating_add(2))
-        .ok_or(DynamicError::TableOutOfRange)?;
-    let mut out = [0_u8; 2];
-    out.copy_from_slice(raw);
-    Ok(u16::from_le_bytes(out))
-}
-
-fn read_u32(bytes: &[u8], at: usize) -> Result<u32, DynamicError> {
-    let raw = bytes
-        .get(at..at.saturating_add(4))
-        .ok_or(DynamicError::TableOutOfRange)?;
-    let mut out = [0_u8; 4];
-    out.copy_from_slice(raw);
-    Ok(u32::from_le_bytes(out))
-}
-
-fn read_u64(bytes: &[u8], at: usize) -> Result<u64, DynamicError> {
-    let raw = bytes
-        .get(at..at.saturating_add(8))
-        .ok_or(DynamicError::TableOutOfRange)?;
-    let mut out = [0_u8; 8];
-    out.copy_from_slice(raw);
-    Ok(u64::from_le_bytes(out))
 }
 
 /// An import, resolved as far as the module itself can resolve it.

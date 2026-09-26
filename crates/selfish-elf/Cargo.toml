@@ -7,6 +7,7 @@ publish.workspace = true
 description = "The executable format as the platform spells it"
 
 [dependencies]
+selfish-bytes.workspace = true
 selfish-abi.workspace = true
 selfish-nid.workspace = true
 zerocopy.workspace = true

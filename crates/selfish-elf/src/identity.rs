@@ -24,6 +24,8 @@
 //! and nobody did: a loader mapped the module, ran its initialisers, then looked elsewhere for
 //! a process to start. It loads, and it never runs. See [`crate::ObjectType`].
 
+use selfish_bytes::{read_le, write_le};
+
 use crate::{EI_ABIVERSION, EI_OSABI, ElfError, Generation, OSABI_FREEBSD, ObjectType};
 
 /// Offset of `e_type` in the file header.
@@ -149,58 +151,38 @@ pub fn stamp(
     Ok(changes)
 }
 
+/// Make every read-and-execute load segment execute-only. On Prospero-generation hardware
+/// `rtld` refuses an R+X segment in a native program or PRX.
 fn stamp_prospero_segments(bytes: &mut [u8], changes: &mut Vec<Change>) {
-    // On Prospero-generation programs and PRXs, code segments are Execute-Only (PF_X = 1).
-    // R+X (PF_R | PF_X = 5) is rejected by rtld:
-    //   - _exec_self_imgact:1437: R+X segment in native program (for eboot)
-    //   - self_load_shared_object:2850: !!! R+X segment in native prx (for PRX)
     if bytes.len() < 64 {
         return;
     }
-    let phoff = bytes
-        .get(0x20..0x28)
-        .and_then(|s| s.try_into().ok())
-        .map(u64::from_le_bytes)
+    let phoff = read_le::<u64>(bytes, 0x20)
         .and_then(|v| usize::try_from(v).ok())
         .unwrap_or(0);
-    let phnum = bytes
-        .get(0x38..0x3A)
-        .and_then(|s| s.try_into().ok())
-        .map(u16::from_le_bytes)
-        .map_or(0, usize::from);
-    let phentsize = bytes
-        .get(0x36..0x38)
-        .and_then(|s| s.try_into().ok())
-        .map(u16::from_le_bytes)
-        .map_or(0, usize::from);
+    let phnum = read_le::<u16>(bytes, 0x38).map_or(0, usize::from);
+    let phentsize = read_le::<u16>(bytes, 0x36).map_or(0, usize::from);
     if phoff == 0 || phentsize < 56 {
         return;
     }
     for i in 0..phnum {
-        let offset = i.saturating_mul(phentsize);
-        let entry_at = phoff.saturating_add(offset);
-        let type_end = entry_at.saturating_add(4);
-        let flags_end = entry_at.saturating_add(8);
-        if let Some(entry_slice) = bytes.get(entry_at..flags_end) {
-            let p_type = entry_slice
-                .get(..4)
-                .and_then(|s| s.try_into().ok())
-                .map_or(0, u32::from_le_bytes);
-            let p_flags = entry_slice
-                .get(4..8)
-                .and_then(|s| s.try_into().ok())
-                .map_or(0, u32::from_le_bytes);
-            if p_type == crate::segment::LOAD && p_flags == 5 {
-                let Some(flags_mut) = bytes.get_mut(type_end..flags_end) else {
-                    continue;
-                };
-                flags_mut.copy_from_slice(&1_u32.to_le_bytes());
-                changes.push(Change {
-                    field: "p_flags (R+X -> X)",
-                    from: 5,
-                    to: 1,
-                });
-            }
+        let entry_at = phoff.saturating_add(i.saturating_mul(phentsize));
+        let flags_at = entry_at.saturating_add(4);
+        let (Some(p_type), Some(p_flags)) = (
+            read_le::<u32>(bytes, entry_at),
+            read_le::<u32>(bytes, flags_at),
+        ) else {
+            continue;
+        };
+        if p_type == crate::segment::LOAD
+            && p_flags == 5
+            && write_le(bytes, flags_at, 1_u32).is_some()
+        {
+            changes.push(Change {
+                field: "p_flags (R+X -> X)",
+                from: 5,
+                to: 1,
+            });
         }
     }
 }

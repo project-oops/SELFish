@@ -26,7 +26,7 @@
 //! 0x400  the block map: one offset per block, plus a terminator
 //! ```
 
-use crate::PfsError;
+use crate::{PfsError, put};
 
 /// The magic, big-endian, at the start.
 pub const MAGIC: u32 = 0x5046_5343;
@@ -121,14 +121,6 @@ pub fn wrap(payload: &[u8], block_size: u32) -> Result<Vec<u8>, PfsError> {
         .ok_or(PfsError::OutOfRange)?
         .copy_from_slice(payload);
     Ok(out)
-}
-
-fn put(out: &mut [u8], at: usize, value: &[u8]) -> Result<(), PfsError> {
-    let end = at.checked_add(value.len()).ok_or(PfsError::OutOfRange)?;
-    out.get_mut(at..end)
-        .ok_or(PfsError::OutOfRange)?
-        .copy_from_slice(value);
-    Ok(())
 }
 
 #[cfg(test)]

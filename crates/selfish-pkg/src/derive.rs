@@ -187,9 +187,8 @@ fn entry_table_copy_finding(packages: &[Package<'_>]) -> Finding {
             // The same three fields at the same three offsets the outer table uses. Checking
             // only that the record *contains* the numbers somewhere would also be satisfied by
             // a coincidence, which is not a derivation.
-            if be32(record, ID) != Some(entry.id)
-                || be32(record, OFFSET) != Some(entry.offset)
-                || be32(record, SIZE) != Some(entry.size)
+            let found = Entry::from_row(record);
+            if found.map(|f| (f.id, f.offset, f.size)) != Some((entry.id, entry.offset, entry.size))
             {
                 wrong = wrong.saturating_add(1);
             }
@@ -490,13 +489,6 @@ pub mod entry {
     pub const PLAYGO_CHUNK_DAT: u32 = 0x1001;
 }
 
-/// Offset of the id within a record.
-const ID: usize = 0x00;
-/// Offset of the entry's offset.
-const OFFSET: usize = 0x10;
-/// Offset of the entry's size.
-const SIZE: usize = 0x14;
-
 /// Build entry `0x1` for a set of entry contents.
 ///
 /// `self_slot` is the position of entry `0x1` itself, which is zeroed because it cannot hold
@@ -523,44 +515,15 @@ pub fn digest_table(contents: &[&[u8]], self_slot: usize) -> Vec<u8> {
 /// packages examined hold there.
 #[must_use]
 pub fn entry_table_copy(entries: &[Entry]) -> Vec<u8> {
-    /// Name-table offset, at `0x04`.
-    const NAME_OFFSET: usize = 0x04;
-    /// First flag word, at `0x08`.
-    const FLAGS1: usize = 0x08;
-    /// Second flag word, at `0x0C`.
-    const FLAGS2: usize = 0x0C;
-    let mut out = vec![0_u8; entries.len().saturating_mul(ENTRY_SIZE)];
-    for (slot, entry) in entries.iter().enumerate() {
-        let at = slot.saturating_mul(ENTRY_SIZE);
-        put32(&mut out, at.saturating_add(ID), entry.id);
-        put32(&mut out, at.saturating_add(NAME_OFFSET), entry.name_offset);
-        // The flags matter: they are how an entry declares itself encrypted, and a table that
-        // drops them makes a console read a licence's ciphertext as its content. This is the
-        // whole entry table a real package reads, not the three fields a reader here needed.
-        put32(&mut out, at.saturating_add(FLAGS1), entry.flags1);
-        put32(&mut out, at.saturating_add(FLAGS2), entry.flags2);
-        put32(&mut out, at.saturating_add(OFFSET), entry.offset);
-        put32(&mut out, at.saturating_add(SIZE), entry.size);
-    }
-    out
+    // Whole rows, flags included: the flags are how an entry declares itself encrypted, and a
+    // copy without them makes the hardware read a licence's ciphertext as its content.
+    entries.iter().flat_map(Entry::row).collect()
 }
 
 fn sha256(bytes: &[u8]) -> [u8; DIGEST] {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hasher.finalize().into()
-}
-
-fn be32(record: &[u8], at: usize) -> Option<u32> {
-    let mut raw = [0_u8; 4];
-    raw.copy_from_slice(record.get(at..at.saturating_add(4))?);
-    Some(u32::from_be_bytes(raw))
-}
-
-fn put32(out: &mut [u8], at: usize, value: u32) {
-    if let Some(slot) = out.get_mut(at..at.saturating_add(4)) {
-        slot.copy_from_slice(&value.to_be_bytes());
-    }
 }
 
 #[cfg(test)]

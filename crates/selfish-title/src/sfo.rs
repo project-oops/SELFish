@@ -317,21 +317,21 @@ impl Sfo {
         if bytes.get(..magic.len()) != Some(magic.as_slice()) {
             return Err(SfoError::NotAnSfo);
         }
-        let keys_at = usize::try_from(read_u32(bytes, 8)?).map_err(|_| SfoError::OutOfRange)?;
-        let data_at = usize::try_from(read_u32(bytes, 12)?).map_err(|_| SfoError::OutOfRange)?;
-        let count = usize::try_from(read_u32(bytes, 16)?).map_err(|_| SfoError::OutOfRange)?;
+        let keys_at = usize::try_from(le::<u32>(bytes, 8)?).map_err(|_| SfoError::OutOfRange)?;
+        let data_at = usize::try_from(le::<u32>(bytes, 12)?).map_err(|_| SfoError::OutOfRange)?;
+        let count = usize::try_from(le::<u32>(bytes, 16)?).map_err(|_| SfoError::OutOfRange)?;
 
         let mut entries = Vec::with_capacity(count.min(1024));
         for index in 0..count {
             let at = HEADER_SIZE
                 .checked_add(index.checked_mul(INDEX_SIZE).ok_or(SfoError::OutOfRange)?)
                 .ok_or(SfoError::OutOfRange)?;
-            let key_offset = usize::from(read_u16(bytes, at)?);
-            let format = Format::from_code(read_u16(bytes, at.saturating_add(2))?);
-            let length = read_u32(bytes, at.saturating_add(4))?;
-            let reserved = read_u32(bytes, at.saturating_add(8))?;
+            let key_offset = usize::from(le::<u16>(bytes, at)?);
+            let format = Format::from_code(le::<u16>(bytes, at.saturating_add(2))?);
+            let length = le::<u32>(bytes, at.saturating_add(4))?;
+            let reserved = le::<u32>(bytes, at.saturating_add(8))?;
             let data_offset =
-                usize::try_from(read_u32(bytes, at.saturating_add(12))?).unwrap_or(usize::MAX);
+                usize::try_from(le::<u32>(bytes, at.saturating_add(12))?).unwrap_or(usize::MAX);
 
             let key = string_at(bytes, keys_at.saturating_add(key_offset))?;
             let start = data_at.saturating_add(data_offset);
@@ -452,12 +452,7 @@ fn value_of(format: Format, raw: &[u8]) -> Result<Value, SfoError> {
             |_| Value::Binary(raw.to_vec()),
             |text| Value::TextUnterminated(text.to_owned()),
         ),
-        Format::Integer => {
-            let mut out = [0_u8; 4];
-            let bytes = raw.get(..4).ok_or(SfoError::OutOfRange)?;
-            out.copy_from_slice(bytes);
-            Value::Integer(u32::from_le_bytes(out))
-        }
+        Format::Integer => Value::Integer(le(raw, 0)?),
         Format::Other(code) => Value::Unknown(code, raw.to_vec()),
     })
 }
@@ -474,22 +469,9 @@ fn string_at(bytes: &[u8], at: usize) -> Result<String, SfoError> {
         .to_owned())
 }
 
-fn read_u16(bytes: &[u8], at: usize) -> Result<u16, SfoError> {
-    let raw = bytes
-        .get(at..at.saturating_add(2))
-        .ok_or(SfoError::OutOfRange)?;
-    let mut out = [0_u8; 2];
-    out.copy_from_slice(raw);
-    Ok(u16::from_le_bytes(out))
-}
-
-fn read_u32(bytes: &[u8], at: usize) -> Result<u32, SfoError> {
-    let raw = bytes
-        .get(at..at.saturating_add(4))
-        .ok_or(SfoError::OutOfRange)?;
-    let mut out = [0_u8; 4];
-    out.copy_from_slice(raw);
-    Ok(u32::from_le_bytes(out))
+/// A little-endian field, with a short read as this crate's error.
+fn le<T: selfish_bytes::Int>(bytes: &[u8], at: usize) -> Result<T, SfoError> {
+    selfish_bytes::read_le(bytes, at).ok_or(SfoError::OutOfRange)
 }
 
 /// What can go wrong reading one.

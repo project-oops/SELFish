@@ -7,6 +7,7 @@ publish.workspace = true
 description = "The filesystem inside a package"
 
 [dependencies]
+selfish-bytes.workspace = true
 selfish-abi.workspace = true
 aes.workspace = true
 hmac.workspace = true

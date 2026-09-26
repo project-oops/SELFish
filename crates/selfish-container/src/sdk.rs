@@ -295,86 +295,50 @@ fn parse_dotted_version(val: &str) -> Option<u32> {
     Some(u32::from_be_bytes(bytes))
 }
 
-/// Patch `PT_SCE_PROCPARAM` segment inside ELF binary bytes.
+/// Stamp the target SDK versions into an ELF's process or module parameters.
 ///
-/// Returns true if a `PT_SCE_PROCPARAM` segment was located and stamped with the SDK versions.
-#[allow(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::cast_possible_truncation
-)]
+/// The first `PT_SCE_PROCPARAM` carrying the `ORBI` magic, or `PT_SCE_MODULE_PARAM`, of at
+/// least `0x20` bytes gets the Orbis version at `+0x10` and the Prospero version at `+0x14`.
+/// Returns whether one was stamped.
 pub fn patch_elf_procparam(elf_bytes: &mut [u8], target_sdk: TargetSdk) -> bool {
-    if elf_bytes.len() < 64 || &elf_bytes[0..4] != b"\x7fELF" {
+    use selfish_bytes::{read_le, write_le};
+    use selfish_elf::segment;
+
+    if elf_bytes.len() < 64 || elf_bytes.get(..4) != Some(b"\x7fELF".as_slice()) {
         return false;
     }
-
-    let phoff = u64::from_le_bytes(elf_bytes[32..40].try_into().unwrap_or([0; 8])) as usize;
-    let phnum = u16::from_le_bytes(elf_bytes[56..58].try_into().unwrap_or([0; 2])) as usize;
-    let phentsize = u16::from_le_bytes(elf_bytes[54..56].try_into().unwrap_or([0; 2])) as usize;
-
+    let as_usize = |v: u64| usize::try_from(v).unwrap_or(usize::MAX);
+    let phoff = read_le::<u64>(elf_bytes, 32).map_or(0, as_usize);
+    let phnum = read_le::<u16>(elf_bytes, 56).map_or(0, usize::from);
+    let phentsize = read_le::<u16>(elf_bytes, 54).map_or(0, usize::from);
     if phentsize < 56 {
         return false;
     }
 
     for i in 0..phnum {
-        let entry_off = phoff + i * phentsize;
-        if entry_off + 56 > elf_bytes.len() {
+        let entry = phoff.saturating_add(i.saturating_mul(phentsize));
+        if entry.saturating_add(56) > elf_bytes.len() {
             break;
         }
-
-        let p_type = u32::from_le_bytes(
-            elf_bytes[entry_off..entry_off + 4]
-                .try_into()
-                .unwrap_or([0; 4]),
-        );
-        if p_type == 0x61000001 {
-            // Found PT_SCE_PROCPARAM
-            let p_offset = u64::from_le_bytes(
-                elf_bytes[entry_off + 8..entry_off + 16]
-                    .try_into()
-                    .unwrap_or([0; 8]),
-            ) as usize;
-            let p_filesz = u64::from_le_bytes(
-                elf_bytes[entry_off + 32..entry_off + 40]
-                    .try_into()
-                    .unwrap_or([0; 8]),
-            ) as usize;
-
-            if p_offset + 0x18 <= elf_bytes.len() && p_filesz >= 0x20 {
-                // Verify magic 'ORBI' at offset 0x08
-                if &elf_bytes[p_offset + 8..p_offset + 12] == b"ORBI" {
-                    // Update sdk_version at +0x10 and sdk_version_second at +0x14
-                    elf_bytes[p_offset + 0x10..p_offset + 0x14]
-                        .copy_from_slice(&target_sdk.orbis_sdk.to_le_bytes());
-                    elf_bytes[p_offset + 0x14..p_offset + 0x18]
-                        .copy_from_slice(&target_sdk.ppr_sdk.to_le_bytes());
-                    return true;
-                }
-            }
-        } else if p_type == 0x61000002 {
-            // Found PT_SCE_MODULE_PARAM
-            let p_offset = u64::from_le_bytes(
-                elf_bytes[entry_off + 8..entry_off + 16]
-                    .try_into()
-                    .unwrap_or([0; 8]),
-            ) as usize;
-            let p_filesz = u64::from_le_bytes(
-                elf_bytes[entry_off + 32..entry_off + 40]
-                    .try_into()
-                    .unwrap_or([0; 8]),
-            ) as usize;
-
-            if p_offset + 0x18 <= elf_bytes.len() && p_filesz >= 0x20 {
-                // Update sdk_version at +0x10 and sdk_version_second at +0x14
-                elf_bytes[p_offset + 0x10..p_offset + 0x14]
-                    .copy_from_slice(&target_sdk.orbis_sdk.to_le_bytes());
-                elf_bytes[p_offset + 0x14..p_offset + 0x18]
-                    .copy_from_slice(&target_sdk.ppr_sdk.to_le_bytes());
-                return true;
-            }
+        let needs_magic = match read_le::<u32>(elf_bytes, entry) {
+            Some(segment::SCE_PROCPARAM) => true,
+            Some(segment::SCE_MODULE_PARAM) => false,
+            _ => continue,
+        };
+        let offset = read_le::<u64>(elf_bytes, entry.saturating_add(8)).map_or(0, as_usize);
+        let filesz = read_le::<u64>(elf_bytes, entry.saturating_add(32)).map_or(0, as_usize);
+        if offset.saturating_add(0x18) > elf_bytes.len() || filesz < 0x20 {
+            continue;
         }
+        let magic = offset.saturating_add(8);
+        if needs_magic && elf_bytes.get(magic..magic.saturating_add(4)) != Some(b"ORBI".as_slice())
+        {
+            continue;
+        }
+        let orbis = write_le(elf_bytes, offset.saturating_add(0x10), target_sdk.orbis_sdk);
+        let prospero = write_le(elf_bytes, offset.saturating_add(0x14), target_sdk.ppr_sdk);
+        return orbis.and(prospero).is_some();
     }
-
     false
 }
 

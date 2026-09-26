@@ -39,7 +39,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 use crate::write::{dirent, imode, kind};
-use crate::{PfsError, mode, superblock};
+use crate::{PfsError, mode, put, superblock};
 
 /// The name the outer filesystem gives its single file.
 pub const IMAGE_NAME: &str = "pfs_image.dat";
@@ -67,7 +67,7 @@ const HEADER_INODE_SIG_AT: usize = 0xB8;
 ///
 /// Read out of the payload rather than recomputed: `pfs_image.dat` is a `PFSC` container, and the
 /// inode's `size_compressed` holds the *inner* image's length while `size` holds the container's.
-const PFSC_DATA_LENGTH: core::ops::Range<usize> = 0x28..0x30;
+const PFSC_DATA_LENGTH: usize = 0x28;
 /// One XTS sector.
 const SECTOR: usize = 0x1000;
 /// How many sectors at the front are left in the clear: the whole header block.
@@ -390,15 +390,9 @@ pub fn build(options: &Options<'_>) -> Result<Vec<u8>, PfsError> {
         payload_blocks,
         file_start,
     )?;
-    let inner_size = match options.payload.get(PFSC_DATA_LENGTH) {
-        Some(bytes) => {
-            let mut value = [0_u8; 8];
-            value.copy_from_slice(bytes);
-            u64::from_le_bytes(value)
-        }
-        // A payload too short to hold a `PFSC` header is not one, and the honest length is its
-        // own. Nothing is invented: the field is copied where it exists and not guessed where
-        // it does not.
+    // A payload too short to hold a `PFSC` header is not one, and its honest length is its own.
+    let inner_size = match selfish_bytes::read_le(options.payload, PFSC_DATA_LENGTH) {
+        Some(value) => value,
         None => u64::try_from(options.payload.len()).map_err(|_| PfsError::OutOfRange)?,
     };
     put(
@@ -712,19 +706,7 @@ fn place(out: &mut [u8], start: u32, block: usize, body: &[u8]) -> Result<(), Pf
         .map_err(|_| PfsError::OutOfRange)?
         .checked_mul(block)
         .ok_or(PfsError::OutOfRange)?;
-    let end = at.checked_add(body.len()).ok_or(PfsError::OutOfRange)?;
-    out.get_mut(at..end)
-        .ok_or(PfsError::OutOfRange)?
-        .copy_from_slice(body);
-    Ok(())
-}
-
-fn put(out: &mut [u8], at: usize, value: &[u8]) -> Result<(), PfsError> {
-    let end = at.checked_add(value.len()).ok_or(PfsError::OutOfRange)?;
-    out.get_mut(at..end)
-        .ok_or(PfsError::OutOfRange)?
-        .copy_from_slice(value);
-    Ok(())
+    put(out, at, body)
 }
 
 #[cfg(test)]

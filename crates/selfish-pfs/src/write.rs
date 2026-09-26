@@ -27,7 +27,7 @@
 //! blocks N+4..       each node's data, in inode order
 //! ```
 
-use crate::{PfsError, inode, mode, superblock};
+use crate::{PfsError, inode, mode, put_le, superblock};
 
 /// A directory being built.
 #[derive(Debug, Clone, Default)]
@@ -436,29 +436,29 @@ fn write_superblock(
     inode_blocks: usize,
     total_blocks: u32,
 ) -> Result<(), PfsError> {
-    put64(out, superblock::VERSION, 1)?;
-    put64(out, superblock::MAGIC, crate::MAGIC)?;
+    put_le(out, superblock::VERSION, 1_u64)?;
+    put_le(out, superblock::MAGIC, crate::MAGIC)?;
     // Read-only, and the flag every image sets. Not signed and not encrypted: those describe
     // layers this does not build, and claiming either would send a reader looking for digests
     // that are not there and reading inodes at the wrong stride.
     if let Some(byte) = out.get_mut(superblock::READ_ONLY) {
         *byte = 1;
     }
-    put16(out, superblock::MODE, mode::UNKNOWN_ALWAYS_SET)?;
-    put32(out, superblock::BLOCK_SIZE, block_size)?;
+    put_le(out, superblock::MODE, mode::UNKNOWN_ALWAYS_SET)?;
+    put_le(out, superblock::BLOCK_SIZE, block_size)?;
     // Not the block count, despite the name a reader would guess. `LibOrbisPkg@6434772` writes a
     // literal `1` here and remarks that it is always 1; the field that actually sizes the image
     // is `N_DBLOCK`. Writing the real count here looked more correct and would have made every
     // image this builds differ from every image examined, in a field nothing checks.
-    put64(out, superblock::N_BLOCK, 1)?;
-    put64(
+    put_le(out, superblock::N_BLOCK, 1_u64)?;
+    put_le(
         out,
         superblock::INODE_COUNT,
         u64::try_from(inode_count).map_err(|_| PfsError::OutOfRange)?,
     )?;
     // The invariant the reader checks: this times the block size is the image length.
-    put64(out, superblock::N_DBLOCK, u64::from(total_blocks))?;
-    put64(
+    put_le(out, superblock::N_DBLOCK, u64::from(total_blocks))?;
+    put_le(
         out,
         superblock::INODE_BLOCKS,
         u64::try_from(inode_blocks).map_err(|_| PfsError::OutOfRange)?,
@@ -471,11 +471,11 @@ fn write_superblock(
     let table_len = u64::from(inode_blocks_u32(inode_blocks)?)
         .checked_mul(u64::from(block_size))
         .ok_or(PfsError::OutOfRange)?;
-    put16(out, EMBEDDED_INODE + field::NLINK, 1)?;
-    put32(out, EMBEDDED_INODE + field::FLAGS, iflag::BASE)?;
-    put64(out, EMBEDDED_INODE + inode::SIZE, table_len)?;
-    put64(out, EMBEDDED_INODE + field::SIZE_COMPRESSED, table_len)?;
-    put32(
+    put_le(out, EMBEDDED_INODE + field::NLINK, 1_u16)?;
+    put_le(out, EMBEDDED_INODE + field::FLAGS, iflag::BASE)?;
+    put_le(out, EMBEDDED_INODE + inode::SIZE, table_len)?;
+    put_le(out, EMBEDDED_INODE + field::SIZE_COMPRESSED, table_len)?;
+    put_le(
         out,
         EMBEDDED_INODE + inode::BLOCKS,
         inode_blocks_u32(inode_blocks)?,
@@ -497,9 +497,9 @@ fn write_superblock(
     // reads when it mounts `/app0`, and mounting the inner image is where a package built here
     // takes the machine down. Reproducing a field a real image sets is cheap; leaving it zero on
     // the grounds that nobody has named it is how the inode flags stayed wrong for three trips.
-    put32(out, superblock::UNKNOWN_D8, 1)?;
+    put_le(out, superblock::UNKNOWN_D8, 1_u32)?;
 
-    put32(out, superblock::NO_SEED_INDEX, 1)
+    put_le(out, superblock::NO_SEED_INDEX, 1_u32)
 }
 
 /// The inode-block count as the `u32` the inode fields want it as.
@@ -535,41 +535,21 @@ fn write_inode(
         iflag::BASE
     };
 
-    put16(out, at, node.mode)?;
-    put16(out, offset(at, field::NLINK)?, 1)?;
-    put32(out, offset(at, field::FLAGS)?, flags)?;
-    put64(out, offset(at, inode::SIZE)?, size)?;
-    put64(out, offset(at, field::SIZE_COMPRESSED)?, size)?;
-    put32(
+    put_le(out, at, node.mode)?;
+    put_le(out, offset(at, field::NLINK)?, 1_u16)?;
+    put_le(out, offset(at, field::FLAGS)?, flags)?;
+    put_le(out, offset(at, inode::SIZE)?, size)?;
+    put_le(out, offset(at, field::SIZE_COMPRESSED)?, size)?;
+    put_le(
         out,
         offset(at, inode::BLOCKS)?,
         u32::try_from(blocks).map_err(|_| PfsError::OutOfRange)?,
     )?;
-    put32(out, offset(at, inode::PLAIN_START)?, node.start)
+    put_le(out, offset(at, inode::PLAIN_START)?, node.start)
 }
 
 fn offset(base: usize, field: usize) -> Result<usize, PfsError> {
     base.checked_add(field).ok_or(PfsError::OutOfRange)
-}
-
-fn put16(out: &mut [u8], at: usize, value: u16) -> Result<(), PfsError> {
-    put(out, at, &value.to_le_bytes())
-}
-
-fn put32(out: &mut [u8], at: usize, value: u32) -> Result<(), PfsError> {
-    put(out, at, &value.to_le_bytes())
-}
-
-fn put64(out: &mut [u8], at: usize, value: u64) -> Result<(), PfsError> {
-    put(out, at, &value.to_le_bytes())
-}
-
-fn put(out: &mut [u8], at: usize, value: &[u8]) -> Result<(), PfsError> {
-    let end = at.checked_add(value.len()).ok_or(PfsError::OutOfRange)?;
-    out.get_mut(at..end)
-        .ok_or(PfsError::OutOfRange)?
-        .copy_from_slice(value);
-    Ok(())
 }
 
 #[cfg(test)]

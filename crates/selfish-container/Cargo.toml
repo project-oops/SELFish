@@ -7,6 +7,7 @@ publish.workspace = true
 description = "The signed-executable container, read and written"
 
 [dependencies]
+selfish-bytes.workspace = true
 selfish-abi.workspace = true
 selfish-elf.workspace = true
 

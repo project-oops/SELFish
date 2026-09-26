@@ -39,6 +39,7 @@ use core::fmt;
 
 pub use sdk::{SdkDictionary, SdkEntry, TargetSdk, patch_elf_procparam};
 use selfish_abi::Generation;
+use selfish_bytes::read_le;
 use selfish_elf::{Elf, ElfError};
 
 /// Size of the container header.
@@ -212,10 +213,11 @@ impl<'a> Container<'a> {
         let generation =
             Generation::from_container_magic(magic).ok_or(ContainerError::NotAContainer(magic))?;
 
-        let header_size = u64::from(read_u16(head, 0x0C)?);
-        let meta_size = u64::from(read_u16(head, 0x0E)?);
-        let file_size = read_u64(head, 0x10)?;
-        let count = read_u16(head, 0x18)?;
+        let field = |at| read_le::<u16>(head, at).ok_or(ContainerError::TooShort);
+        let header_size = u64::from(field(0x0C)?);
+        let meta_size = u64::from(field(0x0E)?);
+        let file_size = read_le::<u64>(head, 0x10).ok_or(ContainerError::TooShort)?;
+        let count = field(0x18)?;
 
         let mut entries = Vec::with_capacity(usize::from(count));
         for index in 0..u64::from(count) {
@@ -227,11 +229,12 @@ impl<'a> Container<'a> {
             let raw = bytes
                 .get(at..end)
                 .ok_or(ContainerError::EntriesOutOfBounds)?;
+            let field = |at| read_le::<u64>(raw, at).ok_or(ContainerError::TooShort);
             entries.push(Entry {
-                props: read_u64(raw, 0)?,
-                offset: read_u64(raw, 8)?,
-                filesz: read_u64(raw, 16)?,
-                memsz: read_u64(raw, 24)?,
+                props: field(0)?,
+                offset: field(8)?,
+                filesz: field(16)?,
+                memsz: field(24)?,
             });
         }
 
@@ -391,22 +394,6 @@ fn bit(shift: u32) -> u64 {
 /// A props field at its shift.
 fn field(shift: u32, value: u64) -> u64 {
     value.checked_shl(shift).unwrap_or(0)
-}
-
-fn read_u16(bytes: &[u8], at: usize) -> Result<u16, ContainerError> {
-    let end = at.checked_add(2).ok_or(ContainerError::TooShort)?;
-    let raw = bytes.get(at..end).ok_or(ContainerError::TooShort)?;
-    let mut out = [0_u8; 2];
-    out.copy_from_slice(raw);
-    Ok(u16::from_le_bytes(out))
-}
-
-fn read_u64(bytes: &[u8], at: usize) -> Result<u64, ContainerError> {
-    let end = at.checked_add(8).ok_or(ContainerError::TooShort)?;
-    let raw = bytes.get(at..end).ok_or(ContainerError::TooShort)?;
-    let mut out = [0_u8; 8];
-    out.copy_from_slice(raw);
-    Ok(u64::from_le_bytes(out))
 }
 
 /// Round `value` up to a multiple of `to`, refusing rather than wrapping.

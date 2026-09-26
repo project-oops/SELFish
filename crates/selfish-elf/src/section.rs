@@ -17,6 +17,7 @@
 //! lives in a section. A module can carry the first without the second, and treating either
 //! as the other gives an answer for the wrong question.
 
+use selfish_bytes::read_le;
 use zerocopy::{FromBytes, Immutable, KnownLayout, little_endian};
 
 /// Size of one section header.
@@ -266,12 +267,12 @@ impl<'a> Sections<'a> {
         while at.saturating_add(SYMBOL_SIZE) <= raw.len() {
             let chunk = raw.get(at..at.saturating_add(SYMBOL_SIZE))?;
             out.push(Symbol {
-                name_offset: read_u32(chunk, 0)?,
+                name_offset: read_le(chunk, 0)?,
                 info: chunk.get(4).copied()?,
                 other: chunk.get(5).copied()?,
-                section: read_u16(chunk, 6)?,
-                value: read_u64(chunk, 8)?,
-                size: read_u64(chunk, 16)?,
+                section: read_le(chunk, 6)?,
+                value: read_le(chunk, 8)?,
+                size: read_le(chunk, 16)?,
             });
             at = at.saturating_add(entry);
         }
@@ -303,24 +304,6 @@ pub fn string_at(strings: &[u8], offset: u32) -> Option<&str> {
         .position(|byte| *byte == 0)
         .unwrap_or(rest.len());
     core::str::from_utf8(rest.get(..end)?).ok()
-}
-
-fn read_u16(bytes: &[u8], at: usize) -> Option<u16> {
-    let mut out = [0_u8; 2];
-    out.copy_from_slice(bytes.get(at..at.checked_add(2)?)?);
-    Some(u16::from_le_bytes(out))
-}
-
-fn read_u32(bytes: &[u8], at: usize) -> Option<u32> {
-    let mut out = [0_u8; 4];
-    out.copy_from_slice(bytes.get(at..at.checked_add(4)?)?);
-    Some(u32::from_le_bytes(out))
-}
-
-fn read_u64(bytes: &[u8], at: usize) -> Option<u64> {
-    let mut out = [0_u8; 8];
-    out.copy_from_slice(bytes.get(at..at.checked_add(8)?)?);
-    Some(u64::from_le_bytes(out))
 }
 
 /// What can go wrong reading a section table.

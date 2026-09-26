@@ -22,6 +22,8 @@
 //! pointer field to `sub_table_offset - field_offset`, and [`relocate`] does what a console does,
 //! which is how the round-trip test reads the sub-tables back.
 
+use selfish_bytes::{read_le, write_le, write_slice};
+
 /// The format table, with its provenance header. Code reads this rather than carrying offsets.
 const FORMAT: &str = include_str!("../../../data/agc-shader-format.tsv");
 
@@ -136,37 +138,38 @@ impl Container {
         let header_size = size_of_group("header");
         let mut out = vec![0_u8; header_size];
 
-        // Fixed identity, then the caller's scalars.
-        write_bytes(&mut out, offset_of("header", "file_header"), &magic());
-        put_u32(&mut out, offset_of("header", "version"), version());
-        put_u32(
+        // Fixed identity, then the caller's scalars. The header is sized from the same table as
+        // the offsets, so every field fits.
+        write_slice(&mut out, offset_of("header", "file_header"), &magic());
+        write_le(&mut out, offset_of("header", "version"), version());
+        write_le(
             &mut out,
             offset_of("header", "header_size"),
             as_u32(header_size),
         );
-        put_u32(
+        write_le(
             &mut out,
             offset_of("header", "shader_size"),
             self.shader_size,
         );
-        put_u32(
+        write_le(
             &mut out,
             offset_of("header", "embedded_constant_buffer_size_dqw"),
             self.embedded_constant_buffer_size_dqw,
         );
-        put_u32(&mut out, offset_of("header", "target"), self.target);
-        put_u16(
+        write_le(&mut out, offset_of("header", "target"), self.target);
+        write_le(
             &mut out,
             offset_of("header", "scratch_size_dw_per_thread"),
             self.scratch_size_dw_per_thread,
         );
-        put_u8(&mut out, offset_of("header", "type"), self.stage);
-        put_u8(
+        write_le(&mut out, offset_of("header", "type"), self.stage);
+        write_le(
             &mut out,
             offset_of("header", "num_cx_registers"),
             as_u8(self.cx_registers.len()),
         );
-        put_u8(
+        write_le(
             &mut out,
             offset_of("header", "num_sh_registers"),
             as_u8(self.sh_registers.len()),
@@ -199,12 +202,12 @@ fn append_registers(out: &mut Vec<u8>, field: usize, registers: &[ShaderRegister
     }
     let at = out.len();
     for register in registers {
-        put_u32_push(out, register.offset);
-        put_u32_push(out, register.value);
+        out.extend_from_slice(&register.offset.to_le_bytes());
+        out.extend_from_slice(&register.value.to_le_bytes());
     }
     // field_address + offset = sub_table_address, so offset = at - field.
     let relative = as_u64(at).wrapping_sub(as_u64(field));
-    put_u64(out, field, relative);
+    write_le(out, field, relative);
 }
 
 /// Resolve one pointer field the way `sceAgcCreateShader` does: `field += field_address`.
@@ -213,7 +216,7 @@ fn append_registers(out: &mut Vec<u8>, field: usize, registers: &[ShaderRegister
 /// This is what the round-trip test uses to read a built container back.
 #[must_use]
 pub fn relocate(container: &[u8], field: usize) -> Option<usize> {
-    let relative = read_u64(container, field)?;
+    let relative = read_le::<u64>(container, field)?;
     if relative == 0 {
         return None;
     }
@@ -228,8 +231,8 @@ pub fn registers_at(container: &[u8], field: usize, count: usize) -> Option<Vec<
     for index in 0..count {
         let at = base.checked_add(index.checked_mul(8)?)?;
         out.push(ShaderRegister {
-            offset: read_u32(container, at)?,
-            value: read_u32(container, at.checked_add(4)?)?,
+            offset: read_le(container, at)?,
+            value: read_le(container, at.checked_add(4)?)?,
         });
     }
     Some(out)
@@ -364,44 +367,6 @@ fn as_u64(value: usize) -> u64 {
 
 fn as_u8(value: usize) -> u8 {
     u8::try_from(value).unwrap_or_else(|_| panic!("count {value} does not fit in a u8"))
-}
-
-fn write_bytes(out: &mut [u8], at: usize, bytes: &[u8]) {
-    if let Some(slot) = out.get_mut(at..at.saturating_add(bytes.len())) {
-        slot.copy_from_slice(bytes);
-    }
-}
-
-fn put_u8(out: &mut [u8], at: usize, value: u8) {
-    if let Some(slot) = out.get_mut(at) {
-        *slot = value;
-    }
-}
-
-fn put_u16(out: &mut [u8], at: usize, value: u16) {
-    write_bytes(out, at, &value.to_le_bytes());
-}
-
-fn put_u32(out: &mut [u8], at: usize, value: u32) {
-    write_bytes(out, at, &value.to_le_bytes());
-}
-
-fn put_u64(out: &mut [u8], at: usize, value: u64) {
-    write_bytes(out, at, &value.to_le_bytes());
-}
-
-fn put_u32_push(out: &mut Vec<u8>, value: u32) {
-    out.extend_from_slice(&value.to_le_bytes());
-}
-
-fn read_u32(bytes: &[u8], at: usize) -> Option<u32> {
-    let slice = bytes.get(at..at.checked_add(4)?)?;
-    Some(u32::from_le_bytes(slice.try_into().ok()?))
-}
-
-fn read_u64(bytes: &[u8], at: usize) -> Option<u64> {
-    let slice = bytes.get(at..at.checked_add(8)?)?;
-    Some(u64::from_le_bytes(slice.try_into().ok()?))
 }
 
 #[cfg(test)]

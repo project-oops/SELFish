@@ -32,6 +32,7 @@
 //! as well as of input, so the same check that identified the tags also checks the writer.
 
 use selfish_abi::Generation;
+use selfish_bytes::{read_le, write_le};
 use selfish_nid::Nid;
 
 use crate::dynamic::{Table, Tags, standard, vendor};
@@ -546,14 +547,15 @@ fn rebuild_symbols(
             .ok_or(BuildError::MalformedSymbolTable)?;
         let mut rebuilt = entry.to_vec();
 
-        let name_offset = read_u32(entry, 0)?;
+        let name_offset = read_le(entry, 0).ok_or(BuildError::MalformedSymbolTable)?;
         let offset = if name_offset == 0 {
             0
         } else {
             let plain = string_at(linked.names, name_offset)?;
             // Undefined symbols are the imports, and are what a loader resolves by hash.
             // Anything defined here keeps its plain name: nothing looks it up.
-            let undefined = read_u16(entry, 6)? == 0 && !plain.is_empty();
+            let section = read_le::<u16>(entry, 6).ok_or(BuildError::MalformedSymbolTable)?;
+            let undefined = section == 0 && !plain.is_empty();
             let claim = if undefined { resolve(&plain) } else { None };
 
             let written = if let Some(resolved) = claim {
@@ -601,7 +603,8 @@ fn build_hash(symbols: &[u8], strings: &[u8]) -> Result<Vec<u8>, BuildError> {
         let entry = symbols
             .get(at..at.saturating_add(SYMBOL_SIZE))
             .ok_or(BuildError::MalformedSymbolTable)?;
-        let name = string_at(strings, read_u32(entry, 0)?)?;
+        let name_offset = read_le(entry, 0).ok_or(BuildError::MalformedSymbolTable)?;
+        let name = string_at(strings, name_offset)?;
         let slot = (elf_hash(name.as_bytes()) as usize)
             .checked_rem(buckets)
             .unwrap_or(0);
@@ -715,36 +718,6 @@ fn string_at(table: &[u8], at: u32) -> Result<String, BuildError> {
     core::str::from_utf8(rest.get(..end).unwrap_or_default())
         .map(str::to_owned)
         .map_err(|_| BuildError::SymbolName(u32::try_from(at).unwrap_or(u32::MAX)))
-}
-
-fn read_u16(bytes: &[u8], at: usize) -> Result<u16, BuildError> {
-    let mut out = [0_u8; 2];
-    out.copy_from_slice(
-        bytes
-            .get(at..at.saturating_add(2))
-            .ok_or(BuildError::MalformedSymbolTable)?,
-    );
-    Ok(u16::from_le_bytes(out))
-}
-
-fn read_u32(bytes: &[u8], at: usize) -> Result<u32, BuildError> {
-    let mut out = [0_u8; 4];
-    out.copy_from_slice(
-        bytes
-            .get(at..at.saturating_add(4))
-            .ok_or(BuildError::MalformedSymbolTable)?,
-    );
-    Ok(u32::from_le_bytes(out))
-}
-
-fn read_u64(bytes: &[u8], at: usize) -> Result<u64, BuildError> {
-    let mut out = [0_u8; 8];
-    out.copy_from_slice(
-        bytes
-            .get(at..at.saturating_add(8))
-            .ok_or(BuildError::NotAModule)?,
-    );
-    Ok(u64::from_le_bytes(out))
 }
 
 /// Fit a built segment into a linked module, in place.
@@ -941,15 +914,13 @@ pub struct Installed {
 /// Overwrite the dynamic table in place, terminated, with the remainder cleared.
 fn write_dynamic(bytes: &mut [u8], offset: u64, entries: &[(u64, u64)]) -> Result<(), BuildError> {
     let mut at = usize::try_from(offset).map_err(|_| BuildError::TooLarge)?;
-    for (tag, value) in entries {
-        put_u64(bytes, at, *tag)?;
-        put_u64(bytes, at.saturating_add(8), *value)?;
+    // A terminator follows the entries. Leaving the linker's standard entries after it would
+    // have a loader read tags this module does not describe.
+    for (tag, value) in entries.iter().chain([&(0, 0)]) {
+        write_le(bytes, at, *tag).ok_or(BuildError::NotAModule)?;
+        write_le(bytes, at.saturating_add(8), *value).ok_or(BuildError::NotAModule)?;
         at = at.saturating_add(16);
     }
-    // A terminator, then zeroes. Leaving the linker's standard entries after it would have a
-    // loader read tags this module no longer describes.
-    put_u64(bytes, at, 0)?;
-    put_u64(bytes, at.saturating_add(8), 0)?;
     Ok(())
 }
 
@@ -968,7 +939,7 @@ fn clear_dynamic(bytes: &mut [u8], offset: u64, limit: u64) -> Result<(), BuildE
     let limit = usize::try_from(limit).map_err(|_| BuildError::TooLarge)?;
     let mut at = start;
     while at.saturating_add(16) <= start.saturating_add(limit) {
-        let tag = read_u64(bytes, at)?;
+        let tag = read_le::<u64>(bytes, at).ok_or(BuildError::NotAModule)?;
         let slot = bytes
             .get_mut(at..at.saturating_add(16))
             .ok_or(BuildError::TooLarge)?;
@@ -993,30 +964,39 @@ fn place_dynamic(
     size: u64,
     vaddr: u64,
 ) -> Result<(), BuildError> {
-    let phoff = read_u64(bytes, 0x20)?;
+    let phoff = read_le::<u64>(bytes, 0x20).ok_or(BuildError::NotAModule)?;
     let at = usize::try_from(phoff)
         .ok()
         .and_then(|base| index.checked_mul(56).and_then(|by| base.checked_add(by)))
         .ok_or(BuildError::NoDynamicSegment)?;
 
-    put_u32(bytes, at, crate::segment::DYNAMIC)?;
-    put_u32(
+    // `p_memsz` equals `p_filesz` even with no address, unlike a vendor data segment: the
+    // loader never maps `PT_DYNAMIC`, and a real executable states `0x440` in both fields with
+    // an address of zero. A zero here would say the module has no dynamic table.
+    let flags = if vaddr != 0 { 0x6 } else { 0x4 };
+    write_program_header(
         bytes,
-        at.saturating_add(4),
-        if vaddr != 0 { 0x6 } else { 0x4 },
-    )?;
-    put_u64(bytes, at.saturating_add(8), offset)?;
-    put_u64(bytes, at.saturating_add(16), vaddr)?;
-    put_u64(bytes, at.saturating_add(24), vaddr)?;
-    put_u64(bytes, at.saturating_add(32), size)?;
-    // Not zero, even with no address - unlike a vendor data segment.
-    //
-    // The rule that made `p_memsz` zero for `PT_SCE_DYNLIBDATA` is about *mappable* segments
-    // asking to be placed at the null page. `PT_DYNAMIC` is not mapped by the loader at all,
-    // and a real executable states `0x440` in both fields with an address of zero. Following
-    // the vendor-segment rule here would state that the module has no dynamic table.
-    put_u64(bytes, at.saturating_add(40), size)?;
-    put_u64(bytes, at.saturating_add(48), 8)?;
+        at,
+        (crate::segment::DYNAMIC, flags),
+        [offset, vaddr, vaddr, size, size, 8],
+    )
+}
+
+/// Write one 56-byte program header: type and flags, then offset, virtual and physical
+/// address, file size, memory size and alignment.
+fn write_program_header(
+    bytes: &mut [u8],
+    at: usize,
+    (kind, flags): (u32, u32),
+    fields: [u64; 6],
+) -> Result<(), BuildError> {
+    write_le(bytes, at, kind).ok_or(BuildError::NotAModule)?;
+    write_le(bytes, at.saturating_add(4), flags).ok_or(BuildError::NotAModule)?;
+    let mut field = at.saturating_add(8);
+    for value in fields {
+        write_le(bytes, field, value).ok_or(BuildError::NotAModule)?;
+        field = field.saturating_add(8);
+    }
     Ok(())
 }
 
@@ -1024,10 +1004,10 @@ fn place_dynamic(
 fn strip_sections(bytes: &mut [u8]) -> Result<(), BuildError> {
     // All four fields, not just the offset: a zeroed offset with a live count is a worse shape
     // than either a table or none, and a reader that trusts the count walks from zero.
-    put_u64(bytes, 0x28, 0)?;
-    put_u16(bytes, 0x3A, 0)?;
-    put_u16(bytes, 0x3C, 0)?;
-    put_u16(bytes, 0x3E, 0)?;
+    write_le(bytes, 0x28, 0_u64).ok_or(BuildError::NotAModule)?;
+    for at in [0x3A, 0x3C, 0x3E] {
+        write_le(bytes, at, 0_u16).ok_or(BuildError::NotAModule)?;
+    }
     Ok(())
 }
 
@@ -1039,86 +1019,36 @@ fn repurpose_header(
     size: u64,
     vaddr: u64,
 ) -> Result<(), BuildError> {
-    let phoff = {
-        let mut raw = [0_u8; 8];
-        raw.copy_from_slice(bytes.get(0x20..0x28).ok_or(BuildError::NotAModule)?);
-        u64::from_le_bytes(raw)
-    };
+    let phoff = read_le::<u64>(bytes, 0x20).ok_or(BuildError::NotAModule)?;
     let at = usize::try_from(phoff)
         .ok()
         .and_then(|base| index.checked_mul(56).and_then(|by| base.checked_add(by)))
         .ok_or(BuildError::NoVendorHeader)?;
 
-    // A vendor data segment, or an ordinary mapped one.
-    //
-    // With no address the tables are read out of the file and never placed, which is the
-    // legacy shape. With one they are part of the image, which is what every retail
-    // current-generation dump does - none of them carries a `PT_SCE_DYNLIBDATA` at all.
-    // Read-only either way; nothing writes to a string table.
-    let mapped = vaddr != 0;
-    put_u32(
-        bytes,
-        at,
-        if mapped {
-            crate::segment::LOAD
-        } else {
-            crate::segment::SCE_DYNLIBDATA
-        },
-    )?;
-    put_u32(bytes, at.saturating_add(4), if mapped { 0x6 } else { 0x4 })?;
-    put_u64(bytes, at.saturating_add(8), offset)?;
-    put_u64(bytes, at.saturating_add(16), vaddr)?;
-    put_u64(bytes, at.saturating_add(24), vaddr)?;
-    put_u64(bytes, at.saturating_add(32), size)?;
-    // `p_memsz`, and **zero when the segment is not mapped**.
-    //
-    // This wrote `size` into both, which is right for a mapped segment and is an illegal header
-    // for an unmapped one: a segment with no address and a non-zero memory size is asking to be
-    // placed at address zero, the null page. A console's `rtld` refuses the file for it and names
-    // the segment:
-    //
-    //     [rtld] ERROR scan_phdr:1164: B: error 8  i 5
-    //     [rtld] ERROR _exec_self_imgact:1427: found illegal segment header in /app0/eboot.bin
-    //
-    // Index 5 is this header. Every vendor data segment in a real package's eboot -
-    // `PT_SCE_DYNLIBDATA` and both of the `0x6FFFFFxx` pair - carries a file size and a memory
-    // size of **zero**, which is the same statement the comment above already makes: the tables
-    // are read out of the file and never placed. (measured)
-    put_u64(bytes, at.saturating_add(40), if mapped { size } else { 0 })?;
-    put_u64(
-        bytes,
-        at.saturating_add(48),
-        if mapped {
-            crate::layout::ALLOCATION_GRANULARITY
-        } else {
-            16
-        },
-    )?;
-    Ok(())
-}
-
-fn put_u16(bytes: &mut [u8], at: usize, value: u16) -> Result<(), BuildError> {
-    bytes
-        .get_mut(at..at.saturating_add(2))
-        .ok_or(BuildError::NotAModule)?
-        .copy_from_slice(&value.to_le_bytes());
-    Ok(())
-}
-
-fn put_u32(bytes: &mut [u8], at: usize, value: u32) -> Result<(), BuildError> {
-    bytes
-        .get_mut(at..at.saturating_add(4))
-        .ok_or(BuildError::NotAModule)?
-        .copy_from_slice(&value.to_le_bytes());
-    Ok(())
-}
-
-fn put_u64(bytes: &mut [u8], at: usize, value: u64) -> Result<(), BuildError> {
-    bytes
-        .get_mut(at..at.saturating_add(8))
-        .ok_or(BuildError::NotAModule)?
-        .copy_from_slice(&value.to_le_bytes());
-    Ok(())
+    // With an address the tables are an ordinary read-only mapped segment, the shape every
+    // current-generation executable has. Without one they are a vendor data segment read out
+    // of the file and never placed, so its memory size is zero: a segment with no address and
+    // a non-zero memory size asks to be placed at the null page, and the hardware's `rtld`
+    // refuses the file as an illegal segment header.
+    let (kind, fields) = if vaddr != 0 {
+        (
+            (crate::segment::LOAD, 0x6),
+            [
+                offset,
+                vaddr,
+                vaddr,
+                size,
+                size,
+                crate::layout::ALLOCATION_GRANULARITY,
+            ],
+        )
+    } else {
+        (
+            (crate::segment::SCE_DYNLIBDATA, 0x4),
+            [offset, vaddr, vaddr, size, 0, 16],
+        )
+    };
+    write_program_header(bytes, at, kind, fields)
 }
 
 /// What can go wrong building a segment.

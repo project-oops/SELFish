@@ -189,7 +189,7 @@ impl Superblock {
     ///
     /// If the bytes are short, or the magic is not a filesystem's.
     pub fn parse(header: &[u8]) -> Result<Self, PfsError> {
-        let magic = read_u64(header, superblock::MAGIC)?;
+        let magic = le::<u64>(header, superblock::MAGIC)?;
         if magic != MAGIC {
             return Err(PfsError::NotAFilesystem(magic));
         }
@@ -200,19 +200,19 @@ impl Superblock {
             seed.copy_from_slice(raw);
         }
         Ok(Self {
-            version: read_u64(header, superblock::VERSION)?,
-            id: read_u64(header, superblock::ID)?,
+            version: le::<u64>(header, superblock::VERSION)?,
+            id: le::<u64>(header, superblock::ID)?,
             fmode: header.get(superblock::FMODE).copied().unwrap_or(0),
             clean: header.get(superblock::CLEAN).copied().unwrap_or(0),
             read_only: header.get(superblock::READ_ONLY).copied().unwrap_or(0),
-            mode: read_u16(header, superblock::MODE)?,
-            block_size: read_u32(header, superblock::BLOCK_SIZE)?,
-            backup_blocks: read_u32(header, superblock::N_BACKUP)?,
-            blocks: read_u64(header, superblock::N_BLOCK)?,
-            inode_count: read_u64(header, superblock::INODE_COUNT)?,
-            data_blocks: read_u64(header, superblock::N_DBLOCK)?,
-            inode_blocks: read_u64(header, superblock::INODE_BLOCKS)?,
-            unknown_index: read_u32(header, superblock::UNKNOWN_INDEX)?,
+            mode: le::<u16>(header, superblock::MODE)?,
+            block_size: le::<u32>(header, superblock::BLOCK_SIZE)?,
+            backup_blocks: le::<u32>(header, superblock::N_BACKUP)?,
+            blocks: le::<u64>(header, superblock::N_BLOCK)?,
+            inode_count: le::<u64>(header, superblock::INODE_COUNT)?,
+            data_blocks: le::<u64>(header, superblock::N_DBLOCK)?,
+            inode_blocks: le::<u64>(header, superblock::INODE_BLOCKS)?,
+            unknown_index: le::<u32>(header, superblock::UNKNOWN_INDEX)?,
             seed,
         })
     }
@@ -541,9 +541,9 @@ impl<S: Source> Compressed<S> {
     /// If the header or map cannot be read, or the block size is zero.
     pub fn new(inner: S) -> Result<Self, PfsError> {
         let header = inner.read(0, 0x30)?;
-        let block_size = read_u64(&header, 0x10)?;
-        let map_offset = read_u64(&header, 0x18)?;
-        let data_length = read_u64(&header, 0x28)?;
+        let block_size = le::<u64>(&header, 0x10)?;
+        let map_offset = le::<u64>(&header, 0x18)?;
+        let data_length = le::<u64>(&header, 0x28)?;
         if block_size == 0 {
             return Err(PfsError::Malformed("compressed block size is zero"));
         }
@@ -558,7 +558,7 @@ impl<S: Source> Compressed<S> {
         )?;
         let mut map = Vec::with_capacity(entries);
         for index in 0..entries {
-            map.push(read_u64(
+            map.push(le::<u64>(
                 &raw,
                 index.checked_mul(8).ok_or(PfsError::OutOfRange)?,
             )?);
@@ -721,10 +721,10 @@ impl<S: Source> Filesystem<S> {
                     inode::PLAIN_START
                 };
                 inodes.push(Inode {
-                    kind: read_u16(entry, 0)?,
-                    size: read_u64(entry, inode::SIZE)?,
-                    blocks: read_u32(entry, inode::BLOCKS)?,
-                    start: read_u32(entry, start_at)?,
+                    kind: le::<u16>(entry, 0)?,
+                    size: le::<u64>(entry, inode::SIZE)?,
+                    blocks: le::<u32>(entry, inode::BLOCKS)?,
+                    start: le::<u32>(entry, start_at)?,
                 });
             }
         }
@@ -817,15 +817,15 @@ impl<S: Source> Filesystem<S> {
             let block = self.source.read(at, block_size)?;
             let mut cursor = 0_usize;
             while cursor.saturating_add(17) < block_size {
-                let child =
-                    usize::try_from(read_u32(&block, cursor)?).map_err(|_| PfsError::OutOfRange)?;
-                let kind = read_u32(&block, cursor.checked_add(4).ok_or(PfsError::OutOfRange)?)?;
-                let name_len = usize::try_from(read_u32(
+                let child = usize::try_from(le::<u32>(&block, cursor)?)
+                    .map_err(|_| PfsError::OutOfRange)?;
+                let kind = le::<u32>(&block, cursor.checked_add(4).ok_or(PfsError::OutOfRange)?)?;
+                let name_len = usize::try_from(le::<u32>(
                     &block,
                     cursor.checked_add(8).ok_or(PfsError::OutOfRange)?,
                 )?)
                 .map_err(|_| PfsError::OutOfRange)?;
-                let entry_size = usize::try_from(read_u32(
+                let entry_size = usize::try_from(le::<u32>(
                     &block,
                     cursor.checked_add(12).ok_or(PfsError::OutOfRange)?,
                 )?)
@@ -879,28 +879,23 @@ pub fn image_keys(
     Ok((tweak, data))
 }
 
-fn read_u16(bytes: &[u8], at: usize) -> Result<u16, PfsError> {
-    let end = at.checked_add(2).ok_or(PfsError::OutOfRange)?;
-    let raw = bytes.get(at..end).ok_or(PfsError::OutOfRange)?;
-    let mut out = [0_u8; 2];
-    out.copy_from_slice(raw);
-    Ok(u16::from_le_bytes(out))
+/// A little-endian field, with a short read as this crate's error.
+fn le<T: selfish_bytes::Int>(bytes: &[u8], at: usize) -> Result<T, PfsError> {
+    selfish_bytes::read_le(bytes, at).ok_or(PfsError::OutOfRange)
 }
 
-fn read_u32(bytes: &[u8], at: usize) -> Result<u32, PfsError> {
-    let end = at.checked_add(4).ok_or(PfsError::OutOfRange)?;
-    let raw = bytes.get(at..end).ok_or(PfsError::OutOfRange)?;
-    let mut out = [0_u8; 4];
-    out.copy_from_slice(raw);
-    Ok(u32::from_le_bytes(out))
+/// Write a little-endian field, with a short buffer as this crate's error.
+pub(crate) fn put_le<T: selfish_bytes::Int>(
+    out: &mut [u8],
+    at: usize,
+    value: T,
+) -> Result<(), PfsError> {
+    selfish_bytes::write_le(out, at, value).ok_or(PfsError::OutOfRange)
 }
 
-fn read_u64(bytes: &[u8], at: usize) -> Result<u64, PfsError> {
-    let end = at.checked_add(8).ok_or(PfsError::OutOfRange)?;
-    let raw = bytes.get(at..end).ok_or(PfsError::OutOfRange)?;
-    let mut out = [0_u8; 8];
-    out.copy_from_slice(raw);
-    Ok(u64::from_le_bytes(out))
+/// Copy bytes in, with a short buffer as this crate's error.
+pub(crate) fn put(out: &mut [u8], at: usize, value: &[u8]) -> Result<(), PfsError> {
+    selfish_bytes::write_slice(out, at, value).ok_or(PfsError::OutOfRange)
 }
 
 /// Why a filesystem could not be read.
