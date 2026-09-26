@@ -1,12 +1,5 @@
-//! Does this crate reproduce a real package's `sce_sys/keystone`, byte for byte?
-//!
-//! The keystone was missing from every package this crate built, because it looked like one
-//! more file the caller owns. It is not - it is two `HMAC-SHA256` operations over the
-//! passcode, which the builder already has. Every real package carries one.
-//!
-//! This opens the filesystem inside a package, pulls the keystone out, and compares it against
-//! one computed from the same passcode. A package built with a passcode nobody can recover
-//! will differ, and that is reported as such rather than as a failure.
+//! Compare a real package's `sce_sys/keystone` with one computed from the fake passcode, byte
+//! for byte. A package built with another passcode differs and is reported as such.
 //!
 //! ```text
 //! cargo run -p selfish-pkg --example keystone -- <package>...

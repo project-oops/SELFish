@@ -1,19 +1,6 @@
 //! Every container entry, decoded, beside the program header it describes.
-//!
-//! The auth manager loads a segment **block by block** and checks a size before it decrypts
-//! anything. When it refuses - `_sceSblAuthMgrLoadSelfBlock: sz for b error` - nothing in the
-//! dynamic table has been read yet, so the fault is in these four fields and not in anything
-//! the segment contains.
 
-// A diagnostic probe, held to a probe's standards rather than the library's.
-//
-// These read structures whose layout is already known, at offsets the format fixes, and print
-// what they find. Indexing, slicing and plain arithmetic over those offsets is the clearest way
-// to say what is being read - a probe that wraps every field access in a fallible conversion is
-// harder to check against a hex dump, which is the only thing it will ever be checked against.
-// Nothing here ships: a wrong offset produces a wrong line on a terminal, not a wrong file.
-//
-// The library itself keeps every one of these lints. This block is the boundary between the two.
+// A probe reads fixed offsets and prints them, so the library's arithmetic lints do not apply.
 #![allow(
     clippy::arithmetic_side_effects,
     clippy::indexing_slicing,

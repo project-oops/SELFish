@@ -1,23 +1,7 @@
-//! Does this crate reproduce a real package's key blobs, byte for byte?
-//!
-//! Entries `0x10` and `0x20` carry the key material a console needs in order to open a
-//! package's filesystem at all. Until now this crate took them as input and a caller with
-//! nothing to hand supplied zeros - which produces a package that parses, extracts, and
-//! passes every test here, and cannot be opened by the machine it was built for.
-//!
-//! # Why this is a strong check and not a round trip
-//!
-//! The RSA padding is drawn from a Mersenne Twister seeded from the modulus and the payload,
-//! so it is **deterministic**. That means the right answer is a specific 2048 bytes, and this
-//! compares against a real package's actual bytes rather than checking that what was written
-//! can be read back. A round trip would pass for an implementation that is self-consistently
-//! wrong; this cannot.
-//!
-//! `0x10` is stored in the clear, so it is compared directly. `0x20` is stored encrypted, so
-//! the stored form is decrypted first and the RSA block underneath is what is compared.
-//!
-//! A package built with a passcode other than the fake one will differ, and that is reported
-//! as such rather than as a failure - the passcode is an input nobody can recover.
+//! Compare the key blobs this crate computes, entries `0x10` and `0x20`, with a real
+//! package's, byte for byte. The RSA padding is deterministic, so the right answer is exact.
+//! `0x20` is stored encrypted and compared after decryption. A package built with another
+//! passcode differs and is reported as such.
 //!
 //! ```text
 //! cargo run -p selfish-pkg --example wrap_keys -- <package>...

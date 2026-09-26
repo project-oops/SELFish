@@ -20,21 +20,8 @@ repository = "https://github.com/project-oops/SELFish"
 rust-version = "1.85"
 publish = false
 
-# The dependency spine, in build order. Each crate depends only on those above it, and the
-# split is not organisational: it is what keeps cryptography out of a loader.
-#
-#   bytes       bounds-checked integer reads and writes. Depends on nothing.
-#   abi         the generation split, ABI constants. Depends on nothing.
-#   nid         the import hash. Depends on nothing either, and sits here because a module's
-#               undefined symbols are named by it - see D015.
-#   elf         the executable format.
-#   container   the signed-executable wrapper, both directions.
-#   title       what a title says about itself: PARAM.SFO and param.json.
-#   pfs         the filesystem inside a package.
-#   pkg         packages. The only crate that pulls in RSA, AES and zlib.
-#
-# An emulator loading a bare executable takes `elf` and stops there. Nothing makes it
-# compile a cipher it will never call.
+# The library crates, in dependency order; the spine is described in CLAUDE.md. Only `pkg`
+# takes the cipher crates, so a loader that stops at `elf` compiles none of them.
 [workspace.dependencies]
 selfish-bytes = { path = "crates/selfish-bytes" }
 selfish-abi = { path = "crates/selfish-abi" }
@@ -46,54 +33,36 @@ selfish-pfs = { path = "crates/selfish-pfs" }
 selfish-pkg = { path = "crates/selfish-pkg" }
 selfish-shader = { path = "crates/selfish-shader" }
 
-# Parsing hostile bytes without `unsafe`. Size and alignment are validated before a
-# reference exists, which is what lets `unsafe_code = "forbid"` be true rather than hopeful.
+# The build stamp on `selfish --version`. Only the CLI takes it; the library crates depend on
+# nothing outside this repository.
+oops-build = { path = "../oops-libs/crates/oops-build" }
+
+# Validates size and alignment before a reference exists, so parsing needs no `unsafe`.
 zerocopy = { version = "0.8", features = ["derive"] }
 
-# The import hash. Hand-rolling SHA-1 to save a dependency would be a poor trade: it is
-# small, ubiquitous, and its correctness is not something to reinvent under a deadline.
+# The import hash.
 sha1 = "0.10"
 
-# The package crypto chain. Four primitives stand between a package and a filename, and each
-# is a place where a hand-rolled version would be quietly wrong rather than loudly broken.
-#
-# `num-bigint` rather than a full RSA crate: what is needed is one modular exponentiation
-# against a modulus and exponent that are already in hand, not key parsing, generation or
-# signature verification. A crate that does all four would be a larger surface for a smaller
-# job.
+# The package crypto chain. `num-bigint` rather than an RSA crate: the need is one modular
+# exponentiation with a key already in hand.
 num-bigint = "0.4"
 sha2 = "0.10"
 aes = "0.8"
 cbc = { version = "0.1", features = ["alloc"] }
-
-# Decoding and encoding the one image format a package carries.
-#
-# A console wants `icon0.png` as 512x512 with no alpha channel, and a caller has whatever their
-# designer exported. Rejecting the difference would push the same conversion into every project
-# that builds a package - four of them here - and each would get it slightly differently. Doing it
-# once, where the requirement is known, is the whole reason this repository exists.
-#
-# `png` rather than a full imaging crate: what is needed is decode, composite and encode, not
-# filters, formats or colour management. (D073)
-png = "0.17"
-
-# The tool's own icon, on Windows only, and a build dependency rather than a real one.
-#
-# An executable's icon is not a file format and has nothing to do with what this repository
-# knows. It is here because the alternative is worse: a `.rc` file compiled by hand in a build
-# script has to find `rc.exe` or `llvm-rc`, and get it right across the MSVC and GNU toolchains,
-# to embed one 4 KB resource. This does that and nothing else, and it disappears entirely on the
-# two platforms where an executable cannot carry an icon at all.
-winresource = "0.1"
 hmac = "0.12"
 flate2 = "1"
 
-# `param.json` is JSON, and hand-rolling a parser for four fields is exactly the kind of
-# invention principle 5 forbids - a lenient one accepts a file the console would reject.
+# Decode, composite and encode the PNG artwork a title carries. (D073)
+png = "0.17"
+
+# The Windows executable's icon, as a build dependency.
+winresource = "0.1"
+
+# `param.json`.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Argument parsing for the one binary. The library crates take no dependency on it.
+# The CLI's arguments.
 clap = { version = "4", features = ["derive"] }
 
 [workspace.lints.rust]
@@ -107,8 +76,8 @@ rust_2018_idioms = { level = "warn", priority = -1 }
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
-# A builder is arithmetic on offsets, and a container wrong by one byte is reported by a
-# loader as "not a container" rather than as an offset error.
+# A builder is arithmetic on offsets, and a loader reports a container wrong by one byte as
+# "not a container", not as an offset error.
 arithmetic_side_effects = "warn"
 indexing_slicing = "warn"
 unwrap_used = "warn"

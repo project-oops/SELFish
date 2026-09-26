@@ -5,8 +5,6 @@
 
 #![forbid(unsafe_code)]
 
-use std::sync::OnceLock;
-
 use clap::Parser;
 
 use crate::args::{Cli, Command};
@@ -39,20 +37,6 @@ mod title;
 
 /// The result every command returns.
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
-
-/// This build in one line, for clap's `--version`: `v{version} - {commit}`, with the commit
-/// stamped by `build.rs`. A build made outside a repository says `no commit`. (D104)
-fn version_line() -> &'static str {
-    static LINE: OnceLock<String> = OnceLock::new();
-    LINE.get_or_init(|| {
-        let version = env!("CARGO_PKG_VERSION");
-        match option_env!("OOPS_COMMIT").filter(|commit| !commit.is_empty()) {
-            Some(commit) => format!("v{version} - {commit}"),
-            None => format!("v{version} - no commit"),
-        }
-    })
-    .as_str()
-}
 
 /// Print the error's `Display`, which says what to do about it, and exit non-zero. (D095)
 fn main() {

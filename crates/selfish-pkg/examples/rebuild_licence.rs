@@ -1,11 +1,5 @@
-//! Rebuild each package's licence from scratch and compare it with the real one.
-//!
-//! The whole claim of `licence::Licence::build` in one run. Nothing is copied from the package
-//! except the content id and the three fields that describe what the title is - everything
-//! else, including the encrypted secret and the RSA signature, is produced here.
-//!
-//! A builder that gets any offset, any derivation, any constant or any key wrong produces
-//! different bytes. There is no partial credit.
+//! Rebuild each package's licence from its content id and title kind with
+//! `licence::Licence::build`, and compare it with the real one byte for byte.
 //!
 //! ```text
 //! cargo run -p selfish-pkg --example rebuild_licence -- <package>...

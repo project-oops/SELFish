@@ -1,14 +1,6 @@
-//! Read the `param.sfo` out of real packages, and check a generated one against them.
-//!
-//! `PSF` is the format this crate was shipping twenty-one bytes of the word `PLACEHOLDER` in
-//! place of. Writing one is only worth anything if it is the same shape as the ones a console
-//! already accepts, so this reads the real thing out of packages in hand and reports what it
-//! finds - then builds a table with the same identifying values and says whether the two agree
-//! field for field.
-//!
-//! It is not a byte comparison and should not be: a real title carries fields this cannot know
-//! and would be inventing. What it checks is that every field this crate *does* write is
-//! present in a real file, with the same type and the same field width.
+//! Read the `param.sfo` out of real packages, generate one with the same identifying values,
+//! and check that every field this crate writes is present in the real file with the same
+//! type and width. Not a byte comparison: a real title carries fields this cannot know.
 //!
 //! ```text
 //! cargo run -p selfish-pkg --example param -- <package>...

@@ -9,7 +9,7 @@ use selfish_abi::Generation;
 #[derive(Parser)]
 #[command(
     name = "selfish",
-    version = crate::version_line(),
+    version = oops_build::line!(),
     about = "Read and write the file formats Prospero-generation hardware loads"
 )]
 pub(crate) struct Cli {

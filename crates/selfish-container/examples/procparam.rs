@@ -1,20 +1,6 @@
-//! The process parameter block, and whatever its pointers point at.
-//!
-//! `libkernel` reads this before a single instruction of the module runs, so a field it
-//! expects and does not find faults inside the platform library on a stack frame that names
-//! nothing of ours. Printing the block alone is not enough - the interesting part is what the
-//! non-null entries lead to, because that is what says whether a slot holds a string, a
-//! counted structure, or another table.
+//! The process parameter block, and what each of its non-null pointers leads to.
 
-// A diagnostic probe, held to a probe's standards rather than the library's.
-//
-// These read structures whose layout is already known, at offsets the format fixes, and print
-// what they find. Indexing, slicing and plain arithmetic over those offsets is the clearest way
-// to say what is being read - a probe that wraps every field access in a fallible conversion is
-// harder to check against a hex dump, which is the only thing it will ever be checked against.
-// Nothing here ships: a wrong offset produces a wrong line on a terminal, not a wrong file.
-//
-// The library itself keeps every one of these lints. This block is the boundary between the two.
+// A probe reads fixed offsets and prints them, so the library's arithmetic lints do not apply.
 #![allow(
     clippy::arithmetic_side_effects,
     clippy::indexing_slicing,

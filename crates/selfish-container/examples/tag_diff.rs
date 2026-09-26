@@ -1,19 +1,7 @@
-//! Every dynamic tag's *value*, ours beside a real one, with a bounds verdict.
-//!
-//! Counting tags proves only that a field exists. The failure this exists to chase is a
-//! field that exists and points somewhere wrong - the vendor table mixes offsets into the
-//! dynlib blob with virtual addresses, and a writer that picks the wrong one produces a file
-//! that parses perfectly and refuses to load.
+//! Every dynamic tag's value in two modules side by side, with whether it lands inside the
+//! region it points into. The vendor table mixes blob offsets with virtual addresses.
 
-// A diagnostic probe, held to a probe's standards rather than the library's.
-//
-// These read structures whose layout is already known, at offsets the format fixes, and print
-// what they find. Indexing, slicing and plain arithmetic over those offsets is the clearest way
-// to say what is being read - a probe that wraps every field access in a fallible conversion is
-// harder to check against a hex dump, which is the only thing it will ever be checked against.
-// Nothing here ships: a wrong offset produces a wrong line on a terminal, not a wrong file.
-//
-// The library itself keeps every one of these lints. This block is the boundary between the two.
+// A probe reads fixed offsets and prints them, so the library's arithmetic lints do not apply.
 #![allow(
     clippy::arithmetic_side_effects,
     clippy::indexing_slicing,

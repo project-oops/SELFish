@@ -1,9 +1,5 @@
-//! Decrypt the entries a package marks encrypted, and say what came out.
-//!
-//! The two licence entries looked like unbreakable noise for as long as this crate read three
-//! fields out of a 32-byte entry record and treated the other twenty as padding. They are not
-//! noise: bit 31 of an entry's first flags word says it is encrypted, and bits 12-15 of the
-//! second name the key. Both licence entries declare themselves, in every package examined.
+//! Decrypt the entries a package marks encrypted (bit 31 of the first flags word; the key in
+//! bits 12-15 of the second), and say what came out.
 //!
 //! ```text
 //! cargo run -p selfish-pkg --example decrypt -- <package>...

@@ -1,54 +1,30 @@
-#!/bin/sh
-# selfish - the one dev command for this repository.
+#!/usr/bin/env bash
+# selfish - the dev command for this repository.
 #
-# The seven verbs every OOPS project carries, so `oops test selfish` and
-# `./bin/selfish test` are one command reached two ways:
+#   ./bin/selfish build       release build of the workspace
+#   ./bin/selfish test        the test suite
+#   ./bin/selfish lint        clippy at -D warnings
+#   ./bin/selfish fmt         format in place
+#   ./bin/selfish check       everything CI's gate runs (the default)
+#   ./bin/selfish clean       remove build output
+#   ./bin/selfish doc         build the API docs
+#   ./bin/selfish provenance  every format table names its sources, and no material is tracked
+#   ./bin/selfish links       the linker tests ran rather than skipping for a missing lld
 #
-#   ./bin/selfish build     # release build of the workspace
-#   ./bin/selfish test      # the test suite
-#   ./bin/selfish lint      # clippy at -D warnings
-#   ./bin/selfish fmt       # format in place
-#   ./bin/selfish check     # everything that has to pass. What CI runs.
-#   ./bin/selfish clean     # remove build output
-#   ./bin/selfish doc       # build the API docs
+# `links` is not in `check`: it only matters on a machine that might lack the linker, and CI
+# runs it as its own step. The library crates build from this repository alone; the CLI also
+# needs oops-libs beside it.
 #
-# And this repository's own two:
-#
-#   ./bin/selfish provenance  # every format table names its sources, and no material is tracked
-#   ./bin/selfish links       # the linker tests really ran, rather than skipping for a missing lld
-#
-# `links` is deliberately not in `check`: it would make the local gate slower for everybody to
-# catch a thing that only goes wrong on a clean machine. CI runs it as a separate step.
-#
-# # Nothing here depends on anything outside this repository
-#
-# Being the bottom of the spine is the one property to preserve if anything is ever added here:
-# a clone of only this repository builds with a Rust toolchain and nothing else. It briefly did
-# not - `selfish-cli` took `oops-build` and `oops-log` from `oops-libs` for a commit stamp on
-# `--version` and a logging subscriber - and both are gone (D104): the stamp is a few lines of
-# git in the CLI's build.rs, and the logging was dead weight, since nothing here emits a tracing
-# event. The crates under `crates/` never took anything, which is what matters for a consumer.
-# See docs/BUILDING.md.
-#
-# # Why `check` is a script rather than a command someone types
-#
-# It was a typed command for a while, improvised per run, and it swallowed a failure twice:
-#
-#   cargo test --workspace | grep -oE '[0-9]+ passed' | awk '{s+=$1}...'
-#   cargo clippy ... | grep -E '^(warning|error)'
-#
-# A pipeline's exit status is the *last* command's, so `grep` finding nothing reported success
-# while the compiler was failing behind it. Once, the test count silently fell from 162 to 116
-# and the gate still said it was fine.
-#
-# obSCEne's `scripts/verify.sh` carries the rule this is written to: **output filtering never
-# sits between a command and its exit code.** Where filtered output is wanted, the command runs
-# into a file and the file is filtered afterwards.
-set -e
+# Output filtering never sits between a command and its exit status: filtered output goes to a
+# file first.
+set -euo pipefail
+# shellcheck source=/dev/null
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 export PATH="$HOME/.cargo/bin:$PATH"
 
 cd "$(dirname "$0")/.."
+
+DOC_FLAGS="-D rustdoc::broken_intra_doc_links -D rustdoc::invalid_html_tags -D rustdoc::bare_urls"
 
 check() {
     log="${TMPDIR:-/tmp}/selfish-gate.$$"
@@ -59,8 +35,6 @@ check() {
     printf 'formatted\n'
 
     printf '=== lints\n'
-    # `-D warnings` because the lint set here is not decoration: a builder wrong by one byte is
-    # reported by a loader as "not a container" rather than as an offset error.
     cargo clippy --all-targets --all-features -- -D warnings
     printf 'clean\n'
 
@@ -69,46 +43,30 @@ check() {
     printf '%s passed\n' "$(grep -oE '[0-9]+ passed' "$log" | awk '{s+=$1} END {print s}')"
 
     printf '=== docs\n'
-    # Documentation is this repository's durable product - the decision log, the provenance
-    # notes, the reasoning attached to every constant - so a doc build that fails is a broken
-    # deliverable rather than a cosmetic problem. This was not in the gate, and an audit found
-    # `cargo doc` had been failing on an ambiguous intra-doc link, which rustdoc treats as an
-    # error.
-    RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links -D rustdoc::invalid_html_tags -D rustdoc::bare_urls" \
-        cargo doc --no-deps --workspace -q >"$log" 2>&1 || { tail -30 "$log"; exit 1; }
+    RUSTDOCFLAGS="$DOC_FLAGS" cargo doc --no-deps --workspace -q >"$log" 2>&1 \
+        || { tail -30 "$log"; exit 1; }
     printf 'documented\n'
 
     printf '\ngate passed\n'
 }
 
-# The pieces of the gate, individually. `check` still runs all of them and remains the thing
-# that has to pass; these exist so one can be asked for on its own, and so the same word means
-# the same thing in all four projects.
+# Real files are an oracle, never a source, so none is tracked. Content is checked as well as
+# extension, because an executable need not have one.
 provenance() {
-    # The formats are the product; a table whose header stops naming where its rows came from
-    # has quietly become somebody's memory. And a real console file committed beside a format is
-    # principle 2's failure - an oracle mistaken for a source.
     local status=0 table
     for table in data/*.tsv data/*.toml; do
         [ -f "$table" ] || continue
         if ! grep -q '^# read-from:' "$table"; then
-            printf '%s has no read-from header naming where its rows came from
-' "$table"
+            printf '%s has no read-from header naming where its rows came from\n' "$table"
             status=1
         fi
     done
     if git ls-files | grep -iE '\.(pkg|elf|prx|sprx|bin|self)$'; then
-        printf 'material committed - see principle 2, real files are an oracle not a source
-'
+        printf 'material committed: real files are an oracle, not a source\n'
         status=1
     fi
 
-    # Extension is not enough, and that is not hypothetical: a 16 KB x86-64 ELF sat tracked at
-    # `src/porthole/build/porthole_selftest` in the sibling project and every extension pattern
-    # passed it, because the file has no extension at all. obSCEne's own guard missed it, and so
-    # would this one. Content is what a loader reads, so content is what this checks.
-    #
-    # Images are the only binaries any of these repositories is meant to track.
+    # Images are the only binaries tracked.
     tracked_binaries() {
         git ls-files | while IFS= read -r f; do
             case "$f" in *.png|*.ico|*.svg|*.jpg|*.gif|*.woff2) continue ;; esac
@@ -120,24 +78,18 @@ provenance() {
     }
 
     if tracked_binaries | grep .; then
-        printf 'these are executables, whatever they are named - see principle 2
-'
+        printf 'these are executables, whatever they are named\n'
         status=1
     fi
     return $status
 }
 
+# The three test targets that link a module fail here if any of them skipped for a missing
+# `ld.lld`, since a skip verifies nothing about the linker scripts.
 links() {
-    # Proof the linker tests actually ran rather than skipping for a missing `ld.lld` - a skip
-    # would let this pass having verified none of the segment layout or tag conventions.
-    #
-    # **All three targets that link, not just `links`.** This ran only `--test links` while
-    # `current` and `module` link too, so two of the three could skip silently under the very
-    # verb that exists to stop that. The prose in docs/BUILDING.md described the guard this
-    # loop now actually is. (REQ-20260910T0015Z-8e44)
     local log="${TMPDIR:-/tmp}/selfish-links.$$"
     local target
-    for target in links current module; do
+    for target in links prospero module; do
         printf '=== %s\n' "$target"
         cargo test -p selfish-elf --test "$target" -- --nocapture 2>&1 | tee "$log"
         if grep -q 'skipped:' "$log"; then
@@ -150,7 +102,8 @@ links() {
 }
 
 usage() {
-    last=$(( $(grep -n '^set -e$' "$0" | head -1 | cut -d: -f1) - 1 ))
+    local last
+    last=$(( $(grep -n '^set -euo pipefail$' "$0" | head -1 | cut -d: -f1) - 1 ))
     sed -n "2,${last}p" "$0" | sed 's/^# \{0,1\}//'
 }
 
@@ -165,8 +118,7 @@ case "$verb" in
     lint)  cargo clippy --all-targets --all-features "$@" -- -D warnings ;;
     fmt)   cargo fmt --all "$@" ;;
     clean) cargo clean "$@" ;;
-    doc)   RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links -D rustdoc::invalid_html_tags -D rustdoc::bare_urls" \
-               cargo doc --no-deps --workspace "$@" ;;
+    doc)   RUSTDOCFLAGS="$DOC_FLAGS" cargo doc --no-deps --workspace "$@" ;;
     -h|--help|help) usage ;;
     *) printf 'unknown verb: %s (try ./bin/selfish --help)\n' "$verb" >&2; exit 1 ;;
 esac

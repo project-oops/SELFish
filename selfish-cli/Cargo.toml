@@ -4,31 +4,30 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Command-line access to the console's file formats"
+description = "Command-line access to the formats the SELFish crates read and write"
 
 [[bin]]
 name = "selfish"
 path = "src/main.rs"
 
-# Windows is the only one of the three that carries an icon inside the executable. A Linux ELF
-# and a macOS CLI binary have nowhere to put one - their icons live in packaging metadata, a
-# `.desktop` entry or an `.app` bundle, neither of which a bare command-line tool has. So this is
-# target-gated rather than conditional inside the build script: on Linux and macOS the dependency
-# is not built, not fetched, and not in the lockfile's way.
+# Only a Windows executable can carry an icon, so the dependency is not built elsewhere.
 [target.'cfg(windows)'.build-dependencies]
 winresource.workspace = true
 
+[build-dependencies]
+oops-build.workspace = true
+
 [dependencies]
+oops-build.workspace = true
+selfish-bytes.workspace = true
 selfish-abi.workspace = true
 selfish-elf.workspace = true
 selfish-container.workspace = true
 selfish-nid.workspace = true
 selfish-title.workspace = true
-serde_json.workspace = true
 selfish-pfs.workspace = true
 selfish-pkg.workspace = true
 selfish-shader.workspace = true
-selfish-bytes.workspace = true
 clap.workspace = true
 png.workspace = true
 

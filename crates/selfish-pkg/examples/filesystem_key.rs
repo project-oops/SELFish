@@ -1,27 +1,6 @@
-//! Do the two routes to the filesystem key agree on real packages?
-//!
-//! There are two ways to arrive at `EKPFS`, and they share nothing but the answer:
-//!
-//! - **Recovered.** Take the package's image-key entry, which holds the key encrypted under the
-//!   fake keyset, and decrypt it with that keyset's private half. This reads the package.
-//! - **Computed.** Hash the content id and the passcode. This never looks at the package at all
-//!   beyond reading the id off it.
-//!
-//! A builder needs the second, because a package that does not exist yet has no entry to
-//! decrypt. This run checks the second against the first on packages in hand, which is the only
-//! way to find out whether the derivation a writer will depend on is the right one. (principle
-//! 2: real files confirm, they do not derive.)
-//!
-//! It then uses the key for what it is for - decrypting the outer filesystem, finding the image
-//! inside it, and walking the filesystem inside that - so a pass means the whole chain holds,
-//! not just thirty-two bytes.
-//!
-//! # A difference is not necessarily a disagreement
-//!
-//! The passcode is an *input*. A package built with something other than the fake one computes
-//! to a different key and is not evidence of a wrong derivation. That case is separated here by
-//! opening the image with the recovered key: if it opens, the format is understood and only the
-//! passcode is unknown - which is not something a package is supposed to give up.
+//! Check that the filesystem key computed from the content id and passcode equals the one
+//! recovered from a real package's image-key entry, then open the image with it. A package
+//! built with another passcode differs and is reported as such, not as a failure.
 //!
 //! ```text
 //! cargo run -p selfish-pkg --example filesystem_key -- <package>...

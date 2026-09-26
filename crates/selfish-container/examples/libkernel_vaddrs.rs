@@ -1,25 +1,8 @@
-//! Every defined export of a vendor module, as `name 0xvalue` - one line each.
-//!
-//! A loader resolving a title's imports against this library needs each export's address, and
-//! `dynamic::symbols` already carries it. Two fields decide what to print: `section` is zero for
-//! an import and nonzero for a symbol this module *defines* (the same test `Symbol::is_import`
-//! makes), and `value` is that definition's offset within the module - the number a loader adds
-//! to the module's load base to reach the function. An export with a zero value is a definition
-//! with no address to resolve to, so both must be nonzero.
-//!
-//! The `name` is the entry's string. For a vendor module that string is the NID-encoded
-//! identifier - `hash#library#module` - which is exactly what an importer matches on, so the two
-//! sides of a resolution meet on it.
-//!
-//! Output is data only: nothing but `name 0xvalue` lines reaches stdout, so a consumer can
-//! redirect it straight into a file. It is a dump of one real file and cites that file; it does
-//! not decide a format, which is why it lives in an example rather than in the library.
+//! Every defined export of a module with a nonzero address, one `name 0xvalue` line each and
+//! nothing else on stdout. The name is the encoded `hash#library#module` an importer matches;
+//! the value is the offset a loader adds to the module's load base.
 
-// A diagnostic probe, held to a probe's standards rather than the library's - the same boundary
-// symbol_names.rs draws. These read a layout the format already fixes, at offsets it fixes, and
-// print what they find; a probe that wrapped every field access in a fallible conversion would be
-// harder to check against a hex dump, which is the only thing it is ever checked against. Nothing
-// here ships: a wrong offset produces a wrong line on a terminal, not a wrong file.
+// A probe reads fixed offsets and prints them, so the library's arithmetic lints do not apply.
 #![allow(
     clippy::arithmetic_side_effects,
     clippy::indexing_slicing,

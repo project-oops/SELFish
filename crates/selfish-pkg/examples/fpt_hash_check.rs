@@ -1,29 +1,12 @@
-//! Does this crate's path hash agree with a real package's flat path table?
+//! Hash every path of a real package's inner filesystem with this crate's path hash, in both
+//! the mount-rooted (`/eboot.bin`) and image-rooted (`/uroot/eboot.bin`) forms, and look each
+//! up in the package's own flat path table. Nothing here reads the table back otherwise.
 //!
-//! `write::flat_path_table` says the risk out loud: nothing here reads the table back - a reader
-//! follows directory entries, which are the authority - so a wrong hash passes every test in this
-//! repository and fails only on the console. It has never been checked against real material.
-//!
-//! This checks it the only way that settles it. A real package's inner filesystem carries both the
-//! table *and* the tree it describes, so every path can be hashed with this crate's function and
-//! looked up in the table the vendor's own tool wrote. Agreement is the hash confirmed against
-//! somebody else's output; disagreement is a console being handed a lookup structure it cannot
-//! use, which is a candidate for the panic that happens while mounting `/app0`.
-//!
-//! The path convention is checked too, because the table stores a hash and not a string: this
-//! crate writes paths rooted at the mount (`/eboot.bin`) while a walk reports them rooted at the
-//! image (`/uroot/eboot.bin`), and only one of those can be what was hashed.
-//!
-//!     fpt_hash_check <real.pkg>
-// A diagnostic probe, held to a probe's standards rather than the library's.
-//
-// These read structures whose layout is already known, at offsets the format fixes, and print
-// what they find. Indexing, slicing and plain arithmetic over those offsets is the clearest way
-// to say what is being read - a probe that wraps every field access in a fallible conversion is
-// harder to check against a hex dump, which is the only thing it will ever be checked against.
-// Nothing here ships: a wrong offset produces a wrong line on a terminal, not a wrong package.
-//
-// The library itself keeps every one of these lints. This block is the boundary between the two.
+//! ```text
+//! cargo run -p selfish-pkg --example fpt_hash_check -- <package>
+//! ```
+
+// A probe reads fixed offsets and prints them, so the library's arithmetic lints do not apply.
 #![allow(
     clippy::arithmetic_side_effects,
     clippy::indexing_slicing,

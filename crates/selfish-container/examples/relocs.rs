@@ -1,31 +1,12 @@
 //! The relocations a module carries, decoded.
 //!
-//! A fixed-address executable should need very few. Where a value a loader reads *before*
-//! relocating is supplied by one, the module states nothing in the file and the loader sees a
-//! null - which is a different failure from the value being wrong.
-//!
-//! Two modes, because the interesting question changes with the size of the table:
-//!
-//!   relocs <file>...              the first few of each table, decoded
-//!   relocs --summary <file>...    every entry, counted by type
-//!   relocs --sym N <file>...      every entry naming symbol index N
-//!
-//! `--summary` exists because the listing is capped at sixteen and a module here carries
-//! thirty-nine thousand: "all RELATIVE" was read off the first sixteen and was wrong about the
-//! table as a whole. A count over the whole table cannot be read that way.
-//!
-//! `--sym` is for the opposite question - *this* import, where is its slot - which is what you
-//! want when deciding whether an unresolved import can be repaired by writing to it.
+//! ```text
+//! relocs <file>...              the first sixteen of each table
+//! relocs --summary <file>...    every entry, counted by type
+//! relocs --sym N <file>...      every entry naming symbol index N
+//! ```
 
-// A diagnostic probe, held to a probe's standards rather than the library's.
-//
-// These read structures whose layout is already known, at offsets the format fixes, and print
-// what they find. Indexing, slicing and plain arithmetic over those offsets is the clearest way
-// to say what is being read - a probe that wraps every field access in a fallible conversion is
-// harder to check against a hex dump, which is the only thing it will ever be checked against.
-// Nothing here ships: a wrong offset produces a wrong line on a terminal, not a wrong file.
-//
-// The library itself keeps every one of these lints. This block is the boundary between the two.
+// A probe reads fixed offsets and prints them, so the library's arithmetic lints do not apply.
 #![allow(
     clippy::arithmetic_side_effects,
     clippy::indexing_slicing,

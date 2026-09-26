@@ -1,21 +1,11 @@
-//! Every parameter in a `param.sfo`, with the kind the file states and the bytes it holds.
-//!
-//! The reason to run this rather than read the struct is that a parameter's *kind* is where
-//! this format surprises people. `utf8_special` is a length and no terminator, and it carries
-//! PS3 text and the current generation's `ACCOUNT_ID` alike - eight bytes of user id that are
-//! usually not text at all. So "what kind is this key" is a question about the file in front
-//! of you, not about the format, and this prints the answer.
+//! Every parameter in a `param.sfo`, with the kind the file states and the bytes it holds, then
+//! each named key (and `ACCOUNT_ID`) as raw hex.
 //!
 //! ```text
 //! cargo run -p selfish-title --example sfo_params -- <param.sfo> [KEY]...
 //! ```
-//!
-//! Named keys are printed as raw hex afterwards, which is the shape a consumer wants for an
-//! id it is going to compare rather than display. `ACCOUNT_ID` is included by default because
-//! it is the one every caller asks for first.
 
-// A diagnostic probe, held to a probe's standards rather than the library's. Nothing here
-// ships: a wrong line on a terminal is the worst it can produce.
+// A probe reads fixed offsets and prints them, so the library's arithmetic lints do not apply.
 #![allow(
     clippy::arithmetic_side_effects,
     clippy::indexing_slicing,

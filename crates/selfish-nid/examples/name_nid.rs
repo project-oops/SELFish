@@ -1,33 +1,14 @@
-//! Name a hash, the other way round: given an identifier, find a name that produces it.
-//!
-//! Every other use of this crate runs forwards - hash a name you already have and ask a
-//! table where it lives. An import a running guest calls that nothing can name is the
-//! reverse question, and it has no closed-form answer: the hash is one-way, so the only
-//! method is to hash a vocabulary and look for the value.
-//!
-//! That makes the vocabulary the whole of the answer's strength, and the vocabulary is
-//! **not this repository's**. It is passed in by path - a mining product belongs to
-//! whichever project mined it (the admission test in `CLAUDE.md`), and a search tool that
-//! carried its own word list would quietly become a second copy of somebody else's corpus.
-//!
-//! # Byte order is the first thing to get wrong
-//!
-//! An identifier read one way and the same identifier read the other way are both plausible
-//! sixteen-hex-digit numbers, and two projects printing the same import disagree about which
-//! they mean. So a raw value is searched **both ways**, and the output says which one hit.
-//! An eleven-character identifier has no such ambiguity and is taken as it stands.
+//! Find the names in a vocabulary whose import hash is a given identifier.
 //!
 //! ```text
 //! cargo run -p selfish-nid --example name_nid -- <nid>... --vocabulary <file>...
 //! ```
 //!
-//! `<nid>` is `0x` and sixteen hex digits, or the eleven characters a symbol name spells.
-//! A vocabulary file is read a line at a time and **every** whitespace-separated word on the
-//! line is tried, so a table with the name in any column works without being reshaped first.
+//! `<nid>` is `0x` and sixteen hex digits, searched in both byte orders, or the eleven
+//! characters a symbol name spells. Every whitespace-separated word of every vocabulary line is
+//! tried. The vocabulary belongs to whichever project mined it and is passed in by path.
 
-// A diagnostic probe, held to a probe's standards rather than the library's. See the note in
-// `selfish-container`'s examples: nothing here ships, and a wrong line on a terminal is the
-// worst it can produce.
+// A probe reads fixed offsets and prints them, so the library's arithmetic lints do not apply.
 #![allow(
     clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
