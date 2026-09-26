@@ -56,6 +56,9 @@ jobs:
         with:
           path: OOPS/selfish
 
+      - name: Siblings this build needs
+        run: OOPS/bin/oops bootstrap selfish
+
       - name: format tables name their sources, and no material is committed
         run: |
           ./bin/selfish provenance
