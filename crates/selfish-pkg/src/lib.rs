@@ -1,29 +1,13 @@
-//! Packages: the outer container and its entry table.
-//!
-//! A package is not an archive of files. It is four nested formats:
+//! Packages: the outer container, its entry table, and the builder that writes one.
 //!
 //! ```text
-//! .pkg  ->  header + entry table              <- this crate, so far
-//!       ->  filesystem image at 0x700000      <- encrypted
-//!       ->  a compressed image inside that
-//!       ->  the real filesystem: files, each executable a container
+//! .pkg  ->  header + entry table
+//!       ->  filesystem image at the offset the header names (encrypted)
+//!       ->  the filesystem: files, each executable a signed container
 //! ```
 //!
-//! Only the first layer is implemented. It needs no cryptography, which is why it is
-//! separable and why it comes first - the entry table can be read, checked against real
-//! packages and relied on before a single cipher is involved.
-//!
-//! # Big-endian, unlike everything else here
-//!
-//! The executable container is little-endian throughout. This one is not: magic, counts and
-//! offsets are all big-endian. A reader that carries one convention across both formats gets
-//! an entry count in the tens of millions and no indication why.
-//!
-//! # What is here and what is not
-//!
-//! The layers below this need RSA, SHA-256, AES-CBC, AES-XTS and zlib, and **the public
-//! fake-package keyset only** - retail packages use a key nobody outside the vendor has and
-//! are out of scope in the same way retail signing is.
+//! The header and entry table are big-endian, unlike the executable container. Key material
+//! comes from the public fake-package keyset only; retail packages are out of scope.
 
 #![forbid(unsafe_code)]
 
@@ -43,15 +27,9 @@ pub const MAGIC: [u8; 4] = [0x7F, 0x43, 0x4E, 0x54];
 
 /// The other package magic, `FIH`.
 ///
-/// A current-generation package format, distinct from the one above and **not parsed here**.
-/// Recognised only so that being handed one produces [`PackageError::UnsupportedFormat`]
-/// instead of "not a package".
-///
-/// The distinction is not cosmetic. The console's installer accepts both, so a tool that
-/// reports one of them as not-a-package is telling the user something false about a file that
-/// works. And the alternative failure is worse: assuming the layout above and reading a
-/// big-endian entry count out of a header that does not have one there gives a count, a
-/// table, and entries - all wrong, none of it detectably so. (principle 5, D021)
+/// A Prospero-generation package format distinct from the one above, not parsed here. It is
+/// recognised so that it produces [`PackageError::UnsupportedFormat`] rather than "not a
+/// package": the hardware installs it, and reading it with this layout yields plausible garbage.
 pub const MAGIC_ALTERNATE: [u8; 4] = [0x7F, 0x46, 0x49, 0x48];
 
 /// Offset of the entry count.
@@ -65,23 +43,15 @@ pub const ENTRY_SIZE: usize = 0x20;
 
 /// Offset of the field holding where the filesystem image begins.
 ///
-/// A big-endian `u64`. The same value appears as a 32-bit field at `0x7C` and again at
-/// `0x414` - the low half of this one - in every package examined; which is authoritative
-/// cannot be settled from three samples, so the widest is read and the others recorded.
-///
-/// # This was very nearly hardcoded, on evidence that could not have failed
-///
-/// A previous-generation extractor hardcodes `0x700000`, and this crate first recorded that
-/// as a fixed convention "confirmed" by finding high-entropy data there in all three samples.
-/// That confirmed nothing: in an encrypted package almost every offset holds high-entropy
-/// data. The real values are `0x80000`, `0x580000` and `0x80000` - not fixed, not `0x700000`,
-/// and named in the header all along.
+/// A big-endian `u64`. The same value appears as 32-bit mirrors at `0x7C` and `0x414` (the low
+/// half of this one); the widest is read. The offset varies per package and is not the
+/// `0x700000` an Orbis-generation extractor hardcodes.
 pub const IMAGE_OFFSET_FIELD: usize = 0x410;
 
 /// Offset of the content id in the header.
 pub const CONTENT_ID_OFFSET: usize = 0x40;
 
-/// The 32-bit mirrors of that field, recorded because three samples cannot rank them.
+/// The 32-bit mirrors of [`IMAGE_OFFSET_FIELD`].
 pub const IMAGE_OFFSET_MIRRORS: [usize; 2] = [0x7C, 0x414];
 
 /// One entry in a package's table.
@@ -92,10 +62,6 @@ pub struct Entry {
     /// Offset of this entry's name in the name table.
     pub name_offset: u32,
     /// First flags word. Bit 31 marks the entry encrypted - see [`keys::FLAG_ENCRYPTED`].
-    ///
-    /// Read late: this crate spent a long time treating the record as three useful fields and
-    /// eight bytes of padding, and the two licence entries looked like unbreakable noise the
-    /// entire time. They declare themselves encrypted here. (D044)
     pub flags1: u32,
     /// Second flags word. Bits 12-15 name the key - see [`keys::key_index`].
     pub flags2: u32,
@@ -156,9 +122,8 @@ impl Entry {
 
 /// Entry identifiers seen in every package examined.
 ///
-/// Only two have names, and they are the two an open-source extractor needs. The rest are
-/// recorded as present rather than guessed at - an unnamed constant is honest, an invented
-/// name is not.
+/// Only ids with a cited or observed meaning are named; the rest appear only in
+/// [`ALWAYS_PRESENT`](entry_id::ALWAYS_PRESENT).
 pub mod entry_id {
     /// Entry keys. Part of recovering the filesystem key.
     pub const ENTRY_KEYS: u32 = 0x10;
@@ -172,16 +137,11 @@ pub mod entry_id {
     pub const LICENSE_INFO: u32 = 0x401;
     /// `PARAM.SFO` - the title metadata table.
     ///
-    /// Identified rather than assumed: the entry begins `00 50 53 46`, which is the PSF
-    /// magic. It is a package entry rather than a file inside the filesystem, so extracting
-    /// the filesystem does not produce it. (`data/pkg-format.tsv`, `entry_content` rows)
+    /// The entry begins with the PSF magic `00 50 53 46`. It is a package entry, not a file
+    /// inside the filesystem. (`data/pkg-format.tsv`, `entry_content` rows)
     pub const PARAM_SFO: u32 = 0x1000;
 
-    /// Identifiers present in all three packages examined.
-    ///
-    /// A minimum viable package, established by measurement rather than by specification:
-    /// every one of these appeared in every sample, and nine further ids appeared in only
-    /// one.
+    /// Identifiers present in every package examined: the minimum a package carries.
     pub const ALWAYS_PRESENT: [u32; 14] = [
         0x1, 0x10, 0x20, 0x80, 0x100, 0x200, 0x400, 0x401, 0x409, 0x1000, 0x1001, 0x1002, 0x1003,
         0x1200,
@@ -217,8 +177,7 @@ impl<'a> Package<'a> {
         let count = word(ENTRY_COUNT_OFFSET)?;
         let table = word(TABLE_OFFSET_OFFSET)?;
 
-        // A count is a claim, and a wrong one asks for an allocation before anything has been
-        // validated. Bounded against what is actually present rather than trusted.
+        // The count is bounded against the supplied bytes before it sizes an allocation.
         let table_at = usize::try_from(table).map_err(|_| PackageError::TableOutOfBounds)?;
         let needed = usize::try_from(count)
             .ok()
@@ -259,12 +218,10 @@ impl<'a> Package<'a> {
         self.entries.iter().find(|e| e.id == id)
     }
 
-    /// The **table row** describing an entry, as thirty-two raw bytes.
+    /// The table row describing an entry, as thirty-two raw bytes.
     ///
-    /// Distinct from [`entry_bytes`](Self::entry_bytes), which is the data the row points at.
-    /// Both are associated with one entry, and the key derivation hashes the *row* - worth an
-    /// accessor of its own, because using the wrong one yields a key exactly as plausible and
-    /// entirely wrong.
+    /// Distinct from [`entry_bytes`](Self::entry_bytes), the data the row points at. The key
+    /// derivation hashes the row; hashing the data yields a plausible wrong key.
     #[must_use]
     pub fn entry_row(&self, entry: &Entry) -> Option<&'a [u8]> {
         let index = self.entries.iter().position(|e| e.id == entry.id)?;
@@ -290,9 +247,8 @@ impl<'a> Package<'a> {
 
     /// The content id, from the header.
     ///
-    /// Thirty-six bytes at `0x40`. It is an input to the key derivation, so it is read as the
-    /// bytes it is rather than trimmed to a string - the NUL padding past the id is part of
-    /// what gets hashed.
+    /// Thirty-six bytes at `0x40`, untrimmed: it is an input to the key derivation, and any
+    /// NUL padding is part of what gets hashed.
     #[must_use]
     pub fn content_id(&self) -> &'a [u8] {
         self.bytes
@@ -320,9 +276,8 @@ impl<'a> Package<'a> {
 
     /// Which of the always-present identifiers this package is missing.
     ///
-    /// Empty for every package examined. A non-empty answer is a finding rather than an
-    /// error: it means either the sample set was too small or this package is unusual, and
-    /// both are worth knowing before a builder is written against the list.
+    /// Empty for every package examined. A non-empty answer is reported, not treated as an
+    /// error.
     #[must_use]
     pub fn missing_expected_entries(&self) -> Vec<u32> {
         entry_id::ALWAYS_PRESENT
@@ -344,13 +299,11 @@ pub enum PackageError {
     NotEncrypted(u32),
     /// The entry declares a key this crate cannot locate.
     ///
-    /// Refused rather than decrypted with the wrong block: output that decrypts to noise is
-    /// indistinguishable from output that decrypted correctly into something unrecognised.
+    /// Refused rather than decrypted with a guessed key, since wrong output is not detectable.
     UnknownKeyIndex(u32, u32),
     /// A package, but in the other format - see [`MAGIC_ALTERNATE`].
     ///
-    /// Separate from [`Self::NotAPackage`] because it is a real package this crate cannot
-    /// read, which is a different thing to say than "this is not a package".
+    /// Separate from [`Self::NotAPackage`]: it is a real package this crate does not read.
     UnsupportedFormat,
     /// The entry table runs past the end of the supplied bytes.
     TableOutOfBounds,
@@ -364,8 +317,8 @@ pub enum PackageError {
     EntryTruncated(u32),
     /// The key derivation produced a malformed block.
     ///
-    /// Almost always means the package is retail rather than fake, which is a wall rather
-    /// than a bug: a retail image key is encrypted under a key nobody outside the vendor has.
+    /// Almost always means the package is retail: its image key is encrypted under a key only
+    /// the vendor holds.
     NotAFakePackage,
 }
 
@@ -441,16 +394,15 @@ mod tests {
         out
     }
 
+    /// The header's counts and offsets are read big-endian.
     #[test]
     fn the_header_is_read_big_endian() {
-        // The whole point of the note in the module header. Read little-endian, an entry
-        // count of 14 becomes 234881024 and the failure is an allocation rather than a
-        // parse error.
         let bytes = sample(&[0x1, 0x10, 0x20]);
         let package = Package::parse(&bytes).expect("parses");
         assert_eq!(package.entries().len(), 3);
     }
 
+    /// A table row parses into its id, offset and size, and its data is reachable.
     #[test]
     fn entries_carry_their_identifier_offset_and_size() {
         let bytes = sample(&[entry_id::IMAGE_KEY]);
@@ -470,6 +422,7 @@ mod tests {
         assert_eq!(package.entry_bytes(entry).map(<[u8]>::len), Some(4));
     }
 
+    /// A wrong magic is reported with the bytes found.
     #[test]
     fn an_executable_is_reported_as_such_rather_than_as_a_bad_package() {
         let mut bytes = vec![0_u8; 64];
@@ -480,10 +433,9 @@ mod tests {
         );
     }
 
+    /// An entry count larger than the file is refused before it sizes an allocation.
     #[test]
     fn a_count_larger_than_the_file_is_refused_before_it_is_allocated() {
-        // A count is a claim. Trusting one asks for an allocation sized by an attacker before
-        // anything at all has been validated.
         let mut bytes = sample(&[0x1]);
         bytes[0x10..0x14].copy_from_slice(&0x00FF_FFFF_u32.to_be_bytes());
         assert_eq!(
@@ -492,6 +444,7 @@ mod tests {
         );
     }
 
+    /// A table offset past the end of the file is refused.
     #[test]
     fn a_table_offset_past_the_end_is_refused() {
         let mut bytes = sample(&[0x1]);
@@ -502,10 +455,9 @@ mod tests {
         );
     }
 
+    /// A missing always-present entry is reported by id, not as an error.
     #[test]
     fn a_package_missing_an_expected_entry_reports_which() {
-        // Not an error. A package without one of these is either unusual or evidence the
-        // sample set was too small, and both matter before a builder is written to the list.
         let bytes = sample(&[0x1, 0x10]);
         let package = Package::parse(&bytes).expect("parses");
         let missing = package.missing_expected_entries();
@@ -513,6 +465,7 @@ mod tests {
         assert!(!missing.contains(&entry_id::ENTRY_KEYS));
     }
 
+    /// A package with every always-present entry reports none missing.
     #[test]
     fn a_package_with_every_expected_entry_reports_none_missing() {
         let bytes = sample(&entry_id::ALWAYS_PRESENT);
@@ -520,6 +473,7 @@ mod tests {
         assert!(package.missing_expected_entries().is_empty());
     }
 
+    /// Input shorter than the magic is refused, not read past.
     #[test]
     fn truncation_is_refused_rather_than_read_past() {
         assert_eq!(
@@ -527,12 +481,10 @@ mod tests {
             PackageError::TooShort
         );
     }
+
+    /// The alternate package magic is reported as unsupported, not as not-a-package.
     #[test]
     fn the_other_package_format_is_named_rather_than_called_not_a_package() {
-        // The console's installer accepts both magics. Reporting one of them as not-a-package
-        // tells the user something false about a file that works - and assuming this crate's
-        // layout for it would be worse, since a big-endian read of a header that has no count
-        // there yields a count, a table and entries, all wrong and none of it detectable.
         let mut bytes = vec![0_u8; 0x100];
         bytes[..4].copy_from_slice(&MAGIC_ALTERNATE);
         assert_eq!(
@@ -541,6 +493,7 @@ mod tests {
         );
     }
 
+    /// The two package magics are distinct and the alternate one spells `FIH`.
     #[test]
     fn the_two_magics_are_distinct_and_neither_is_the_other() {
         assert_ne!(MAGIC, MAGIC_ALTERNATE);

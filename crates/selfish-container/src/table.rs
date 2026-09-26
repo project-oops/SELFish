@@ -1,20 +1,14 @@
 //! Reading the format table.
 //!
 //! Every constant this crate uses comes from `data/self-format.tsv`, which carries in its
-//! header the projects and commits each field was established from. Nothing is written twice.
-//!
-//! The reason is the one the charter gives for `data/` in general: a constant that exists in
-//! two places is a constant that will eventually disagree with itself. That is not a
-//! hypothetical here - it is why this repository exists.
+//! header the projects and commits each field was established from. The code holds no copy.
 
 /// The field table, with its provenance header.
 const FORMAT: &str = include_str!("../../../data/self-format.tsv");
 
 /// One value from the table, by group and field.
 ///
-/// `None` rather than a default. A missing constant means the table changed shape and this
-/// code did not, and continuing with a plausible zero produces a container that is wrong in
-/// a way nothing downstream can detect.
+/// `None` rather than a default, so a missing row is never replaced by a plausible zero.
 #[must_use]
 pub fn lookup(group: &str, field: &str) -> Option<u64> {
     for line in FORMAT.lines() {
@@ -56,7 +50,7 @@ pub fn group(group: &str) -> Vec<(String, u64)> {
     out
 }
 
-/// The note column of a row, which is where the table records *why*.
+/// The note column of a row, which records why the value is what it is.
 #[must_use]
 pub fn note(group: &str, field: &str) -> Option<String> {
     for line in FORMAT.lines() {
@@ -89,9 +83,8 @@ pub struct FixedField {
 
 /// Every row of a struct that pins a concrete value at a concrete offset.
 ///
-/// This is what an audit checks a real file against: a row with a `-` in its value or offset
-/// column describes a field whose value varies (a size, a count), and there is nothing to
-/// confirm. A row with all three is a claim the table makes that a real file can settle.
+/// What an audit checks a real file against. A row with a `-` in its offset, size or value
+/// column describes a field whose value varies and is left out.
 #[must_use]
 pub fn fixed_fields(group: &str) -> Vec<FixedField> {
     let mut out = Vec::new();
@@ -140,6 +133,7 @@ pub fn parse_number(text: &str) -> Option<u64> {
 mod tests {
     use super::{group, lookup, note, parse_number};
 
+    /// Numbers parse in hex and decimal, and a `-` is no number.
     #[test]
     fn numbers_parse_in_both_notations_the_table_uses() {
         assert_eq!(parse_number("0x10"), Some(16));
@@ -149,10 +143,9 @@ mod tests {
         assert_eq!(parse_number("nonsense"), None);
     }
 
+    /// No field has two rows; `lookup` would silently take the first.
     #[test]
     fn no_field_is_described_twice() {
-        // A duplicate row is silent in the worst way: `lookup` takes the first, so a second
-        // row carrying the real value is invisible while the table plainly contains it.
         let mut seen = std::collections::BTreeSet::new();
         for line in super::FORMAT.lines() {
             if line.starts_with('#') {
@@ -172,11 +165,9 @@ mod tests {
         }
     }
 
+    /// Each struct's declared size equals where its last field ends.
     #[test]
     fn every_struct_size_matches_the_fields_it_declares() {
-        // Offsets and the declared size are two independent statements about one layout. A
-        // container built where they disagree is reported by a loader only as "not a
-        // container", with no indication of which field.
         let mut ends: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
         let mut declared: std::collections::BTreeMap<String, u64> =
             std::collections::BTreeMap::new();
@@ -214,6 +205,7 @@ mod tests {
         }
     }
 
+    /// The groups the builder reads are present in the table.
     #[test]
     fn the_groups_the_builder_relies_on_are_present() {
         assert!(!group("segment_flag").is_empty());
@@ -222,10 +214,9 @@ mod tests {
         assert_eq!(lookup("ptype", "fake"), Some(1));
     }
 
+    /// The note column, which records each value's derivation, is readable.
     #[test]
     fn notes_are_readable_because_they_carry_the_reasoning() {
-        // The note column is where the table records *why* a value is what it is. Losing it
-        // to a parsing change would leave the numbers without their evidence.
         let note = note("self_header", "flags").unwrap_or_default();
         assert!(
             note.contains("signed_block_count"),

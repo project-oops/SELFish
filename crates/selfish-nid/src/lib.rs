@@ -1,8 +1,6 @@
 //! The import hash.
 //!
-//! A vendor module imports by a hash of the symbol name rather than by the name itself, so
-//! this is the difference between a resolvable module and a list of numbers. Everything that
-//! reads or writes one of these formats needs it.
+//! A vendor module imports by a hash of the symbol name rather than by the name itself.
 //!
 //! ```text
 //! NID = first 8 bytes of SHA-1(name || suffix), packed so `digest[0]` is the LEAST
@@ -12,26 +10,10 @@
 //! then encoded as eleven characters of a 64-symbol alphabet with two padding bits at the
 //! bottom. A full dynamic symbol name is `<encoded>#<library>#<module>`.
 //!
-//! # Four independent ways to be wrong, and each looks fine
-//!
-//! The suffix, the byte order, the alphabet and the bit packing are separate choices, and a
-//! mistake in any one produces eleven perfectly ordinary characters that resolve to nothing.
-//! Reading the code does not distinguish a correct chain from a broken one - the output of a
-//! broken one is not malformed, it is merely wrong.
-//!
-//! So this module is pinned by **fixtures, not by reasoning**. `tests/known-pairs.txt`
-//! carries 389 name-and-encoding pairs harvested from the resolution logs of open-source
-//! emulators, each one a case where somebody else's independent implementation printed the
-//! name it matched. Reproducing all 389 constrains the suffix, the byte order, the alphabet
-//! and the packing simultaneously, and does it against implementations that were not
-//! consulted while writing this.
-//!
-//! That corpus is why this can be one implementation rather than two. The argument for
-//! duplicating it was that a probe must not share a hash with the emulator it measures, or
-//! "it resolved" proves only that both did the same thing. The fixture answers that better
-//! than a second implementation would: agreement with 389 externally-produced pairs is
-//! evidence about the algorithm, where agreement between two of our own implementations is
-//! evidence about us. (D004)
+//! The suffix, byte order, alphabet and packing are pinned by `tests/known-pairs.txt`:
+//! name-and-encoding pairs taken from the resolution logs of independent open-source
+//! emulators. Agreement with those pairs is why there is one implementation, shared by the
+//! probes and the emulator they measure (D004).
 
 #![forbid(unsafe_code)]
 
@@ -44,9 +26,8 @@ const SUFFIX_TOML: &str = include_str!("../../../data/hash-suffix.toml");
 
 /// Characters a NID is encoded with.
 ///
-/// Standard base64 ordering with `+` and `-` as the final two. **Not** the RFC 4648
-/// alphabet, whose last two characters differ - using that one yields names of the right
-/// length that resolve to nothing at all.
+/// Standard base64 ordering with `+` and `-` as the final two. This is not the RFC 4648
+/// alphabet, whose last two characters differ.
 pub const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-";
 
 /// Characters in an encoded NID.
@@ -57,14 +38,12 @@ const PADDING_BITS: u32 = 2;
 
 /// The hash suffix, as sixteen bytes.
 ///
-/// Embedded rather than read at run time. A library that needs a file beside it to compute a
-/// constant is one that fails differently depending on where it was called from, and the
-/// suffix is a property of the format rather than a configuration choice.
+/// Embedded at compile time: the suffix is a property of the format, not configuration.
 ///
 /// # Panics
 ///
-/// Never in practice: the committed data file is parsed at compile time by `include_str!` and
-/// its shape is covered by a test. A malformed file fails that test rather than a caller.
+/// Never: the committed data file is embedded by `include_str!` and its shape is covered by
+/// a test.
 #[must_use]
 pub fn suffix() -> Vec<u8> {
     parse_suffix(SUFFIX_TOML).unwrap_or_default()
@@ -72,9 +51,7 @@ pub fn suffix() -> Vec<u8> {
 
 /// Pulls `suffix_hex` out of the data file.
 ///
-/// Parsed by hand rather than with a TOML crate. The file has one key, and a dependency that
-/// exists to read one hex string is a dependency that gets used for something else later
-/// without anybody deciding to.
+/// Parsed by hand; the file has one key and needs no TOML dependency.
 fn parse_suffix(toml: &str) -> Option<Vec<u8>> {
     let line = toml
         .lines()
@@ -108,8 +85,7 @@ impl Nid {
 
     /// Hash a symbol name with a supplied suffix.
     ///
-    /// Exists so the suffix can be varied in a test or an experiment without the committed
-    /// one being editable at run time.
+    /// Lets a test vary the suffix without the committed one being editable at run time.
     #[must_use]
     pub fn with_suffix(name: &str, suffix: &[u8]) -> Self {
         let mut hasher = Sha1::new();
@@ -117,23 +93,13 @@ impl Nid {
         hasher.update(suffix);
         let digest = hasher.finalize();
 
-        // A SHA-1 digest is twenty bytes, so this cannot be short - taken through `get`
-        // anyway, because one exception is how panics come back into a file that removed
-        // them all.
         let mut first = [0_u8; 8];
         if let Some(head) = digest.get(..8) {
             first.copy_from_slice(head);
         }
-        // `digest[0]` becomes the **least** significant byte of the `u64`, and this is one of
-        // the four things a fixture is protecting: the other packing produces an equally
-        // plausible value matching nothing.
-        //
-        // Said that way on purpose. This read "little-endian" and orbistoun's read
-        // "big-endian", each describing its own packing of the same eight bytes, and each
-        // called the other incorrect in a committed file. An endian word describes the
-        // packing - which is the thing that differs - so it mirrors, and two mirrored
-        // warnings look like a disagreement about a fact. Naming which end of the *digest*
-        // cannot mirror. (D096, worklog 056)
+        // `digest[0]` becomes the least significant byte of the `u64`. Stated by which end of
+        // the digest lands where, because an endian word describes the packing and reads
+        // differently depending on which side of it the reader stands.
         Self(u64::from_le_bytes(first))
     }
 
@@ -158,9 +124,6 @@ impl Nid {
             .map(|position| {
                 let shift = u32::try_from(position).unwrap_or(0).saturating_mul(6);
                 let index = usize::try_from((bits >> shift) & 0x3F).unwrap_or(0);
-                // Masked to six bits, so always inside a 64-entry table. Bounds-checked
-                // anyway: the cost is nothing and the alternative is a panic in a library
-                // that writes binary formats.
                 char::from(*ALPHABET.get(index).unwrap_or(&b'A'))
             })
             .collect()
@@ -168,9 +131,7 @@ impl Nid {
 
     /// Back from those eleven characters.
     ///
-    /// Exists so the transform can be *checked* rather than trusted. A transform that cannot
-    /// be inverted can only be tested against the pairs that happen to be published; one that
-    /// can is testable against any value at all.
+    /// The inverse makes the transform testable against any value, not only published pairs.
     ///
     /// # Errors
     ///
@@ -196,10 +157,9 @@ impl Nid {
 
 /// An import, as a dynamic symbol name encodes it.
 ///
-/// Real symbol names take the form `H2e8t5ScQGc#B#C`: an encoded hash, a library id and a
-/// module id, all in the same alphabet. The ids are *indices*, and what they index is the
-/// vendor's own tables rather than `DT_NEEDED` - a distinction that produces attributions
-/// which fit and mean nothing when it is got wrong.
+/// Symbol names take the form `H2e8t5ScQGc#B#C`: an encoded hash, a library id and a module
+/// id, all in the same alphabet. The ids index the vendor's own library and module tables,
+/// not `DT_NEEDED`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Import {
     /// The hash a loader resolves by.
@@ -212,9 +172,8 @@ pub struct Import {
 
 /// Decode a dynamic symbol name of the form `<nid>#<library>#<module>`.
 ///
-/// `None` for anything not in that form. Ordinary symbol names exist in these modules too,
-/// and one that does not encode an import is not an error - a reader that treats it as one
-/// fails on the first locally-defined function it meets.
+/// `None` for anything not in that form. These modules also carry ordinary locally-defined
+/// symbol names, which are not an error.
 #[must_use]
 pub fn decode_symbol_name(name: &str) -> Option<Import> {
     let mut parts = name.split('#');
@@ -229,17 +188,11 @@ pub fn decode_symbol_name(name: &str) -> Option<Import> {
     })
 }
 
-/// Decode a short identifier in the same alphabet.
-///
-/// One or two characters in practice, and the value is an index rather than a hash - so it
-/// is read as a plain base-64 number with no padding bits, unlike the eleven-character form.
 /// Encode a library or module id the way a symbol name spells it.
 ///
-/// The same alphabet as the hash and **no padding bits**: this is a number, not a truncated
-/// digest. Running an id through [`Nid::encode`] would produce eleven characters where the
-/// format wants one or two, and the result would decode to something else entirely.
-///
-/// Zero is `A`, and `A` is a real id rather than an absence - usually the kernel's.
+/// The same alphabet as the hash with no padding bits: the id is a number, not a truncated
+/// digest, and is one or two characters long. Zero is `A`, a real id (usually the kernel's)
+/// rather than an absence.
 #[must_use]
 pub fn encode_index(value: u16) -> String {
     let mut value = value;
@@ -261,12 +214,9 @@ pub fn encode_index(value: u16) -> String {
 
 /// The full dynamic symbol name for an import: `<hash>#<library>#<module>`.
 ///
-/// Takes a [`Nid`] rather than a name, which is what lets one function serve both cases a
-/// builder meets. Most imports are named and hashed; some arrive *already* as an identifier,
-/// because firmware modules export around a million of them whose names nobody outside the
-/// vendor holds - and an identifier is perfectly importable without one. Those reach here as
-/// `Nid::decode(...)`, which validates them on the way past instead of splicing an unchecked
-/// string into the middle of a symbol name.
+/// Takes a [`Nid`] rather than a name. Most imports are named and hashed; an import known only
+/// by its identifier arrives as `Nid::decode(...)`, which validates it before it is spliced
+/// into a symbol name.
 #[must_use]
 pub fn symbol_name(nid: Nid, library: u16, module: u16) -> String {
     format!(
@@ -279,9 +229,8 @@ pub fn symbol_name(nid: Nid, library: u16, module: u16) -> String {
 
 /// The suffix, written out so a report can say which one produced its numbers.
 ///
-/// **The whole suffix rather than a hash of it.** It is public, it is committed, and sixteen
-/// bytes is short enough to read. Tables built with different suffixes are not comparable and
-/// would otherwise look identical - and the suffix is the one input nobody thinks to check.
+/// The whole suffix rather than a hash of it: it is public and short, and tables built with
+/// different suffixes are not comparable.
 #[must_use]
 pub fn suffix_fingerprint(suffix: &[u8]) -> String {
     use core::fmt::Write as _;
@@ -300,6 +249,7 @@ pub fn decode_index(text: &str) -> Option<u16> {
     decode_small(text)
 }
 
+/// Decode a short id in the NID alphabet, as a plain base-64 number with no padding bits.
 fn decode_small(text: &str) -> Option<u16> {
     if text.is_empty() {
         return None;
@@ -349,11 +299,13 @@ mod tests {
         parse_suffix, suffix, suffix_fingerprint, symbol_name,
     };
 
+    /// The committed suffix file parses to sixteen bytes.
     #[test]
     fn the_committed_suffix_parses_to_sixteen_bytes() {
         assert_eq!(suffix().len(), 16, "the suffix is sixteen bytes");
     }
 
+    /// A missing, odd-length or non-hex suffix is refused whole.
     #[test]
     fn a_malformed_suffix_file_is_refused_rather_than_half_read() {
         assert_eq!(parse_suffix("nothing here"), None);
@@ -365,16 +317,15 @@ mod tests {
         assert_eq!(parse_suffix("suffix_hex = \"ZZ\""), None, "not hex");
     }
 
+    /// One published pair constrains suffix, byte order, alphabet and packing at once.
     #[test]
     fn the_published_pair_holds() {
-        // The single fact that constrains suffix, byte order, alphabet and packing at once.
         assert_eq!(Nid::of("sceKernelLoadStartModule").encode(), "wzvqT4UqKX8");
     }
 
+    /// Encode and decode are inverse for arbitrary values.
     #[test]
     fn encoding_round_trips_for_arbitrary_values() {
-        // Why `decode` exists: without it the transform could only ever be checked against
-        // the handful of pairs somebody happened to publish.
         for value in [0, 1, u64::MAX, 0x0123_4567_89AB_CDEF, 0xFEDC_BA98_7654_3210] {
             let nid = Nid::from_value(value);
             assert_eq!(
@@ -385,6 +336,7 @@ mod tests {
         }
     }
 
+    /// Every encoding is eleven characters drawn from the alphabet.
     #[test]
     fn every_encoding_is_eleven_characters_from_the_alphabet() {
         for value in [0, 1, u64::MAX, 0x8000_0000_0000_0000] {
@@ -399,6 +351,7 @@ mod tests {
         }
     }
 
+    /// Wrong lengths and characters outside the alphabet (including RFC 4648's `/`) are refused.
     #[test]
     fn decoding_refuses_what_it_cannot_represent() {
         assert_eq!(Nid::decode("short"), Err(DecodeError::WrongLength(5)));
@@ -406,8 +359,6 @@ mod tests {
             Nid::decode("wzvqT4UqKX8x"),
             Err(DecodeError::WrongLength(12))
         );
-        // `*` is not in the alphabet. `/` would be, in RFC 4648 - which is exactly the
-        // alphabet this format does not use.
         assert_eq!(
             Nid::decode("wzvqT4UqKX*"),
             Err(DecodeError::NotInAlphabet('*'))
@@ -418,6 +369,7 @@ mod tests {
         );
     }
 
+    /// An encoded import splits into a hash, a library index and a module index.
     #[test]
     fn an_encoded_import_splits_into_a_hash_and_two_indices() {
         let import = decode_symbol_name("wzvqT4UqKX8#B#C").expect("an import");
@@ -426,27 +378,24 @@ mod tests {
         assert_eq!(import.module_id, 2, "C is two");
     }
 
+    /// `A` decodes to index zero, a real library, not an absence.
     #[test]
     fn the_zero_index_is_a_real_index_and_not_an_absence() {
-        // `A` is zero, and library zero is an ordinary library - usually the kernel. Reading
-        // it as "no library" would silently drop every import from the commonest one.
         let import = decode_symbol_name("wzvqT4UqKX8#A#A").expect("an import");
         assert_eq!(import.library_id, 0);
         assert_eq!(import.module_id, 0);
     }
 
+    /// Ids above sixty-three take a second base-64 character.
     #[test]
     fn two_character_indices_are_read_as_base_sixty_four() {
-        // Beyond sixty-four libraries the id takes a second character, and a module that
-        // imports from hundreds does exactly that.
         let import = decode_symbol_name("wzvqT4UqKX8#BA#C").expect("an import");
         assert_eq!(import.library_id, 64, "B then A is one times sixty-four");
     }
 
+    /// A plain or malformed symbol name decodes to no import rather than an error.
     #[test]
     fn an_ordinary_symbol_name_is_not_an_import_and_not_an_error() {
-        // These modules carry locally-defined symbols too. A reader that treats a plain name
-        // as malformed fails on the first function the module defines itself.
         assert_eq!(decode_symbol_name("memcpy"), None);
         assert_eq!(decode_symbol_name("wzvqT4UqKX8"), None, "no ids at all");
         assert_eq!(decode_symbol_name("a#b#c#d"), None, "too many parts");
@@ -458,14 +407,15 @@ mod tests {
         );
     }
 
+    /// The suffix is applied: an empty suffix gives a different hash.
     #[test]
     fn a_different_suffix_gives_a_different_answer() {
-        // Guards the case where the suffix is silently empty - which would still produce
-        // eleven plausible characters for every name.
         let with = Nid::of("sceKernelLoadStartModule");
         let without = Nid::with_suffix("sceKernelLoadStartModule", &[]);
         assert_ne!(with, without, "the suffix must actually be applied");
     }
+
+    /// Library and module ids round-trip through the index encoding.
     #[test]
     fn an_id_round_trips_through_the_index_encoding() {
         for value in [0_u16, 1, 63, 64, 65, 4095, u16::MAX] {
@@ -478,10 +428,9 @@ mod tests {
         }
     }
 
+    /// An id encodes as a short unpadded number, not through the hash encoder.
     #[test]
     fn the_index_encoding_is_not_the_hash_encoding() {
-        // A number, not a truncated digest. Running an id through the hash encoder gives
-        // eleven characters where the format wants one, and they decode to something else.
         assert_eq!(
             encode_index(0),
             "A",
@@ -491,9 +440,10 @@ mod tests {
         assert_eq!(encode_index(64), "BA");
         assert_eq!(encode_index(63), "-");
     }
+
+    /// A built symbol name decodes back to its hash and ids.
     #[test]
     fn a_symbol_name_round_trips_through_the_decoder() {
-        // The two halves of this crate, against each other.
         let nid = Nid::of("sceKernelLoadStartModule");
         let name = symbol_name(nid, 0, 1);
 
@@ -503,20 +453,17 @@ mod tests {
         assert_eq!(read.module_id, 1);
     }
 
+    /// An identifier-only import is validated by decoding before it becomes a symbol name.
     #[test]
     fn an_already_encoded_identifier_is_validated_rather_than_spliced() {
-        // Some imports arrive as the identifier itself, with no name behind it. Decoding
-        // first means a malformed one is caught here rather than becoming a symbol name that
-        // looks right and resolves to nothing.
         let nid = Nid::decode("wzvqT4UqKX8").expect("a valid identifier");
         assert_eq!(symbol_name(nid, 0, 0), "wzvqT4UqKX8#A#A");
         assert!(Nid::decode("not-eleven").is_err());
     }
 
+    /// The fingerprint is the suffix bytes in hex, not a digest of them.
     #[test]
     fn the_fingerprint_is_the_suffix_and_not_a_digest_of_it() {
-        // Short enough to read, which is the point: two tables built with different suffixes
-        // are not comparable and are otherwise indistinguishable.
         assert_eq!(suffix_fingerprint(&[0x51, 0x8D, 0x64, 0xA6]), "518D64A6");
         assert_eq!(suffix_fingerprint(&[]), "");
     }

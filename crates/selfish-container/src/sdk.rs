@@ -1,20 +1,17 @@
+//! Target SDK versions and process-parameter stamping.
+//!
+//! Maps SDK names and aliases to the packed 32-bit Orbis and Prospero (PPR) versions from
+//! `data/sdk-versions.toml`, checks them against the target generation, and stamps
+//! `PT_SCE_PROCPARAM` in an ELF.
+
 #![allow(
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
-    clippy::cast_possible_truncation,
     clippy::unreadable_literal,
-    clippy::missing_errors_doc,
     clippy::collapsible_if,
-    clippy::doc_markdown,
     clippy::must_use_candidate,
     clippy::redundant_closure_for_method_calls
 )]
-
-//! Target SDK version dictionary and procparam stamping for `SELFish`.
-//!
-//! Provides human-readable SDK names and aliases mapped to Orbis and Prospero (PPR)
-//! packed 32-bit versions, validates target generation compatibility, and stamps
-//! `PT_SCE_PROCPARAM` directly into ELF binaries.
 
 use selfish_abi::Generation;
 use std::collections::BTreeMap;
@@ -36,7 +33,7 @@ pub struct SdkEntry {
     pub orbis_sdk: u32,
     /// Packed Prospero (PPR) SDK version (0xMMmmppbb).
     pub ppr_sdk: u32,
-    /// Minimum console firmware required.
+    /// Minimum hardware firmware required.
     pub min_firmware: String,
     /// Human-readable description.
     pub description: String,
@@ -108,6 +105,10 @@ impl SdkDictionary {
     }
 
     /// Parse a minimal TOML string containing `[sdks."<version>"]` blocks.
+    ///
+    /// # Errors
+    ///
+    /// Never returns one; unrecognised lines are skipped.
     pub fn parse_toml(content: &str) -> Result<Self, String> {
         let mut entries = BTreeMap::new();
         let mut current_name: Option<String> = None;
@@ -209,6 +210,10 @@ impl SdkDictionary {
     }
 
     /// Resolve an SDK identifier (friendly name, alias, or hex) for a target generation.
+    ///
+    /// # Errors
+    ///
+    /// If the identifier is not recognised, or names an SDK for another generation.
     pub fn resolve(&self, input: &str, target_gen: Generation) -> Result<TargetSdk, String> {
         let trimmed = input.trim();
 
@@ -347,6 +352,7 @@ pub fn patch_elf_procparam(elf_bytes: &mut [u8], target_sdk: TargetSdk) -> bool 
 mod tests {
     use super::*;
 
+    /// The embedded dictionary parses and resolves the standard aliases.
     #[test]
     fn test_embedded_dictionary_parses() {
         let dict = SdkDictionary::embedded();
@@ -373,6 +379,7 @@ mod tests {
         assert_eq!(compat.ppr_sdk, 0);
     }
 
+    /// A Prospero-generation SDK is refused for an Orbis-generation target.
     #[test]
     fn test_generation_mismatch_rejected() {
         let dict = SdkDictionary::embedded();
@@ -383,6 +390,7 @@ mod tests {
         );
     }
 
+    /// Hex and dotted version strings resolve to the same packed value.
     #[test]
     fn test_dotted_and_hex_resolution() {
         let dict = SdkDictionary::embedded();

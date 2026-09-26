@@ -37,8 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let recovered = match keys::filesystem_key(&package) {
             Ok(key) => key,
             Err(error) => {
-                // A retail package's image key is not under the fake keyset, and saying so is
-                // more useful than reporting a mismatch that was never a comparison.
+                // A retail package's image key is not under the fake keyset.
                 println!("  not readable as a fake package: {error}");
                 continue;
             }
@@ -59,9 +58,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  they differ, so this package was not built with the fake passcode");
         }
 
-        // Whichever key is this package's own, walk with it. On a match that proves the computed
-        // key really works; on a difference it separates "another passcode" from "wrong
-        // derivation", which look identical if you only compare thirty-two bytes.
+        // Walk with the package's own key, which separates "another passcode" from "wrong
+        // derivation" when the two keys differ.
         let key: &[u8] = if matches { &computed } else { &recovered };
         match walk(&bytes, &package, key) {
             Ok((outer, inner)) => {
@@ -95,8 +93,7 @@ fn walk(
     let length = u64::try_from(bytes.len())? - at;
     let image = Region::new(Slice::new(bytes, 0), at, length);
 
-    // The keys come from the seed in the superblock, which lives in the part that is not
-    // encrypted - so it can be read before anything is decrypted.
+    // The keys come from the seed in the superblock, which is not encrypted.
     let start = usize::try_from(at)?;
     let header = &bytes[start..start + 0x400];
     let (tweak, data) = selfish_pfs::image_keys(key, header)?;

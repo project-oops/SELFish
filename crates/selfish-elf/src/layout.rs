@@ -1,19 +1,8 @@
 //! Segment layout rules, and the linker script that encodes them.
 //!
-//! A module's layout is not a matter of taste. Three separate rules here were each learned by
-//! producing a file a loader rejected or, worse, accepted and then read wrongly:
-//!
-//! - **Two loadable segments, not three.** A separate read-only segment is the obvious layout
-//!   and one loader silently declines to map it, leaving every `.rodata` byte unmapped.
-//! - **16 KiB alignment**, which is the console's allocation granularity and not the host's.
-//! - **`.got` and `.got.plt` stay separate.** Merged, the linkage-table base names the wrong
-//!   address and every resolved import lands at the wrong offset.
-//!
-//! `link/module.ld` at the repository root is the script, and its comments are the long form
-//! of all three. This module exists so the constants it hard-codes can be checked: a linker
-//! script is the one artefact here that no compiler validates, and a segment type that drifts
-//! from [`crate::segment`] would produce a module whose headers are wrong in a way nothing in
-//! the build notices.
+//! A module has two loadable segments, 16 KiB alignment, and separate `.got` and `.got.plt`.
+//! `link/module.ld` at the repository root is the script. No compiler validates a linker
+//! script, so the tests here check its hard-coded constants against [`crate::segment`].
 
 /// The script, compiled in so the test below reads the real file.
 pub const SCRIPT: &str = include_str!("../../../link/module.ld");
@@ -24,27 +13,22 @@ pub const NATIVE_EBOOT_SCRIPT: &str = include_str!("../../../link/native_eboot.l
 /// Linker script for older-generation (Orbis) eboots.
 pub const EBOOT_SCRIPT: &str = include_str!("../../../link/eboot.ld");
 
-/// The console's allocation granularity.
+/// The hardware's allocation granularity, not the host's 4 KiB page.
 ///
-/// **Not the host's 4 KiB.** A segment that begins part-way into one of these cannot be
-/// placed by a loader mapping whole pages, and the symptom is a fault inside the loader
-/// rather than a rejection naming the cause.
+/// A segment that begins part-way into one faults inside the loader rather than being
+/// rejected.
 pub const ALLOCATION_GRANULARITY: u64 = 0x4000;
 
 /// How many loadable segments a module has.
 ///
-/// Two: read-execute and read-write, with read-only data in the first. Adding a third for
-/// `.rodata` is the obvious layout and it is wrong - one loader maps segments by kind and
-/// simply omits it, so every byte of read-only data is absent at run time. Since the section
-/// tables and every string live there, the module faults on its first act.
+/// Read-execute and read-write, with read-only data in the first. A loader maps segments by
+/// kind and omits a separate read-only one, leaving `.rodata` unmapped.
 pub const LOADABLE_SEGMENTS: usize = 2;
 
 /// Tags a module spends per imported library.
 ///
-/// Four - the standard `NEEDED` plus three vendor tags - on top of the tags describing the
-/// tables themselves. This is what actually drives how much room the dynamic table needs, and
-/// getting it wrong is why the reservation in the script is sized by library count rather
-/// than by a round number that looked large enough.
+/// The standard `NEEDED` plus three vendor tags. The script sizes its dynamic-table
+/// reservation by library count from this.
 pub const TAGS_PER_LIBRARY: usize = 4;
 
 #[cfg(test)]
@@ -57,10 +41,9 @@ mod tests {
     use super::{ALLOCATION_GRANULARITY, LOADABLE_SEGMENTS, SCRIPT};
     use crate::segment;
 
+    /// The script's vendor segment types match the constants in `segment`.
     #[test]
     fn the_script_declares_the_segment_types_this_crate_names() {
-        // The one artefact here a compiler does not check. A segment type that drifts from
-        // the constant produces a module whose headers are wrong and whose build succeeds.
         for (name, value) in [
             ("dynlibdata", segment::SCE_DYNLIBDATA),
             ("procparam", segment::SCE_PROCPARAM),
@@ -73,6 +56,7 @@ mod tests {
         }
     }
 
+    /// The script aligns to the hardware's granularity, never the host page size.
     #[test]
     fn the_script_aligns_to_the_consoles_granularity_and_not_the_hosts() {
         let granularity = format!("ALIGN({ALLOCATION_GRANULARITY:#x})");
@@ -87,11 +71,9 @@ mod tests {
         );
     }
 
+    /// The script declares exactly `LOADABLE_SEGMENTS` `PT_LOAD` segments.
     #[test]
     fn the_script_declares_exactly_two_loadable_segments() {
-        // Three was the obvious layout and cost every `.rodata` byte at run time. Counted
-        // rather than trusted, because the failure is silent in the build and total at run
-        // time.
         let declared = SCRIPT
             .lines()
             .filter(|line| {
@@ -102,34 +84,30 @@ mod tests {
         assert_eq!(declared, LOADABLE_SEGMENTS);
     }
 
+    /// `.got` and `.got.plt` are separate output sections, so the linkage-table base is right.
     #[test]
     fn the_got_and_the_linkage_table_stay_separate() {
-        // Merging them pointed the linkage-table base at the start of `.got`, so every
-        // resolved import landed at the wrong offset - a module that resolves nothing and
-        // faults on its first call, which reads as the loader not supporting the format.
         assert!(SCRIPT.contains(".got            :"));
         assert!(SCRIPT.contains(".got.plt        :"));
     }
 
+    /// The first segment maps the file and program headers.
     #[test]
     fn the_headers_are_covered_by_the_first_segment() {
-        // Without FILEHDR and PHDRS the header table is not inside any segment, and a loader
-        // that maps only what the segments describe cannot read the table it just used.
         assert!(SCRIPT.contains("PT_LOAD FILEHDR PHDRS"));
     }
 
+    /// Both eboot scripts declare `PT_TLS`, place TLS in it, and put `.bss` after `.dynamic`.
     #[test]
     fn eboot_scripts_declare_pt_tls_and_keep_bss_last_in_data() {
         for (name, script) in [
             ("native_eboot.ld", super::NATIVE_EBOOT_SCRIPT),
             ("eboot.ld", super::EBOOT_SCRIPT),
         ] {
-            // Must declare PT_TLS segment (REQ-20260915T0001Z-8d72)
             assert!(
                 script.contains("tls       PT_TLS FLAGS(4);"),
                 "{name} should declare `tls PT_TLS FLAGS(4);`"
             );
-            // Must place .tdata and .tbss in :data :tls
             assert!(
                 script.contains(".tdata          : { *(.tdata .tdata.*) }   :data :tls"),
                 "{name} should place .tdata in :data :tls"
@@ -139,7 +117,7 @@ mod tests {
                 "{name} should place .tbss in :data :tls"
             );
 
-            // .bss MUST be placed after .dynamic so NOBITS is not forced to write zeros to the file (REQ-20260923T2350Z-6c1a)
+            // `.bss` after `.dynamic` keeps NOBITS from being written to the file as zeros.
             let bss_pos = script
                 .find(".bss            :")
                 .unwrap_or_else(|| panic!("{name} missing .bss section"));

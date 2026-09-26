@@ -1,50 +1,27 @@
-# PARAM.SFO — the title metadata table, as two independent open-source projects read and
+# PARAM.SFO - the title metadata table, as two independent open-source projects read and
 # write it.
 # Columns: struct, field, offset, size, type, value, note
 #
 # read-from: pfd_sfo_tools  sfopatcher/src/sfo.{c,h}     C     READER + WRITER  [commit unrecorded]
 #            ps5upload      engine/crates/ps5upload-pkg  Rust  reader + writer  [commit unrecorded]
 #
-# Both are public projects and the file paths are the reproduction path - find the project, read
-# that file. The exact commits were not recorded when this was written, and are not pinned here
-# rather than guessed: the only pfd_sfo_tools copy on this machine is vendored inside a third-party
-# tree at that tree's own hash (not the upstream's), and the ps5upload copy on disk is v5.4.19 while
-# a v5.14.0 is referenced elsewhere in the collection - so neither commit can be stated with
-# confidence, and an unconfident pin is worse than an honest "unrecorded".
+# Both are public projects and the file paths are the reproduction path. Their commits were not
+# recorded and are not guessed.
 #
-# Both sides of the format are covered twice, which is unusual for anything in this
-# repository and worth stating: the container needed four sources before a writer turned up,
-# and the package still has none. Here the first source found was a writer.
+# The two sources, written years apart in different languages, agree on every field.
 #
-# The two agree on every field. They were written years apart in different languages, so the
-# agreement is evidence rather than a shared assumption.
+# The layout rows are measured, not cited. The C writer pads the key table so the whole file is
+# a multiple of sixteen; no real file does. Eleven files were checked (three Prospero-generation
+# packages, two Orbis-generation toolchain samples, six older-generation titles and saves): each
+# pads the key table to a multiple of four and ends where its last value ends, and all eleven
+# round-trip byte for byte. The refuted rule is kept as a row. No vendor binary was read to
+# produce this table; real files confirm rows and never derive them.
 #
-# # Where the sources were wrong, and eleven files said so
+# The version is recorded as the four bytes both sources write, `01 01 00 00` (1.1), not as an
+# integer whose width a writer could get wrong.
 #
-# The C writer pads the key table so the **whole file** is a multiple of sixteen. No real file
-# does this. Eleven were checked — three PS5 packages, two PS4 toolchain samples, and six PS3
-# titles and saves — and every one pads the **key table to a multiple of four** and ends
-# exactly where its last value ends.
-#
-# All eleven now round-trip byte for byte. The layout rows below are the measured rule, not
-# the cited one; the cited one is recorded here so it cannot be re-read and re-believed.
-# (D019, principle 2)
-#
-# **No vendor binary was read to produce this table.** Real files in `titles/` are used to
-# confirm rows, never to derive them. (principle 2)
-#
-# # The version, and why it is two bytes rather than a number
-#
-# Both sources write `01 01 00 00` and call it 1.1. A reader that treats it as the integer
-# 0x00000101 gets the same bytes; one that treats it as 0x0101 and writes it back as a u16
-# does not. Recorded as the four bytes it is.
-#
-# # PS5 versus PS4
-#
-# The structure is generation-independent — the same twenty-byte header and sixteen-byte
-# index entries appear in packages for both consoles. What differs is the *keys*, and keys
-# are content rather than format, so they are not in this table. The current generation also
-# carries `param.json` alongside or instead; see the `param` module.
+# The structure is generation-independent. Which keys a title carries is content, not format,
+# and is not in this table; Prospero-generation titles also carry `param.json`.
 #
 struct	field	offset	size	type	value	note
 header	magic	0	4	bytes	00 50 53 46	"\0PSF", little-endian 0x46535000

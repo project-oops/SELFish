@@ -1,20 +1,7 @@
 //! What the reader says about a file, and what it refuses.
 //!
-//! # Why synthetic bytes rather than a linked module
-//!
-//! The other integration tests here run a real toolchain and skip when there is none, which
-//! is right for asserting that a linker script and this parser agree. It is the wrong shape
-//! for the refusals: a linker cannot be made to emit a 32-bit header, a truncated program
-//! header table, or a file that is not an ELF at all. Those are the cases a reader meets in
-//! the wild - somebody points it at a **container**, which is the commonest wrong answer of
-//! the lot - and each is one edited byte from the file beside it.
-//!
-//! # The messages are part of the contract
-//!
-//! A refusal that says "not an ELF" and stops has told the reader nothing they did not
-//! already suspect. The error carries what it found precisely so that pointing the tool at a
-//! container says so, and the `Display` text is asserted here for that reason rather than as
-//! a formatting check.
+//! Synthetic bytes, because a linker cannot emit the malformed inputs a reader must refuse.
+//! The `Display` text is part of the contract: a refusal carries what it found.
 
 #![allow(
     clippy::unwrap_used,
@@ -31,10 +18,8 @@ use selfish_elf::{
     MACHINE_X86_64, MAGIC, OSABI_FREEBSD, ObjectType, PROGRAM_HEADER_SIZE, segment,
 };
 
-/// Offsets inside the file header, written out rather than imported.
-///
-/// A test that read the layout from the same constants the parser uses would pass whatever
-/// they said. These come from the ELF64 specification.
+/// Offsets inside the file header, from the ELF64 specification rather than the parser's
+/// constants, so the test is independent of them.
 mod at {
     pub(crate) const E_TYPE: usize = 0x10;
     pub(crate) const E_MACHINE: usize = 0x12;
@@ -124,9 +109,7 @@ fn shaped() -> Vec<u8> {
         0x800,
     );
 
-    // A dynamic table of two entries and a terminator. The tags are ones this crate does not
-    // need to understand for the walk to work, which is the point: an unknown tag is skipped
-    // rather than fatal, or no real module would ever parse.
+    // A dynamic table of two entries and a terminator; the walk does not interpret the tags.
     let pairs: [(u64, u64); 3] = [(0x0000_0001, 0x11), (0x6100_0025, 0x22), (0, 0)];
     for (index, (tag, value)) in pairs.iter().enumerate() {
         let base = 0x200 + index * 16;
@@ -134,19 +117,12 @@ fn shaped() -> Vec<u8> {
         bytes[base + 8..base + 16].copy_from_slice(&value.to_le_bytes());
     }
 
-    // Recognisable bytes in the vendor segment, so reading the right one can be told from
-    // reading a plausible wrong one.
+    // Recognisable bytes, so reading the right segment can be told from a wrong one.
     bytes[0x400..0x404].copy_from_slice(b"VEND");
     bytes
 }
 
-// --- refusals ---------------------------------------------------------------------------------
-
-/// Each way a file can fail to be a module is a different answer.
-///
-/// Collapsing them into one would leave a caller unable to tell "you gave me the wrong file"
-/// from "you gave me the right file, truncated", which are the two things they need to
-/// distinguish and the only two they cannot work out for themselves.
+/// Each way a file can fail to be a module has its own error.
 #[test]
 fn every_way_of_not_being_a_module_has_its_own_answer() {
     assert!(matches!(
@@ -162,9 +138,8 @@ fn every_way_of_not_being_a_module_has_its_own_answer() {
         ),
         "one byte short of a header is short, not unrecognisable"
     );
-    // Exactly a header is enough - but only for a file that declares no segments. This one
-    // declares three, and a header with the table cut off is out of bounds rather than short:
-    // two different truncations, two different answers.
+    // Exactly a header parses only when no segments are declared; with the table cut off it
+    // is out of bounds rather than short.
     assert!(matches!(
         Elf::parse(&bytes[..HEADER_SIZE]),
         Err(ElfError::ProgramHeadersOutOfBounds)
@@ -198,11 +173,7 @@ fn every_way_of_not_being_a_module_has_its_own_answer() {
     ));
 }
 
-/// A refusal names what it actually found.
-///
-/// **The commonest wrong answer is a container**, and saying which container is far more
-/// useful than saying "not an ELF" - it turns "this tool is broken" into "you passed the
-/// outer file".
+/// Refusing a container, the message carries the magic bytes it found.
 #[test]
 fn a_refusal_says_what_the_file_actually_began_with() {
     let mut container = shaped();
@@ -219,10 +190,7 @@ fn a_refusal_says_what_the_file_actually_began_with() {
     }
 }
 
-/// Every refusal renders as a sentence rather than a variant name.
-///
-/// These go in front of somebody trying to work out what they did wrong, so an empty or
-/// debug-shaped message is a failure of the thing's purpose.
+/// Every refusal renders as a sentence carrying its number, not a variant name.
 #[test]
 fn every_refusal_reads_as_a_sentence() {
     let messages = [
@@ -245,16 +213,12 @@ fn every_refusal_reads_as_a_sentence() {
             "a one-word answer is a variant name, not an explanation: {message}"
         );
     }
-    // Each carries the number it is about, which is the part a reader acts on.
     assert!(messages[0].contains("64") && messages[0].contains('3'));
     assert!(messages[4].contains("32"));
     assert!(messages[6].contains("0x1234"));
 }
 
-/// A program header table that does not fit is refused rather than walked.
-///
-/// The count comes from arbitrary bytes, so it is a read sized by the input. Both ends have
-/// to be bounded: a count past the file, and an offset past it.
+/// A program header table whose count or offset runs past the file is refused.
 #[test]
 fn a_program_header_table_that_does_not_fit_is_refused() {
     let mut too_many = shaped();
@@ -272,10 +236,7 @@ fn a_program_header_table_that_does_not_fit_is_refused() {
     ));
 }
 
-/// An entry that is not the size the format defines is refused, not stepped over.
-///
-/// Reading at the wrong stride produces headers assembled from halves of two real ones -
-/// every field plausible, none of them true.
+/// A program header entry size other than the format's is refused, not read at that stride.
 #[test]
 fn a_program_header_of_the_wrong_size_is_refused() {
     let mut wrong = shaped();
@@ -285,8 +246,7 @@ fn a_program_header_of_the_wrong_size_is_refused() {
         Err(ElfError::UnexpectedProgramHeaderSize(32))
     ));
 
-    // A file declaring no segments is not asked about its entry size at all, which is what
-    // lets a bare header parse.
+    // With no segments declared the entry size is not checked.
     let mut none = shaped();
     none[at::E_PHNUM..at::E_PHNUM + 2].copy_from_slice(&0_u16.to_le_bytes());
     none[at::E_PHENTSIZE..at::E_PHENTSIZE + 2].copy_from_slice(&0_u16.to_le_bytes());
@@ -294,9 +254,7 @@ fn a_program_header_of_the_wrong_size_is_refused() {
     assert!(elf.program_headers().is_empty());
 }
 
-// --- what it reports --------------------------------------------------------------------------
-
-/// The header is reported as it stands, not as a summary of it.
+/// The header fields are reported as the file states them.
 #[test]
 fn the_header_is_reported_as_it_stands() {
     let bytes = shaped();
@@ -311,10 +269,7 @@ fn the_header_is_reported_as_it_stands() {
     assert_eq!(elf.program_headers().len(), 3);
 }
 
-/// An ordinary ELF is described rather than refused.
-///
-/// A reader is happy to describe any object type; refusing one would make this unusable for
-/// looking at a file somebody is trying to understand, which is most of its job.
+/// An ordinary ELF is described rather than refused, and told apart by OSABI and `e_type`.
 #[test]
 fn an_ordinary_elf_is_described_rather_than_refused() {
     let mut bytes = shaped();
@@ -327,10 +282,8 @@ fn an_ordinary_elf_is_described_rather_than_refused() {
     assert_eq!(
         elf.generation(),
         Some(Generation::Orbis),
-        "**zero is the previous generation's own value**, so an ordinary ELF cannot be told          from a previous-generation module by this byte alone"
+        "zero is the Orbis-generation value, so this byte alone does not tell them apart"
     );
-    // What actually separates them is the pair below, and this is the module that proves the
-    // distinction has to be made somewhere other than the generation byte.
     assert!(
         !elf.has_platform_osabi() && !elf.object_type().is_platform(),
         "an ordinary object carries neither the platform's OSABI nor one of its e_types"
@@ -340,7 +293,7 @@ fn an_ordinary_elf_is_described_rather_than_refused() {
     assert!(!elf.object_type().is_executable());
 }
 
-/// Each object type says what it is, in words.
+/// Each object type displays, round-trips and classifies itself correctly.
 #[test]
 fn each_object_type_describes_itself() {
     for (raw, text, platform, executable) in [
@@ -360,13 +313,12 @@ fn each_object_type_describes_itself() {
         assert_eq!(
             kind.is_executable(),
             executable,
-            "{text}: a loader that respects this runs a library's initialisers and then \
-             looks elsewhere for an entry point"
+            "{text}: a loader runs a library's initialisers and looks elsewhere for an \
+             entry point"
         );
     }
 
-    // Anything else keeps its number, and says so rather than pretending to be one of the
-    // three.
+    // Anything else keeps its number.
     let other = ObjectType::from_raw(0x0003);
     assert_eq!(other.to_string(), "e_type 0x0003");
     assert_eq!(other.to_raw(), 0x0003);
@@ -392,7 +344,7 @@ fn a_segment_is_found_by_type_and_read_only_if_it_is_there() {
     );
 }
 
-/// A segment describing more than the file holds reads as absent rather than as a panic.
+/// A segment describing more than the file holds reads as absent, without a panic.
 #[test]
 fn a_segment_past_the_end_of_the_file_is_not_read() {
     let bytes = module(
@@ -414,7 +366,7 @@ fn a_segment_past_the_end_of_the_file_is_not_read() {
     );
 }
 
-/// The vendor segment is the one the dynamic tags point into, and it is read whole.
+/// The vendor segment is found and read whole.
 #[test]
 fn the_vendor_segment_is_found_and_read() {
     let bytes = shaped();
@@ -425,7 +377,7 @@ fn the_vendor_segment_is_found_and_read() {
     assert_eq!(&vendor[..4], b"VEND", "and it is the right segment");
 }
 
-/// A module with no vendor segment says so.
+/// A module with no vendor segment reports `None` and an empty dynamic table.
 #[test]
 fn a_module_without_a_vendor_segment_reports_none() {
     let bytes = module(
@@ -448,14 +400,11 @@ fn a_module_without_a_vendor_segment_reports_none() {
     assert_eq!(
         elf.tables().expect("walks"),
         None,
-        "and no vendor tables at all is the correct answer for an ordinary ELF"
+        "and no vendor tables, as for an ordinary ELF"
     );
 }
 
 /// The dynamic table stops at its terminator, and unknown tags are kept rather than refused.
-///
-/// A parser that rejected a tag it did not recognise would reject every real module: the
-/// vendor's own tags outnumber the standard ones it understands.
 #[test]
 fn the_dynamic_table_stops_at_its_terminator() {
     let bytes = shaped();
@@ -469,10 +418,7 @@ fn the_dynamic_table_stops_at_its_terminator() {
     );
 }
 
-/// The program header table's extent is where a container's copy has to reach.
-///
-/// Never less than the file header, because a module declaring no segments still has one -
-/// and a span shorter than the header would have a container copy nothing at all.
+/// `header_span` covers the program header table, and never less than the file header.
 #[test]
 fn the_header_span_covers_the_table_or_the_header_whichever_is_larger() {
     let bytes = shaped();
@@ -492,7 +438,7 @@ fn the_header_span_covers_the_table_or_the_header_whichever_is_larger() {
     );
 }
 
-/// A finished module normally has no sections, and that is the expected state.
+/// No section table reads as `None`, while a declared but unreadable one is an error.
 #[test]
 fn a_module_with_no_sections_is_not_a_failure() {
     let bytes = shaped();
@@ -502,7 +448,6 @@ fn a_module_with_no_sections_is_not_a_failure() {
         "a finished module normally has none at all"
     );
 
-    // A table that is declared but not there is a different answer from one that is absent.
     let mut claims = shaped();
     claims[at::E_SHOFF..at::E_SHOFF + 8].copy_from_slice(&0xFFFF_0000_u64.to_le_bytes());
     claims[at::E_SHNUM..at::E_SHNUM + 2].copy_from_slice(&4_u16.to_le_bytes());
@@ -514,12 +459,7 @@ fn a_module_with_no_sections_is_not_a_failure() {
     );
 }
 
-// --- segment classification -----------------------------------------------------------------------
-
-/// A GNU segment is in the OS-specific range and is not vendor data.
-///
-/// Treating the whole range as vendor-specific misclassifies three perfectly standard
-/// segment types, and overstates how much of a module is unaccounted for.
+/// Vendor segment types are classed as vendor and GNU ones in the same range are not.
 #[test]
 fn a_gnu_segment_is_not_vendor_data() {
     for vendor in [
@@ -560,11 +500,7 @@ fn a_gnu_segment_is_not_vendor_data() {
     );
 }
 
-/// A byte that is neither generation's is the only thing that reads as neither.
-///
-/// The narrow answer `generation` actually gives. Worth its own test because the obvious
-/// reading of "None means not a console module" is wrong, and a caller acting on it would
-/// treat every previous-generation module as an ordinary ELF.
+/// Only an `EI_ABIVERSION` belonging to neither generation reads as `None`.
 #[test]
 fn only_a_byte_belonging_to_neither_generation_reads_as_neither() {
     let mut bytes = shaped();

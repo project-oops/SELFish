@@ -1,21 +1,12 @@
 //! Section headers, and the symbol table a linked object carries.
 //!
-//! **A finished module has none of this.** Sections are a link-time view; the loader reads
-//! program headers and the vendor dynamic table, and a stripped module often has `e_shnum`
-//! zero. Reading a real `eboot.bin` through this module correctly finds nothing.
+//! Sections are a link-time view: a finished module usually has none, and the loader reads
+//! program headers and the vendor dynamic table instead. A builder reads the linked object's
+//! sections to decide what to emit, such as whether an initialiser tag belongs in the
+//! dynamic table.
 //!
-//! It is here for the other side. A builder linking a module has an object that *does* carry
-//! sections, and it has to look inside them to decide what to emit - whether the module
-//! defines an initialiser at all, for one, which decides whether an initialiser tag belongs
-//! in the dynamic table. Guessing that wrong produces a module the loader either never
-//! initialises or jumps into at an address that holds nothing.
-//!
-//! # Why this is separate from `dynamic`
-//!
-//! Two symbol tables exist and they are not the same table. `.dynsym` is what a loader
-//! resolves against and lives in the vendor segment; `.symtab` is the full link-time set and
-//! lives in a section. A module can carry the first without the second, and treating either
-//! as the other gives an answer for the wrong question.
+//! `.symtab` is the full link-time symbol set; `.dynsym` is what a loader resolves against.
+//! A module can carry the second without the first.
 
 use selfish_bytes::read_le;
 use zerocopy::{FromBytes, Immutable, KnownLayout, little_endian};
@@ -58,7 +49,7 @@ pub struct SectionHeader {
     pub addr: little_endian::U64,
     /// Offset in the file.
     pub offset: little_endian::U64,
-    /// Size in bytes - **in the file, unless this is `NOBITS`**, where nothing is stored.
+    /// Size in bytes; in the file, unless this is `NOBITS`, where nothing is stored.
     pub size: little_endian::U64,
     /// Meaning depends on the type. For a symbol table, the string table's section index.
     pub link: little_endian::U32,
@@ -73,8 +64,7 @@ pub struct SectionHeader {
 impl SectionHeader {
     /// Whether this section occupies space in the file.
     ///
-    /// `NOBITS` sections state a size and store nothing - `.bss` is the usual one. Slicing
-    /// the file by `size` for one of these reads whatever follows it.
+    /// `NOBITS` sections such as `.bss` state a size and store nothing.
     #[must_use]
     pub fn occupies_file(&self) -> bool {
         self.kind.get() != kind::NOBITS && self.kind.get() != kind::NULL
@@ -125,17 +115,14 @@ pub struct Sections<'a> {
     headers: Vec<SectionHeader>,
     /// Where the section-name table starts.
     ///
-    /// An `Option` rather than a zero sentinel. Zero is a legitimate file offset, and a
-    /// sentinel that collides with a real value is how a present table reads as absent -
-    /// which is what the first version of this did, and the test below is why it was noticed.
+    /// An `Option`, not a zero sentinel, because zero is a legitimate file offset.
     names_at: Option<usize>,
 }
 
 impl<'a> Sections<'a> {
     /// Read the section table.
     ///
-    /// `Ok(None)` when the file has no sections, which is the normal state of a finished
-    /// module rather than a failure. An `Err` means there is a table and it is unreadable.
+    /// `Ok(None)` when the file has no sections, the normal state of a finished module.
     ///
     /// # Errors
     ///
@@ -224,10 +211,8 @@ impl<'a> Sections<'a> {
 
     /// The link-time symbol table, if there is one.
     ///
-    /// Returns the symbols and the string table their names live in. The string table is
-    /// found through the symbol section's `link` field rather than by the name `.strtab`,
-    /// because an object can carry more than one string table and the name of the right one
-    /// is not guaranteed.
+    /// Returns the symbols and their string table, found through the symbol section's `link`
+    /// field since an object can carry more than one string table.
     #[must_use]
     pub fn symbols(&self) -> Option<(Vec<Symbol>, &'a [u8])> {
         self.symbols_of(kind::SYMTAB)
@@ -235,10 +220,8 @@ impl<'a> Sections<'a> {
 
     /// The dynamic symbol table, `.dynsym`, with its string table.
     ///
-    /// A different table from `.symtab`: this is the one a loader resolves against, and the
-    /// only symbol table a stripped shared object keeps. Reading a payload's imports - its
-    /// undefined dynamic symbols - needs this, because [`Sections::symbols`] reads `.symtab`,
-    /// which a stripped object does not carry.
+    /// The table a loader resolves against and the only one a stripped shared object keeps,
+    /// so a payload's imports are read from here rather than from [`Sections::symbols`].
     #[must_use]
     pub fn dynamic_symbols(&self) -> Option<(Vec<Symbol>, &'a [u8])> {
         self.symbols_of(kind::DYNSYM)
@@ -281,9 +264,7 @@ impl<'a> Sections<'a> {
 
     /// Whether the object defines a symbol of this name.
     ///
-    /// **Defines**, not mentions. An object references every symbol it imports, and an
-    /// existence test that counts those reports a module as defining an initialiser it in
-    /// fact expects somebody else to provide.
+    /// Defines, not references: an undefined (imported) symbol does not count.
     #[must_use]
     pub fn defines(&self, name: &str) -> bool {
         let Some((symbols, strings)) = self.symbols() else {
@@ -394,9 +375,7 @@ mod tests {
         header(offsets[1], kind::STRTAB, strings_at, strings.len(), 0);
         header(offsets[2], kind::SYMTAB, table_at, table.len(), 1);
 
-        // Section index 0 is the name table here, which is what `names_index` points at -
-        // deliberately, since it puts the name table at file offset zero and so covers the
-        // sentinel case below.
+        // Section index 0 is the name table, at file offset zero.
         let _ = sections_at;
         bytes
     }
@@ -408,10 +387,9 @@ mod tests {
             .expect("present")
     }
 
+    /// A file with no section table reads as `Ok(None)`, not an error.
     #[test]
     fn a_file_with_no_sections_is_not_an_error() {
-        // A finished module usually has none, and reporting that as a failure would make
-        // every real `eboot.bin` unreadable through this module.
         assert!(
             Sections::parse(&[], 0, 64, 0, 0)
                 .expect("no error")
@@ -425,6 +403,7 @@ mod tests {
         );
     }
 
+    /// A section header size other than 64 is refused.
     #[test]
     fn an_unexpected_header_size_is_refused_rather_than_read_at_the_wrong_stride() {
         assert_eq!(
@@ -433,20 +412,18 @@ mod tests {
         );
     }
 
+    /// Sections are found by name when the name table sits at file offset zero.
     #[test]
     fn sections_are_found_by_name_even_when_the_name_table_is_at_offset_zero() {
-        // Zero is a legitimate file offset. The first version used it as the "no name table"
-        // sentinel and reported every section as unnamed here.
         let bytes = object(&[("main", 1)]);
         let table = sections(&bytes, 3);
         assert!(table.find(".symtab").is_some());
         assert!(table.find(".nonesuch").is_none());
     }
 
+    /// The symbol string table is found through `link`, not by name.
     #[test]
     fn the_string_table_is_found_through_link_rather_than_by_name() {
-        // An object can carry more than one string table, and the name of the right one is
-        // not guaranteed. `link` is what says which.
         let bytes = object(&[("_init", 1)]);
         let table = sections(&bytes, 3);
         let (symbols, strings) = table.symbols().expect("a symbol table");
@@ -457,11 +434,9 @@ mod tests {
         );
     }
 
+    /// `defines` is true for a defined symbol and false for an imported one.
     #[test]
     fn defines_means_defined_and_not_merely_mentioned() {
-        // An object references every symbol it imports. Counting those reports a module as
-        // defining an initialiser it in fact expects somebody else to provide - and the
-        // builder then emits a tag pointing at nothing.
         let bytes = object(&[("_init", 1), ("memcpy", 0)]);
         let table = sections(&bytes, 3);
         assert!(table.defines("_init"), "defined in section one");
@@ -469,10 +444,9 @@ mod tests {
         assert!(!table.defines("nonesuch"));
     }
 
+    /// A `NOBITS` section yields no contents rather than the bytes that follow it.
     #[test]
     fn a_nobits_section_yields_no_contents() {
-        // `.bss` states a size and stores nothing. Slicing the file by that size reads
-        // whatever follows it, which is a real section's bytes under another name.
         let bytes = object(&[("main", 1)]);
         let table = sections(&bytes, 3);
         let mut header = table.headers()[1];

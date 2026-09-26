@@ -63,9 +63,7 @@ fn main() {
         ] {
             println!("   {name}: {} entries", size / 24);
             let mut shown = 0;
-            // Indexed by the same numbers `kind` maps, plus a catch-all in the last slot so an
-            // unrecognised type is counted rather than dropped - a table that silently omits
-            // what it could not name reads as a table where that type does not occur.
+            // Indexed by relocation type; a type past the array is counted as unknown.
             let mut counts = [0_u64; 10];
             let mut unknown = 0_u64;
             for n in 0..(size / 24) {

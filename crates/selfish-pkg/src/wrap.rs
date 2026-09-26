@@ -1,26 +1,9 @@
 //! Wrapping a key under a package public key.
 //!
-//! This is the operation that stood between this repository and a package a console can open,
-//! and it is worth being exact about why it is not the thing it looks like.
-//!
-//! Entries `0x10` and `0x20` carry key material wrapped under RSA-2048. Reading a package needs
-//! the *private* half and this repository has it for two keysets, which is how
-//! [`crate::keys::filesystem_key`] recovers `EKPFS` from a package that already exists.
-//! **Writing needs only the public half**, and a public key wraps - it cannot unwrap. So
-//! nothing here can read anything it could not read before; what it adds is the ability to
-//! produce the blobs, which a builder had previously to be handed.
-//!
-//! # The padding is deterministic, which is the whole reason this is checkable
-//!
-//! The scheme is `PKCS#1` block type 2 in shape - `00 02`, non-zero filler, a zero separator,
-//! then the payload - but the filler is not random. It comes from a Mersenne Twister seeded
-//! from the modulus and the key being wrapped, so the same inputs always produce the same 256
-//! bytes.
-//!
-//! That means the output can be compared against a real package's entry, byte for byte, which
-//! is exactly what `examples/wrap_keys.rs` does. A scheme with random padding could only ever
-//! have been checked by decrypting it again - a much weaker statement, since a wrong-but-self
-//! consistent implementation passes that.
+//! Entries `0x10` and `0x20` carry key material wrapped under RSA-2048. Writing them needs only
+//! the public half of each key (D054). The block is `PKCS#1` type 2 in shape, but its filler
+//! comes from a Mersenne Twister seeded from the modulus and the key, so the same inputs always
+//! give the same 256 bytes and `examples/wrap_keys.rs` can compare them with a real package.
 //!
 //! ```text
 //! seed    = SHA-256(SHA-256(modulus || key)) read as eight big-endian words
@@ -153,10 +136,7 @@ impl core::error::Error for WrapError {}
 
 /// The Mersenne Twister the padding is drawn from.
 ///
-/// `MT19937`, seeded by array. Written out rather than taken from a crate because the seeding
-/// variant matters: the array form is not the same as seeding from one word, and a generator
-/// that differs in its initialisation produces padding that is wrong in a way nothing detects
-/// until a console refuses the package.
+/// `MT19937`, seeded by array (`init_by_array`), which differs from seeding by one word.
 struct MersenneTwister {
     state: [u32; Self::N],
     index: usize,
@@ -311,10 +291,9 @@ mod tests {
         out
     }
 
+    /// Wrapping is deterministic: the same inputs give the same 256-byte block.
     #[test]
     fn the_same_inputs_always_wrap_to_the_same_block() {
-        // The padding is drawn from a seeded generator, not from randomness. If that ever stops
-        // being true, a package stops being reproducible and nothing else here would notice.
         let key = [0x5A_u8; 32];
         let first = wrap_key(&modulus(), &key).expect("a block");
         let second = wrap_key(&modulus(), &key).expect("a block");
@@ -322,6 +301,7 @@ mod tests {
         assert_eq!(first.len(), BLOCK_LEN);
     }
 
+    /// Different keys wrap to different blocks.
     #[test]
     fn a_different_key_wraps_differently() {
         let one = wrap_key(&modulus(), &[1_u8; 32]).expect("a block");
@@ -329,10 +309,9 @@ mod tests {
         assert_ne!(one, two);
     }
 
+    /// The padding seed depends on the modulus as well as the key.
     #[test]
     fn the_padding_seed_depends_on_the_modulus_too() {
-        // Seeding from the key alone would be an easy simplification to make by accident, and
-        // would produce blocks that decrypt correctly under the right key and are still wrong.
         let mut other = modulus();
         other[1] ^= 0xFF;
         assert_ne!(
@@ -341,6 +320,7 @@ mod tests {
         );
     }
 
+    /// A modulus or key of the wrong length is refused.
     #[test]
     fn wrong_lengths_are_refused() {
         assert_eq!(wrap_key(&[0; 8], &[0; 32]), Err(WrapError::BadModulus(8)));

@@ -38,7 +38,7 @@ mod title;
 /// The result every command returns.
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-/// Print the error's `Display`, which says what to do about it, and exit non-zero. (D095)
+/// Print the error's `Display`, which says what to do about it, and exit non-zero.
 fn main() {
     if let Err(error) = run() {
         eprintln!("selfish: {error}");

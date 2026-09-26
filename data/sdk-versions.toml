@@ -7,29 +7,18 @@
 # read-from: OpenOrbis-PS4-Toolchain@0a1aaf9  the PT_SCE_PROCPARAM ORBI structure the version lives in
 #            obSCEne 048-selfaudit            the values, read from installed titles' PROCPARAM on-device
 #
-# ## What an SDK version is, and where it lives
+# The version is a static field in an executable's `PT_SCE_PROCPARAM` segment (type
+# `0x61000001`): an `ORBI` block with `sdk_version` (Orbis) at `+0x10` and `sdk_version_second`
+# (Prospero) at `+0x14`. The structure is named in the OpenOrbis ELF specification, the source
+# `selfish-container`'s `patch_elf_procparam` writes from.
 #
-# It is not a runtime behaviour - it is a static field an executable carries in its
-# `PT_SCE_PROCPARAM` segment (type `0x61000001`): an `ORBI` block with `sdk_version` (Orbis) at
-# `+0x10` and `sdk_version_second` (Prospero) at `+0x14`. The structure is named in the OpenOrbis PS4
-# ELF specification - the same source `selfish-container`'s `patch_elf_procparam` writes from - so
-# reading one needs no vendor material.
+# A value is observed by parsing a title's PROCPARAM, without running it. obSCEne's
+# `048-selfaudit` does this on the hardware for every eboot under `/user/app`, `/system_ex/app`
+# and `/system/vsh/app`, so the census is reproducible against anyone's own installed titles.
 #
-# ## The reproduction path: read it off any title, on your own device
-#
-# Because it is a field in the eboot, you observe a real value by *reading* a title's PROCPARAM -
-# not running the title, no hardware and no emulator required, just parsing the ELF. obSCEne does
-# this on the console at scale: its `048-selfaudit` walk enumerates the installed-title
-# directories (`/user/app`, `/system_ex/app`, `/system/vsh/app`) with `sceKernelGetdents` and
-# audits whatever eboots are present. So a census of the SDK versions titles declare is
-# reproducible by anyone running obSCEne against their own library - any title, nothing copied out.
-#
-# ## Where each entry below came from
-#
-# Marked per entry in `source`, and not dressed up beyond what is known:
+# Each entry's `source` says how it is known:
 #   - `measured`      - read from a named title's PROCPARAM.
-#   - `conventional`  - a representative value in common use, NOT traced to a specific title
-#                       measured here. Flagged honestly rather than presented as a measurement.
+#   - `conventional`  - a representative value in common use, not traced to a measured title.
 #   - `synthetic`     - not a real title's value; a deliberate choice, with the reason.
 #
 # `min_firmware` is the firmware a target implies, for the caller's guidance; it is not part of
@@ -59,7 +48,7 @@ alias = "orbis, orbis-default, neo"
 orbis_sdk = "08.008.011"
 ppr_sdk = "00.000.000"
 min_firmware = "8.00"
-source = "measured: the value a launching PS4 title declares (D242); its on-console effect was tested in D244"
+source = "measured: the value a launching Orbis-generation title declares"
 description = "Orbis baseline"
 
 [sdks."0.000.000"]
@@ -68,5 +57,5 @@ alias = "zero"
 orbis_sdk = "00.000.000"
 ppr_sdk = "00.000.000"
 min_firmware = "0.00"
-source = "synthetic: not a title's value. obSCEne keeps zero for its own module because a real SDK version broke sceKernelDlsym resolution on the console tested (D244); kept here as the census-probe baseline"
+source = "synthetic: not a title's value. obSCEne keeps zero for its own module because a real SDK version breaks sceKernelDlsym resolution on the tested hardware; the census-probe baseline"
 description = "Zero SDK for D244 census probing"

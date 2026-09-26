@@ -1,18 +1,8 @@
 //! The `PFSC` container, written.
 //!
-//! # It does not compress
-//!
-//! The name says compression and the reader implements zlib, so the obvious assumption is that
-//! a writer has to compress too. It does not. `LibOrbisPkg@6434772`'s writer says so in its own
-//! class comment - it writes the header "and doesn't actually do compression or anything
-//! interesting" - and the format allows it: the block map is a list of absolute offsets, and
-//! blocks laid out end to end at a fixed stride are a valid map. A reader that finds a block
-//! already the full block size hands it back as-is.
-//!
-//! So this is a header, a map, and the data unchanged. That is worth stating plainly because
-//! "implement zlib compression" looked like the blocker and was not one.
-//!
-//! # Layout
+//! A header, a block map, and the data unchanged. The format does not require compression:
+//! the map is a list of absolute offsets, and a reader hands back a block whose span is the
+//! full block size as-is. `LibOrbisPkg@6434772`'s writer does the same.
 //!
 //! ```text
 //! 0x000  magic, `PFSC`, big-endian
@@ -136,9 +126,9 @@ mod tests {
 
     const BLOCK: u32 = 0x10000;
 
+    /// A multi-block payload wrapped and read back through the reader is unchanged.
     #[test]
     fn what_is_wrapped_is_what_comes_back_out() {
-        // Two blocks and a bit, so the map has entries a reader has to follow rather than one.
         let payload: Vec<u8> = (0..140_000_u32)
             .map(|n| u8::try_from(n & 0xFF).unwrap())
             .collect();
@@ -150,6 +140,7 @@ mod tests {
         assert_eq!(back, payload);
     }
 
+    /// A read straddling a block boundary returns the right bytes.
     #[test]
     fn a_read_that_starts_part_way_into_a_block_still_lands_right() {
         let payload: Vec<u8> = (0..200_000_u32)
@@ -157,22 +148,21 @@ mod tests {
             .collect();
         let wrapped = wrap(&payload, BLOCK).expect("a container");
         let reader = Compressed::new(Slice::new(&wrapped, 0)).expect("a reader");
-        // Straddling a block boundary is where an off-by-one in the map shows up.
         let back = reader.read(0xFFF0, 0x40).expect("a slice");
         assert_eq!(back, &payload[0xFFF0..0x10030]);
     }
 
+    /// A block map larger than the room under the first block grows the header.
     #[test]
     fn a_map_too_large_for_the_first_block_grows_the_header() {
-        // Over 8000 blocks puts the map past 0xFC00 and the header has to grow. Building the
-        // payload for real would be half a gigabyte, so this checks the arithmetic through a
-        // small block size, which drives the same branch.
+        // A small block size reaches the same branch without a half-gigabyte payload.
         let payload = vec![0xAA_u8; 0x40000];
         let wrapped = wrap(&payload, 0x10).expect("a container");
         let reader = Compressed::new(Slice::new(&wrapped, 0)).expect("a reader");
         assert_eq!(reader.read(0, payload.len()).expect("payload"), payload);
     }
 
+    /// A zero block size is refused.
     #[test]
     fn a_zero_block_size_is_refused() {
         assert!(wrap(b"anything", 0).is_err());

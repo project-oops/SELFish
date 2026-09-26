@@ -1,17 +1,7 @@
 //! The signed-executable container, read and written.
 //!
-//! What the platform wraps an executable in. A retail one is signed with keys nobody outside
-//! the vendor has; the ones built here declare themselves **fake** in the field the format
-//! provides for exactly that, with every digest and the whole signature area left zero.
-//!
-//! # Both directions, in one place, on purpose
-//!
-//! A format library that only parses is half a library, and the half that writes is where
-//! the errors are. Keeping them together makes the round trip a test - parse what was
-//! written, write what was parsed, and fail if they differ - which is a far better guard
-//! than either half can have alone.
-//!
-//! # The layout
+//! What the platform wraps an executable in. The containers built here declare themselves
+//! fake in the format's own field, with every digest and the signature area zero (D047).
 //!
 //! ```text
 //! [header 32][entry 32 x N][ELF header + program headers][pad][ex_info 64][npdrm 48]  <- header_size
@@ -19,16 +9,8 @@
 //! [payloads, each aligned]
 //! ```
 //!
-//! **Two entries per segment, not one.** A digest entry carrying one digest per block, then
-//! the segment itself. No reader states this, because no reader has to build one - it came
-//! from an open-source *writer*, and it is the single thing most likely to be got wrong by
-//! reading only loaders. A container whose entries are all zero-propped is structurally
-//! valid and rejected inside the loader's segment walk, with no indication why.
-//!
-//! # Every constant comes from the table
-//!
-//! `data/self-format.tsv` carries the fields and the projects each was established from.
-//! Nothing here holds a second copy. See [`table`].
+//! Each segment has two entries: a digest entry with one digest per block, then the segment
+//! itself. Every constant comes from `data/self-format.tsv` through [`table`].
 
 #![forbid(unsafe_code)]
 
@@ -130,8 +112,7 @@ impl Constants {
     }
 }
 
-/// Program header types that become container entries, read from the table so the list
-/// cannot drift from the record of where it came from.
+/// Program header types that become container entries, read from the table.
 #[must_use]
 pub fn entry_segment_types() -> Vec<u32> {
     table::group("phdr_type")
@@ -161,12 +142,8 @@ pub struct Entry {
 impl Entry {
     /// Whether this entry describes segment data a loader should map.
     ///
-    /// The bit a loader searches on. A container where no entry carries it parses perfectly
-    /// and then falls off the end of the segment walk with nothing to say about why.
-    ///
-    /// Reads its own shift from the table rather than taking one. The first version of this
-    /// took a `Constants`, which is private - so no consumer of this crate could have called
-    /// the one method that answers the question they actually have.
+    /// The bit a loader searches on. A container where no entry carries it parses and then
+    /// maps nothing.
     #[must_use]
     pub fn carries_segment_data(&self) -> bool {
         table::lookup("entry_prop", "has_blocks_shift")
@@ -248,7 +225,7 @@ impl<'a> Container<'a> {
         })
     }
 
-    /// Which console this container is for.
+    /// Which hardware generation this container is for.
     #[must_use]
     pub const fn generation(&self) -> Generation {
         self.generation
@@ -280,8 +257,7 @@ impl<'a> Container<'a> {
 
     /// Where the inner executable's headers begin.
     ///
-    /// Derived rather than assumed: immediately after the entry table. An observed constant
-    /// would silently mis-parse anything with a different entry count.
+    /// Immediately after the entry table, so it depends on the entry count.
     #[must_use]
     pub fn inner_offset(&self) -> u64 {
         HEADER_SIZE.saturating_add(
@@ -295,8 +271,7 @@ impl<'a> Container<'a> {
     ///
     /// # Errors
     ///
-    /// If the derived offset does not hold an executable, which means the derivation is
-    /// wrong rather than that the file is merely unusual.
+    /// If the derived offset does not hold an executable.
     pub fn inner_elf_header(&self) -> Result<&'a [u8], ContainerError> {
         let at = usize::try_from(self.inner_offset()).map_err(|_| ContainerError::TooShort)?;
         let rest = self.bytes.get(at..).ok_or(ContainerError::TooShort)?;
@@ -308,13 +283,9 @@ impl<'a> Container<'a> {
 
     /// Reassemble the executable this container holds.
     ///
-    /// The inverse of [`build`]. A container does not store the executable contiguously: its
-    /// headers sit after the entry table, and each segment's contents live wherever an entry
-    /// says. Putting it back means writing every segment to the file offset its *program
-    /// header* names, which is the layout an ordinary reader expects.
-    ///
-    /// Only entries carrying segment data contribute. The digest entries beside them describe
-    /// the same segment and hold no contents.
+    /// The inverse of [`build`]. The headers sit after the entry table and each segment's
+    /// contents wherever its entry says; each is written back to the file offset its program
+    /// header names. Digest entries hold no contents and are skipped.
     ///
     /// # Errors
     ///
@@ -325,9 +296,8 @@ impl<'a> Container<'a> {
         let span = usize::try_from(elf.header_span())
             .map_err(|_| ContainerError::Arithmetic("header span"))?;
 
-        // Sized by the furthest any program header reaches, not by the container's own
-        // length: the container is larger, and the difference is metadata that has no place
-        // in a reassembled executable.
+        // Sized by the furthest any program header reaches; the container's metadata has no
+        // place in the executable.
         let mut end = span;
         for phdr in elf.program_headers() {
             let reach = usize::try_from(phdr.offset.get())
@@ -354,9 +324,7 @@ impl<'a> Container<'a> {
             let index = usize::try_from(entry.segment_index())
                 .map_err(|_| ContainerError::Arithmetic("segment index"))?;
             let Some(phdr) = elf.program_headers().get(index) else {
-                // An index past the program header table is a container describing a segment
-                // the executable does not have. Skipped rather than fatal: the rest is still
-                // recoverable, and a partial executable beats none.
+                // A segment the executable does not have is skipped; the rest is recoverable.
                 continue;
             };
             let from = usize::try_from(entry.offset)
@@ -409,9 +377,7 @@ fn align_up(value: u64, to: u64) -> Option<u64> {
 
 /// Block size is stored as an exponent: `log2(bytes) - 12`.
 ///
-/// So 16KiB is written as 2. Storing the byte count fits the four-bit field for small values
-/// and truncates for real ones - a container a loader accepts and then reads from the wrong
-/// place.
+/// So 16KiB is written as 2. The field is four bits wide.
 fn block_size_code(bytes: u64) -> Result<u64, ContainerError> {
     if !bytes.is_power_of_two() {
         return Err(ContainerError::Arithmetic(
@@ -474,18 +440,9 @@ pub struct RowVerdict {
 
 /// What a container says about its own kind, read where the table pins `ex_info.ptype`.
 ///
-/// **This is what stops an audit being read as evidence it is not.** A container written from
-/// this table matches this table, so "nine of nine confirmed" on a fake container is a round
-/// trip and says nothing whatever about vendor material. That mistake was made here against
-/// real hardware output, by a reader holding the contradicting value in the same log, and it
-/// took a commit to undo - so the audit now carries the answer beside the verdict instead of
-/// leaving it to be looked up. (D092)
-///
-/// The value is **reported, not tested**. Deciding "did I find `ex_info`" by asking whether
-/// the value is a *recognised* `ptype` is what hid this the first time round: that test fails
-/// on precisely the material worth having, and "not located" then reads as a fact about the
-/// format rather than about the reader. A caller gets the number, plus whatever this table can
-/// say about it, and draws its own conclusion.
+/// A container written from this table matches it, so an audit of a fake container is a round
+/// trip and says nothing about vendor material. The value is reported, not tested: an
+/// unrecognised `ptype` is returned with no name rather than treated as not found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Declared {
     /// The value at the offset the table pins for `ex_info.ptype`.
@@ -505,10 +462,9 @@ pub enum Declared {
 impl Declared {
     /// Whether a matching audit would only be a round trip.
     ///
-    /// True when the container declares itself fake - the one case where agreement with this
-    /// table is guaranteed in advance and so proves nothing. `false` for a value this crate
-    /// cannot place, because *not known to be fake* is not *known to be genuine*, and
-    /// [`Self::caveat`] is what says so in words.
+    /// True when the container declares itself fake, where agreement with this table is
+    /// guaranteed in advance. `false` for a value this crate cannot place; [`Self::caveat`]
+    /// qualifies that case.
     #[must_use]
     pub fn is_round_trip(&self) -> bool {
         matches!(self, Self::Ptype { known, .. } if known.as_deref() == Some("fake"))
@@ -537,22 +493,17 @@ impl Declared {
     }
 }
 
-/// Read the `ptype` where the table pins it, without deciding whether the answer is plausible.
 /// Where `ex_info` starts, by the layout this table pins.
 ///
 /// `[self_header 32][entry 32 x N][ELF ehdr + phdrs][pad to 16][ex_info 64][npdrm 48]` ends at
 /// `header_size`, so the two tail blocks are the last `0x70` bytes of the header.
-///
-/// This is the **only** place that arithmetic is written. It was written twice for one commit -
-/// once for the `ptype` read and once for the tail rows - and two copies of a layout offset is
-/// the shape of defect this repository's whole `data/` discipline exists to prevent.
 fn ex_info_at(bytes: &[u8]) -> Option<usize> {
     let header_size = read_at(bytes, 12, 2)?;
     let at = usize::try_from(header_size).ok()?.checked_sub(0x70)?;
-    // The tail has to be inside the file for either caller to read a field out of it.
     (at.checked_add(0x70)? <= bytes.len()).then_some(at)
 }
 
+/// Read the `ptype` where the table pins it, without deciding whether the answer is plausible.
 fn declared_kind(bytes: &[u8]) -> Declared {
     let Some(value) = ex_info_at(bytes)
         .and_then(|ex| ex.checked_add(8))
@@ -569,13 +520,8 @@ fn declared_kind(bytes: &[u8]) -> Declared {
 
 /// Check the `ex_info` rows the table pins, rebased onto the file.
 ///
-/// Empty when the tail is not reachable - the same condition [`Declared::Unreachable`] reports,
-/// so the two never disagree about whether there was anything to read.
-///
-/// **These rows are the values a *fake* container carries**, because the writer they came from
-/// only ever wrote fake ones. A vendor container differing here is the table meeting a kind it
-/// does not describe, not the file being wrong - the same reading the five header rows needed,
-/// and the reason a verdict is reported per row rather than as one pass or fail.
+/// Empty when the tail is not reachable, the same condition [`Declared::Unreachable`] reports.
+/// The rows are the values a fake container carries, so a vendor container may differ here.
 fn tail_rows(bytes: &[u8]) -> Vec<RowVerdict> {
     let Some(base) = ex_info_at(bytes) else {
         return Vec::new();
@@ -599,17 +545,9 @@ fn tail_rows(bytes: &[u8]) -> Vec<RowVerdict> {
 
 /// The result of checking a real container against the table.
 ///
-/// # Why this exists, and the line it must not cross
-///
-/// `data/self-format.tsv` is derived from cited **previous-generation** sources and says so:
-/// every row is a hypothesis until a current-generation file accepts or rejects it. This is the
-/// oracle step the charter describes (principle 2) - derive from something citable, then check
-/// against reality, and record which rows reality settled.
-///
-/// It reports agreement and disagreement. It does **not** interpret a disagreement: a row a
-/// real file contradicts is recorded as differing, with the real value beside the expected one,
-/// and settling what the field means at the new generation needs a citable source, not this
-/// binary (principle 1). A difference is a finding, not a derivation.
+/// `data/self-format.tsv` is derived from cited Orbis-generation sources; a real file confirms
+/// or contradicts each row. A contradicted row is reported with the real value beside the
+/// expected one and is not interpreted: what the field means needs a citable source.
 #[derive(Debug, Clone)]
 pub struct Audit {
     /// The generation the magic identifies.
@@ -618,12 +556,10 @@ pub struct Audit {
     pub header: Vec<RowVerdict>,
     /// One verdict per fixed row of `ex_info`, rebased onto the file.
     ///
-    /// Empty when the tail is not reachable. These are the values a **fake** container
-    /// carries - the writer they came from wrote no other kind - so a vendor container
-    /// differing here is the table meeting something it does not describe.
+    /// Empty when the tail is not reachable. These are the values a fake container carries,
+    /// so a vendor container may differ here.
     pub tail: Vec<RowVerdict>,
-    /// What the container says its own kind is - the guard against reading a round trip as
-    /// a confirmation. See [`Declared`].
+    /// What the container says its own kind is. See [`Declared`].
     pub declared: Declared,
 }
 
@@ -636,16 +572,14 @@ impl Audit {
 
     /// The `ex_info` rows the file contradicted.
     ///
-    /// Separate from [`Self::differing`] rather than folded into it, because the two answer
-    /// different questions: a header row differing is a claim about the container format, and
-    /// a tail row differing is usually just "this is not a fake container". Summing them would
-    /// produce a single number that means neither.
+    /// Separate from [`Self::differing`]: a header row differing is a claim about the format,
+    /// while a tail row differing usually means the container is not fake.
     #[must_use]
     pub fn tail_differing(&self) -> Vec<&RowVerdict> {
         self.tail.iter().filter(|row| !row.matched).collect()
     }
 
-    /// The rows the file contradicted - the ones a new generation may have changed.
+    /// The header rows the file contradicted.
     #[must_use]
     pub fn differing(&self) -> Vec<&RowVerdict> {
         self.header.iter().filter(|row| !row.matched).collect()
@@ -654,10 +588,8 @@ impl Audit {
 
 /// Check a real container against the format table.
 ///
-/// The magic is read to identify the generation and is then **not** counted as a mismatch:
-/// the magic differing across generations is the generation split itself (D003), not a row the
-/// newer file got wrong. Every other fixed row in the header is a claim the table makes that
-/// this file settles.
+/// The magic identifies the generation and is not checked as a row, since it differs by
+/// generation by design. Every other fixed header row is checked.
 ///
 /// # Errors
 ///
@@ -668,8 +600,6 @@ pub fn audit(bytes: &[u8]) -> Result<Audit, ContainerError> {
 
     let mut header = Vec::new();
     for row in table::fixed_fields("self_header") {
-        // The magic is the generation marker, read above. Confirming it against a
-        // previous-generation value would report the whole point of the split as an error.
         if row.field == "magic" {
             continue;
         }
@@ -709,15 +639,12 @@ fn read_at(bytes: &[u8], offset: usize, size: usize) -> Option<u64> {
 ///
 /// Dictates the `paid` (Program Authentication ID) stamped into `self_ex_info`, through
 /// [`Privilege::paid`]:
-/// - `App`: the format's default - `0x3100000000000002`, from `data/self-format.tsv`.
-/// - `Sysmodule`: **the same as `App`.** [`Privilege::paid`] does not distinguish the two, so a
-///   container built at this tier is byte-identical to one built at `App`.
+/// - `App`: the format's default, `0x3100000000000002`, from `data/self-format.tsv`.
+/// - `Sysmodule`: the same as `App`, so the container is byte-identical.
 /// - `System`: `0x3800000000000001`.
 /// - `Root`: `0x8000000000000001`.
 ///
-/// Those are what this crate writes, read back with `selfish audit`. What each tier is granted on
-/// hardware is not measured here. `0x3800000000000000`, which an earlier copy of this list gave
-/// for `App`, is written by nothing.
+/// What each tier is granted on hardware is not measured here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Privilege {
     /// Standard title sandbox (Tier 1).
@@ -904,8 +831,7 @@ fn header_size_for(
 
 /// Two entries per segment, at the offsets they will actually occupy.
 ///
-/// Computed once and read twice - from the entry table and from the payload writer - rather
-/// than computed twice and hoped to agree.
+/// Both the entry table and the payload writer read this plan.
 fn plan_entries(
     constants: &Constants,
     chosen: &[(usize, &selfish_elf::RawProgramHeader)],
@@ -944,8 +870,8 @@ fn plan_entries(
             .and_then(|n| align_up(n, constants.align))
             .ok_or(ContainerError::Arithmetic("offset after digests"))?;
 
-        // The data entry is what a loader searches for, and its index must be the *program
-        // header's*, not this entry's position.
+        // The data entry is what a loader searches for; its index is the program header's,
+        // not this entry's position.
         entries.push(Entry {
             props: bit(constants.signed_shift)
                 | bit(constants.has_blocks_shift)
@@ -959,22 +885,9 @@ fn plan_entries(
                 ),
             offset,
             filesz,
-            // The *data's* uncompressed size, which is not the segment's memory size.
-            //
-            // Nothing here is compressed, so it is `filesz`. It read `p_memsz`, and for an
-            // ordinary `PT_LOAD` the two agree often enough that the mistake stayed invisible
-            // - until a segment where they differ.
-            //
-            // Two in a real executable differ, and both settle it the same way: a `PT_LOAD`
-            // with `p_filesz 0x130` and `p_memsz 0x240` (bss) has an entry of `0x130`, and the
-            // `PT_SCE_DYNLIBDATA` segment, whose `p_memsz` is **zero** because it is never
-            // mapped, has an entry of `0x3760` - its full size on disk.
-            //
-            // The zero is what made this fatal rather than untidy. The authentication manager
-            // divides this field by the block size to decide how many blocks to load, so a
-            // segment with `0xb0` bytes in it came out as *zero blocks*: `sz for b error`,
-            // four decrypt retries, `failed to load block`, and - several layers up, naming a
-            // structure nobody had yet read - `Failed to load SCE_DYNLIBDATA: 5`. (D075)
+            // The data's uncompressed size, not the segment's `p_memsz`; nothing is compressed,
+            // so it is `filesz`. The loader divides it by the block size to count blocks, and
+            // `PT_SCE_DYNLIBDATA` has `p_memsz` zero because it is never mapped.
             memsz: filesz,
         });
         offset = offset
@@ -1009,7 +922,7 @@ fn write_header(
     Ok(())
 }
 
-/// `ptype` is the whole mechanism: it says *fake* in a field rather than pretending.
+/// `ptype` declares the container fake.
 fn write_ex_info(out: &mut Sink, constants: &Constants) {
     out.u64(constants.paid);
     out.u64(constants.ptype_fake);
@@ -1025,11 +938,9 @@ fn write_npdrm(out: &mut Sink, constants: &Constants) {
     out.zeros(usize::try_from(constants.random_pad_size).unwrap_or(0));
 }
 
-/// One block per entry, a footer, and the signature area - all zero but one constant.
+/// One block per entry, a footer, and the signature area, all zero but one constant.
 ///
-/// Not laziness. It is the same statement `ptype` makes: a digest area filled with anything
-/// else would be a claim about content nothing computed, and a signature area filled with
-/// anything would be a forgery rather than a blank.
+/// Zero digests and a zero signature make no claim about content, matching `ptype`.
 fn write_metadata(
     out: &mut Sink,
     constants: &Constants,
@@ -1092,8 +1003,7 @@ pub enum ContainerError {
     TooShort,
     /// The magic matches neither generation.
     ///
-    /// Carries what was found, because "not a container" sends somebody looking in the wrong
-    /// place when the answer is usually "this is a plain executable".
+    /// Carries what was found; the usual cause is a plain executable.
     NotAContainer([u8; 4]),
     /// The entry table runs past the end of the file.
     EntriesOutOfBounds,
@@ -1192,11 +1102,13 @@ mod tests {
         out
     }
 
+    /// Every constant the builder needs is present in the format table.
     #[test]
     fn every_constant_the_builder_needs_is_in_the_table() {
         Constants::load().expect("the format table is missing a constant this code needs");
     }
 
+    /// The table marks exactly the four entry-producing segment types.
     #[test]
     fn four_segment_types_become_entries() {
         let types = entry_segment_types();
@@ -1205,10 +1117,9 @@ mod tests {
         assert!(types.contains(&segment::SCE_DYNLIBDATA));
     }
 
+    /// A built container parses back with its generation, entries, size and inner ELF.
     #[test]
     fn a_container_round_trips_through_its_own_parser() {
-        // The reason both directions live in one crate. A writer checked only against
-        // itself is checked against nothing.
         for generation in [Generation::Prospero, Generation::Orbis] {
             let built = build(&payload(), generation).expect("builds");
             let parsed = Container::parse(&built).expect("parses");
@@ -1225,10 +1136,9 @@ mod tests {
         }
     }
 
+    /// A data entry carries the segment-data bit a loader searches for.
     #[test]
     fn the_data_entry_carries_the_bit_a_loader_searches_for() {
-        // A container with all-zero props is structurally valid and dies inside a loader's
-        // segment walk with no indication why. This is that bug, as a test.
         let built = build(&payload(), Generation::Prospero).expect("builds");
         let parsed = Container::parse(&built).expect("parses");
         assert!(
@@ -1237,6 +1147,7 @@ mod tests {
         );
     }
 
+    /// A data entry's segment index is its program header's index.
     #[test]
     fn the_data_entry_points_at_its_program_header_not_at_itself() {
         let built = build(&payload(), Generation::Prospero).expect("builds");
@@ -1253,12 +1164,9 @@ mod tests {
         );
     }
 
+    /// A data entry's `memsz` is its data size, never the segment's `p_memsz`.
     #[test]
     fn a_data_entry_sizes_itself_by_its_data_and_never_by_p_memsz() {
-        // The block layer divides `memsz` by the block size to decide how many blocks to
-        // load. A segment that is never mapped declares `p_memsz` zero, and copying that
-        // here asks for zero blocks of a segment that has bytes in it - which the
-        // authentication manager rejects before it decrypts anything. (D075)
         let built = build(&payload(), Generation::Prospero).expect("builds");
         let parsed = Container::parse(&built).expect("parses");
         for entry in parsed.entries() {
@@ -1276,6 +1184,7 @@ mod tests {
         }
     }
 
+    /// Segment bytes are stored unchanged at the data entry's offset.
     #[test]
     fn the_segment_bytes_survive_the_wrapping() {
         let source = payload();
@@ -1293,12 +1202,14 @@ mod tests {
         assert_eq!(wrapped, original.as_slice(), "the payload was altered");
     }
 
+    /// A plain executable is reported as not a container, with its magic.
     #[test]
     fn a_plain_executable_is_reported_as_such_rather_than_as_a_bad_container() {
         let err = Container::parse(&payload()).expect_err("a plain ELF is not a container");
         assert_eq!(err, ContainerError::NotAContainer(selfish_elf::MAGIC));
     }
 
+    /// The two generations differ only in the magic.
     #[test]
     fn the_two_generations_produce_different_files() {
         let prospero = build(&payload(), Generation::Prospero).expect("builds");
@@ -1306,7 +1217,7 @@ mod tests {
         assert_ne!(
             prospero.get(..4),
             orbis.get(..4),
-            "the magic must differ, or one of them is built for the wrong console"
+            "the magic must differ, or one of them is built for the wrong generation"
         );
         assert_eq!(
             prospero.len(),
@@ -1315,6 +1226,7 @@ mod tests {
         );
     }
 
+    /// An executable with no entry-producing segment is refused.
     #[test]
     fn an_executable_with_no_qualifying_segment_is_refused() {
         let mut bytes = payload();
@@ -1326,12 +1238,9 @@ mod tests {
         );
     }
 
+    /// A container built from the table confirms every fixed header row of the table.
     #[test]
     fn a_container_this_crate_builds_confirms_every_fixed_row_of_the_table() {
-        // The audit's floor: a file built *from* the table must agree with the table on every
-        // fixed row. If it does not, the writer and the row reader disagree about the format,
-        // which is the bug the whole `data/` discipline exists to catch. This is the same round
-        // trip as principle 4, reached from the reading side.
         for generation in [Generation::Prospero, Generation::Orbis] {
             let built = build(&payload(), generation).expect("builds");
             let result = audit(&built).expect("audits");
@@ -1345,11 +1254,9 @@ mod tests {
         }
     }
 
+    /// The audit leaves the magic out of the checked rows.
     #[test]
     fn the_magic_is_not_counted_as_a_row_the_file_got_wrong() {
-        // The magic differs by generation on purpose. An audit that counted it as a mismatch
-        // would report the generation split itself as an error against every file of the other
-        // generation. It is read to identify the generation and then left out of the tally.
         let built = build(&payload(), Generation::Prospero).expect("builds");
         let result = audit(&built).expect("audits");
         assert!(
@@ -1358,10 +1265,9 @@ mod tests {
         );
     }
 
+    /// A corrupted header field is named as differing.
     #[test]
     fn a_changed_header_byte_is_reported_as_a_difference() {
-        // The point of the tool on a real file: a byte that does not match the table is found
-        // and named. Here the `flags` field at 0x1A is corrupted and the audit must catch it.
         let mut built = build(&payload(), Generation::Prospero).expect("builds");
         built[0x1A] ^= 0xFF;
         let result = audit(&built).expect("audits");
@@ -1372,13 +1278,9 @@ mod tests {
         );
     }
 
+    /// The audit of a built container reports it as fake and caveats the match as a round trip.
     #[test]
     fn a_container_this_crate_builds_says_it_is_fake_and_the_audit_says_so_too() {
-        // The other half of the test above, and the one that was missing when it mattered.
-        // That test asserts a file built from the table confirms every row of the table, and
-        // its own comment calls that a round trip - but `audit` reported only the count, so a
-        // reader holding nine-of-nine had nothing telling them which of the two they had. It
-        // was read as a confirmation against vendor material and had to be reversed. (D092)
         for generation in [Generation::Prospero, Generation::Orbis] {
             let built = build(&payload(), generation).expect("builds");
             let result = audit(&built).expect("audits");
@@ -1403,12 +1305,9 @@ mod tests {
         }
     }
 
+    /// An unrecognised `ptype` is reported with its raw value, not treated as not found.
     #[test]
     fn a_ptype_this_table_does_not_name_is_reported_rather_than_refused() {
-        // Reported, not tested. Deciding "did I find `ex_info`" by whether the value is a
-        // *known* ptype fails on exactly the material worth having - a genuine vendor
-        // container - and then reads as a fact about the format instead of about the reader.
-        // That is how a whole sweep came back "not located" on nine files.
         let mut built = build(&payload(), Generation::Prospero).expect("builds");
         let header_size = usize::from(u16::from_le_bytes([built[12], built[13]]));
         let at = header_size - 0x70 + 8;
@@ -1434,11 +1333,10 @@ mod tests {
         );
     }
 
+    /// A `header_size` past the end of the file makes the tail unreachable.
     #[test]
     fn a_tail_that_is_named_but_not_there_is_unreachable_rather_than_a_guess() {
-        // A valid container whose header_size points past the end of the file: the tail is
-        // named but not there. Truncating the file instead does not reach this - `parse`
-        // rejects it as `EntriesOutOfBounds` first, which is the right refusal earlier on.
+        // Truncating the file instead fails earlier, in `parse`.
         let mut built = build(&payload(), Generation::Prospero).expect("builds");
         built[12..14].copy_from_slice(&u16::MAX.to_le_bytes());
         let result = audit(&built).expect("audits");
@@ -1447,11 +1345,9 @@ mod tests {
         assert!(result.declared.caveat().is_some());
     }
 
+    /// A container built from the table confirms every `ex_info` tail row.
     #[test]
     fn a_container_this_crate_builds_confirms_the_tail_rows_as_well() {
-        // The header half of this has been asserted since D084. The tail was pinned by the
-        // same table and never checked, which is how `selfish audit` came to have nothing to
-        // say about the block a whole sweep was reporting as "not located".
         for generation in [Generation::Prospero, Generation::Orbis] {
             let built = build(&payload(), generation).expect("builds");
             let result = audit(&built).expect("audits");
@@ -1469,12 +1365,9 @@ mod tests {
         }
     }
 
+    /// A differing tail row reports the value the file holds beside the expected one.
     #[test]
     fn a_tail_row_that_differs_reports_the_value_the_file_holds() {
-        // The point of the row rather than a pass/fail: a vendor container differs here by
-        // construction, and "differs" without the value is not something anybody can act on.
-        // Six system apps came back with `paid` values this table has never seen, and the
-        // values are the whole of what that measurement was worth.
         let mut built = build(&payload(), Generation::Prospero).expect("builds");
         let base = usize::from(u16::from_le_bytes([built[12], built[13]])) - 0x70;
         built[base..base + 8].copy_from_slice(&0x1b_ac98_u64.to_le_bytes());
@@ -1487,11 +1380,9 @@ mod tests {
         assert_eq!(differing[0].expected, 0x3100_0000_0000_0002);
     }
 
+    /// An unreachable tail yields no tail rows, agreeing with `declared`.
     #[test]
     fn an_unreachable_tail_yields_no_rows_rather_than_rows_read_from_nowhere() {
-        // `tail` and `declared` must agree about whether there was anything to read. If the
-        // tail could be read while the kind could not, an audit could report four confirmed
-        // rows from bytes it never located.
         let mut built = build(&payload(), Generation::Prospero).expect("builds");
         built[12..14].copy_from_slice(&u16::MAX.to_le_bytes());
 
@@ -1500,18 +1391,9 @@ mod tests {
         assert_eq!(result.declared, Declared::Unreachable);
     }
 
+    /// `to_elf` splices each segment's bytes back into the executable it returns.
     #[test]
     fn the_elf_a_container_gives_back_carries_its_segment_payloads() {
-        // The property a second reader's whole differential turned on, and it had no test.
-        //
-        // The executable inside a container is a *view*: ehdr and program headers, with every
-        // segment's bytes held in the container's own entry list. Extract that view on its own
-        // and nothing can be read through it - which is what happened to 22 of 29 modules in
-        // orbistoun's run, because their harness unwrapped with their own reader first.
-        //
-        // `to_elf` splices the payloads back. It is used by the CLI and nine examples and was
-        // asserted nowhere, so the one behaviour that makes a container readable end to end
-        // was resting on those nine examples being run by hand. (D095)
         for generation in [Generation::Prospero, Generation::Orbis] {
             let original = payload();
             let built = build(&original, generation).expect("builds");

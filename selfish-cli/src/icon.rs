@@ -1,52 +1,23 @@
 //! The icon a package gets when the caller does not supply one.
 //!
-//! # Why there is a default at all, and why it is not blank
+//! An icon is not a hardware format, so this lives in the tool rather than in `selfish-pkg`.
+//! A package must carry one; the default is the project logo, so a tile shows both who built
+//! the package and that no icon was supplied.
 //!
-//! An icon is not one of the console's formats, so it is not the library's business - this
-//! lives in the tool rather than in `selfish-pkg` for that reason. But a package must carry
-//! one, and something has to go in when nobody said what.
-//!
-//! The first attempt was a single blank pixel: valid, minimal, and useless. A blank tile on a
-//! home screen tells you nothing. **A recognisable mark tells you two things at once** - that
-//! selfish built this package, and that nobody supplied an icon - which is exactly the state
-//! of affairs, and exactly what you want to know when a package you are debugging appears on a
-//! console.
-//!
-//! # Committed rather than drawn, now that there is something to commit
-//!
-//! This used to build the image here from a glyph table, spelling `SELFISH` in a border, on the
-//! reasoning that a drawn mark can be read and reviewed in a diff like everything else in this
-//! repository - and it said, in as many words, that when a real logo existed it could replace
-//! `default_icon` wholesale with nothing else moving. That is what happened, so the glyph table,
-//! the border, the word and the hand-rolled encoder are gone.
-//!
-//! The asset is [`assets/logo.svg`], and [`assets/logo.png`] is a 512×512 raster of it. **The
-//! source of truth is the SVG**; the PNG is generated from it, because a console wants a raster
-//! at a fixed size and nothing here can rasterise one, so it is rendered out of band and committed.
-//!
-//! Two logos is the failure this avoids. A drawn mark here and a real one in the readme would
-//! diverge the first time either changed, and the one nobody looks at is the one that ends up on
-//! a console.
+//! The source of truth is [`assets/logo.svg`]; [`assets/logo.png`] is a 512x512 raster of it,
+//! rendered out of band and committed because nothing here rasterises SVG.
 //!
 //! [`assets/logo.svg`]: https://github.com/project-oops/SELFish/blob/main/assets/logo.svg
 //! [`assets/logo.png`]: https://github.com/project-oops/SELFish/blob/main/assets/logo.png
 
-/// The icon a package gets when none was supplied: selfish's own logo, 512×512.
+/// The icon a package gets when none was supplied: selfish's own logo, 512x512.
 ///
-/// Embedded at compile time, so a build carries it without reading anything at run time - and put
-/// through [`normalise`] like any supplied icon, because the default is not exempt from the
-/// requirement it exists to satisfy.
-///
-/// It was exempt, briefly, and that is the whole reason this says so. `normalise` was written for
-/// icons a *caller* supplies, while the default went into the package as authored: a PNG with an
-/// alpha channel and a transparent margin. So the one icon this tool ships was the one icon it did
-/// not convert, and the tile it produced was the one on a home screen that read square beside
-/// everything else - the exact fault the conversion was written to fix, still shipping under it.
+/// Embedded at compile time and put through [`normalise`] like any supplied icon, since the
+/// authored logo carries an alpha channel and a transparent margin.
 ///
 /// # Errors
 ///
-/// If the embedded logo is not a PNG this can convert, which would be a broken build rather than
-/// anything a caller did.
+/// If the embedded logo is not a PNG this can convert, which is a broken build.
 pub(crate) fn default_icon() -> Result<Vec<u8>, String> {
     normalise(LOGO, "selfish's own logo")
 }
@@ -70,34 +41,19 @@ const BACKGROUND: &[u8] = include_bytes!("../../assets/background.png");
 /// The default title logo badge, transparent RGBA PNG.
 const BADGE: &[u8] = include_bytes!("../../assets/badge.png");
 
-/// What a console wants an icon to be, on both axes.
+/// The side of the square icon the hardware expects.
 const ICON_SIDE: u32 = 512;
 
-/// Make a supplied PNG into the icon a console expects, or say why it cannot.
+/// Make a supplied PNG into the icon the hardware expects, or say why it cannot.
 ///
-/// # Why this is here rather than in every project that builds a package
+/// `icon0.png` is 512x512 with no alpha channel: the measured packages are colour type 2 with
+/// artwork running edge to edge, and the home screen applies its own corner mask. An icon with
+/// transparency is accepted but composited inset, reading square beside the others. Every
+/// package builder in the collection goes through this one conversion (D073).
 ///
-/// A console wants `icon0.png` at 512x512 with **no alpha channel**: all three real packages
-/// examined are colour type 2 with their artwork running edge to edge, and the rounded corners on
-/// a home screen are the console's own mask laid over the top. An icon exported with transparency
-/// is not rejected - it is accepted and then composited differently, so the artwork sits inset
-/// inside its own margin and the tile reads square beside everything else. That is a difference
-/// you find by looking at a television, which is the worst place to keep a format requirement.
-///
-/// Four projects here build packages. Asking each to export correctly means four chances to get
-/// it wrong and no single place to fix it, so the conversion happens once, where the requirement
-/// is already written down.
-///
-/// # What it does, and what it refuses
-///
-/// Transparency is composited over black rather than dropped, because dropping it leaves whatever
-/// colour happened to sit under a transparent pixel - usually white fringing on antialiased art.
-///
-/// **It does not resize.** A wrong-sized icon is refused with its actual size in the message.
-/// Scaling is a judgement about someone else's artwork - which filter, whether to letterbox a
-/// non-square image, whether to sharpen pixel art that nearest-neighbour would keep crisp and
-/// bilinear would turn to mush - and guessing it silently is how a logo ends up blurred with
-/// nobody able to say which step did it. Refusing names the problem where the artwork is.
+/// Transparency is composited over black, not dropped, so antialiased edges do not fringe.
+/// A wrong-sized icon is refused with its size in the message; scaling is a judgement about
+/// the artwork and is left to its author.
 pub(crate) fn normalise(bytes: &[u8], what: &str) -> Result<Vec<u8>, String> {
     let decoder = png::Decoder::new(bytes);
     let mut reader = decoder
@@ -124,7 +80,8 @@ pub(crate) fn normalise(bytes: &[u8], what: &str) -> Result<Vec<u8>, String> {
     encode(&flat)
 }
 
-/// Make a supplied PNG into the background wallpaper a console expects (1920x1080 or 3840x2160, no alpha).
+/// Make a supplied PNG into the background wallpaper the hardware expects: 1920x1080 or
+/// 3840x2160, no alpha.
 pub(crate) fn normalise_background(bytes: &[u8], what: &str) -> Result<Vec<u8>, String> {
     let decoder = png::Decoder::new(bytes);
     let mut reader = decoder
@@ -152,7 +109,7 @@ pub(crate) fn normalise_background(bytes: &[u8], what: &str) -> Result<Vec<u8>, 
     encode_sized(&flat, info.width, info.height)
 }
 
-/// Make a supplied PNG into the title logo a console expects (within 1920x1080, RGBA).
+/// Make a supplied PNG into the title logo the hardware expects: within 1920x1080, RGBA.
 pub(crate) fn normalise_logo(bytes: &[u8], what: &str) -> Result<Vec<u8>, String> {
     let decoder = png::Decoder::new(bytes);
     let mut reader = decoder
@@ -179,8 +136,8 @@ pub(crate) fn normalise_logo(bytes: &[u8], what: &str) -> Result<Vec<u8>, String
 
 /// Three bytes a pixel, with any transparency laid over black.
 ///
-/// Composited rather than dropped: discarding an alpha channel leaves whatever colour sat under a
-/// transparent pixel, which on antialiased artwork is white fringing around every edge.
+/// Composited rather than dropped: discarding alpha exposes the colour under transparent
+/// pixels, which fringes antialiased edges.
 fn flatten(source: &[u8], colour: png::ColorType, what: &str) -> Result<Vec<u8>, String> {
     /// Scale a channel by an alpha value, both eight-bit.
     fn over_black(channel: u8, alpha: u8) -> u8 {
@@ -221,7 +178,7 @@ fn flatten(source: &[u8], colour: png::ColorType, what: &str) -> Result<Vec<u8>,
     Ok(flat)
 }
 
-/// The finished icon: eight-bit RGB at the size a console expects.
+/// The finished icon: eight-bit RGB at the size the hardware expects.
 fn encode(flat: &[u8]) -> Result<Vec<u8>, String> {
     encode_sized(flat, ICON_SIDE, ICON_SIDE)
 }
@@ -291,14 +248,7 @@ fn to_rgba(source: &[u8], colour: png::ColorType, what: &str) -> Result<Vec<u8>,
 mod tests {
     use super::LOGO;
 
-    /// The default icon is converted like any other, and carries no alpha channel.
-    ///
-    /// The one this tool ships was the one it did not convert: `normalise` was written for icons a
-    /// caller supplies, and the embedded logo went into a package as authored, with the
-    /// transparent margin that makes a tile read square on a home screen. The requirement is not
-    /// something a default is exempt from, and this is what says so.
-    ///
-    /// `IHDR` records the colour type at byte 25, where 2 is RGB and 6 is RGBA.
+    /// The default icon is converted like a supplied one: RGB (`IHDR` byte 25 is 2), 512x512.
     #[test]
     fn the_default_icon_is_converted_like_a_supplied_one() {
         let icon = super::default_icon().expect("the embedded logo converts");
@@ -311,11 +261,7 @@ mod tests {
         assert_eq!(icon.get(20..24), Some(&[0, 0, 2, 0][..]), "512 tall");
     }
 
-    /// The bytes are a PNG, and one a console will recognise as such.
-    ///
-    /// Worth a test rather than a glance: the file is generated by a separate step, and a
-    /// truncated or mis-copied asset would otherwise reach a package and only be noticed as a
-    /// tile that will not draw.
+    /// The embedded logo, generated out of band, starts with the PNG signature.
     #[test]
     fn the_logo_is_a_png() {
         assert_eq!(
@@ -325,10 +271,7 @@ mod tests {
         );
     }
 
-    /// A console expects the icon at 512×512, so the raster's own header has to say so.
-    ///
-    /// `IHDR` is always the first chunk: eight bytes of signature, a four-byte length, the type,
-    /// then width and height as big-endian `u32`.
+    /// The embedded logo's `IHDR` (the first chunk, width and height at bytes 16-24) is 512x512.
     #[test]
     fn the_logo_is_512_square() {
         let width = LOGO.get(16..20).expect("an IHDR width");
@@ -353,9 +296,7 @@ mod tests {
         out
     }
 
-    /// A wrong-size icon is refused, not resized - which is why the pipeline's `--icon` routes
-    /// through here rather than copying the file. Resizing is a decision about the artwork, so
-    /// the tool declines it and names the size rather than guessing a filter.
+    /// A wrong-size icon is refused with both sizes named, not resized.
     #[test]
     fn a_non_512_icon_is_refused_rather_than_resized() {
         let err = super::normalise(&rgba_png(64), "test.png").expect_err("64x64 must be refused");
@@ -363,9 +304,7 @@ mod tests {
         assert!(err.contains("512"), "names the size it wants: {err}");
     }
 
-    /// A 512×512 RGBA icon is flattened to RGB rather than written as authored. An icon that
-    /// keeps its alpha is composited wrongly - square on a home screen - which is the failure
-    /// `--icon` used to reintroduce by copying the file straight through. (D073)
+    /// A supplied 512x512 RGBA icon is flattened to RGB rather than written as authored.
     #[test]
     fn a_supplied_rgba_icon_is_flattened_to_rgb() {
         let out = super::normalise(&rgba_png(super::ICON_SIDE), "test.png")
@@ -378,6 +317,7 @@ mod tests {
         assert_eq!(out.get(16..20), Some(&[0, 0, 2, 0][..]), "512 wide");
     }
 
+    /// The default background is 1920x1080 RGB.
     #[test]
     fn the_default_background_is_1080p_rgb() {
         let bg = super::default_background().expect("default background normalises");
@@ -390,12 +330,14 @@ mod tests {
         assert_eq!(bg.get(20..24), Some(&[0, 0, 0x04, 0x38][..]), "1080 tall");
     }
 
+    /// The default title logo keeps its alpha channel.
     #[test]
     fn the_default_logo_is_rgba() {
         let logo = super::default_logo().expect("default logo normalises");
         assert_eq!(logo.get(25), Some(&6), "IHDR colour type must be RGBA (6)");
     }
 
+    /// A background that is neither 1080p nor 4K is refused with the accepted sizes named.
     #[test]
     fn wrong_size_background_is_refused() {
         let err = super::normalise_background(&rgba_png(512), "bad_bg.png")

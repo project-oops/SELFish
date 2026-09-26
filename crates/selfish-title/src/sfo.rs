@@ -1,23 +1,13 @@
 //! `PARAM.SFO` - a key-value table, read and written.
 //!
 //! Five fields of header, then three tables: an index, the keys, and the values. Every
-//! offset in the index is relative to one of the two table starts rather than to the file,
-//! which is the one thing worth holding onto while reading the rest of this.
+//! offset in the index is relative to one of the two table starts, not to the file.
 //!
-//! # Keys are not in the format table
+//! `data/sfo-format.tsv` describes the container only; which keys a title carries is
+//! convention and belongs to the consumer.
 //!
-//! `data/sfo-format.tsv` describes the container and stops. Which keys a title carries, and
-//! which are required, is content - it varies by generation, by category, and by what the
-//! submission tooling of the day insisted on. Putting a key list in a format crate would be
-//! stating as structure something that is convention, and the first title that omits one
-//! would be reported as malformed.
-//!
-//! # Round trip
-//!
-//! Principle 4: what is parsed can be written and what is written parses back - and for this
-//! format, byte for byte. Three real console packages round-trip identically, which is what
-//! settled the one layout rule the cited sources got wrong: the key table is padded to a
-//! multiple of **four**, and the file itself is not padded at all. See [`Sfo::to_bytes`].
+//! A parse and a write round-trip byte for byte. The key table is padded to a multiple of
+//! four and the file is not padded; see [`Sfo::to_bytes`].
 
 use core::fmt;
 
@@ -29,12 +19,11 @@ const HEADER_SIZE: usize = 20;
 const INDEX_SIZE: usize = 16;
 /// The key table is padded so the data table starts on a multiple of this.
 ///
-/// Four, not sixteen, and not the whole file. Read from the table rather than written here,
-/// because this is the one row real material overturned and the table is where that is
-/// recorded. Measured - see [`Sfo::to_bytes`] and D019.
+/// Read from the table, whose row records the measurement that settled it.
 fn key_table_alignment() -> usize {
     usize::from(table::u16_at("layout", "key_table_alignment"))
 }
+
 /// What a value is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
@@ -82,33 +71,23 @@ pub enum Value {
     ///
     /// The terminator is not part of this string; it is added on the way out.
     Text(String),
-    /// Text with **no** terminator.
+    /// Text with no terminator.
     ///
-    /// A separate variant rather than a flag, so that a value cannot be held alongside a
-    /// format it disagrees with. This is not hypothetical: the first version derived the
-    /// format from the variant, wrote every string as terminated, and turned a PS3 save's
-    /// unterminated field into a terminated one - a file one byte longer than it went in,
-    /// differing in a format code fifty-five bytes in. (D020)
+    /// A separate variant rather than a flag, so a value cannot be held alongside a format it
+    /// disagrees with; the variant determines the format code written.
     TextUnterminated(String),
     /// Bytes in the unterminated format, which is not always text.
     ///
-    /// `utf8_special` is a length and no terminator; PS3 saves put text in it, and the
-    /// current generation puts `ACCOUNT_ID` - eight bytes of user id - in it too. So the
-    /// format code alone does not say whether a value is readable, and a reader that
-    /// assumed it did **failed the whole file** on one key it was not asked for.
-    ///
-    /// The variant still determines the format code, which is what D020 is about: this and
-    /// [`Self::TextUnterminated`] both write `utf8_special`, and which one a parse produces
-    /// depends only on whether the bytes decode. Use [`Self::as_bytes`] when the bytes are
-    /// what you want - it answers for both, so a caller never has to care which it got.
+    /// `utf8_special` is a length and no terminator. Older-generation saves put text in it;
+    /// Prospero-generation saves also put `ACCOUNT_ID`, eight bytes of user id, in it. This and [`Self::TextUnterminated`] both write `utf8_special`; a parse produces
+    /// this one when the bytes do not decode as UTF-8. [`Self::as_bytes`] answers for both.
     Binary(Vec<u8>),
     /// A number.
     Integer(u32),
     /// A format this crate does not interpret, kept as bytes.
     ///
-    /// Kept rather than refused because the alternative is a reader that fails on a whole
-    /// file over one key it did not need. The code is carried so a writer can put it back
-    /// unchanged.
+    /// Kept rather than refused, so one unneeded key does not fail the file. The code is
+    /// carried so a writer puts it back unchanged.
     Unknown(u16, Vec<u8>),
 }
 
@@ -124,15 +103,11 @@ impl Value {
 
     /// The value as the file holds it, for everything except a number.
     ///
-    /// The terminator is not included: it belongs to the format rather than to the value, and
-    /// [`Self::Text`] is the variant that puts it back on the way out.
+    /// The terminator is not included; [`Self::Text`] puts it back on the way out.
     ///
-    /// This exists so that a caller after raw bytes never has to know which variant a parse
-    /// chose. `ACCOUNT_ID` is eight bytes of user id in the unterminated format, and some
-    /// small fraction of those decode as UTF-8 by luck - so a reader matching on
-    /// [`Self::Binary`] alone would work on most saves and silently miss on the rest, which
-    /// is worse than never working. `None` for a number, where [`Self::as_integer`] is the
-    /// accessor and the endianness has already been decided.
+    /// A caller after raw bytes need not know which variant a parse chose: some `ACCOUNT_ID`
+    /// values decode as UTF-8 and parse as [`Self::TextUnterminated`]. `None` for a number,
+    /// where [`Self::as_integer`] is the accessor.
     #[must_use]
     pub fn as_bytes(&self) -> Option<&[u8]> {
         match self {
@@ -161,9 +136,8 @@ pub struct Entry {
     pub value: Value,
     /// Bytes reserved for the value.
     ///
-    /// Carried because it is not derivable: a title reserves 128 bytes for a name that uses
-    /// 12, and rewriting it with `max_length` shrunk to fit changes the file in a way the
-    /// submission tooling notices.
+    /// Not derivable from the value: a title reserves 128 bytes for a name that uses 12, and
+    /// shrinking `max_length` to fit changes the file.
     pub reserved: u32,
 }
 
@@ -201,8 +175,7 @@ impl Entry {
 
     /// The format code this entry is written as.
     ///
-    /// Derived from the value rather than stored, which is only safe because the value
-    /// distinguishes terminated from unterminated text. (D020)
+    /// Derived from the value, which distinguishes terminated from unterminated text.
     #[must_use]
     pub fn format(&self) -> Format {
         match &self.value {
@@ -249,8 +222,8 @@ impl Entry {
 
 /// A parsed `PARAM.SFO`.
 ///
-/// Ordered, not a map. The order entries appear in is part of the file, and a writer that
-/// sorts them produces something that parses identically and does not match byte for byte.
+/// Ordered, not a map: entry order is part of the file, and sorting would break the
+/// byte-for-byte round trip.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Sfo {
     entries: Vec<Entry>,
@@ -269,9 +242,9 @@ impl Sfo {
         &self.entries
     }
 
-    /// Add an entry, replacing any existing one with the same key **in place**.
+    /// Add an entry, replacing any existing one with the same key in place.
     ///
-    /// In place rather than appended, so that editing a value does not reorder the file.
+    /// In place rather than appended, so editing a value does not reorder the file.
     pub fn set(&mut self, entry: Entry) {
         match self.entries.iter_mut().find(|held| held.key == entry.key) {
             Some(held) => *held = entry,
@@ -296,10 +269,8 @@ impl Sfo {
 
     /// Look a key up as the bytes the file holds, whatever kind of value it is.
     ///
-    /// For `ACCOUNT_ID` this is its eight bytes exactly: not endian-swapped, not rendered as
-    /// a number, not shortened by a trailing zero. The endianness of a user id is the
-    /// consumer's question and this crate does not have an opinion about it - what it can
-    /// promise is that the bytes come back as they were written.
+    /// For `ACCOUNT_ID` this is its eight bytes exactly: not endian-swapped, not rendered as a
+    /// number, not shortened by a trailing zero. Interpreting them is the consumer's choice.
     ///
     /// `None` for an integer parameter, where [`Value::as_integer`] is the accessor. (D090)
     #[must_use]
@@ -372,13 +343,9 @@ impl Sfo {
             data.extend_from_slice(&entry.bytes());
         }
 
-        // **The key table is padded to a multiple of four. The file is not padded at all.**
-        //
-        // The C writer this was first derived from pads the key table so the *whole file* is
-        // a multiple of sixteen. Nine real files disagree - three PS5 packages, two PS4
-        // samples and four PS3 titles and saves - and in every one the key table is padded to
-        // four and the file ends exactly where the last value does. Principle 2: derived from
-        // a source, refuted by material, and the refutation is what stays. (D019)
+        // The key table is padded to a multiple of four and the file is not padded, as every
+        // measured file shows; the cited C writer's pad-the-file-to-sixteen rule does not
+        // match them (`data/sfo-format.tsv`, `key_table_alignment`).
         keys.resize(keys.len().next_multiple_of(key_table_alignment()), 0);
         let size = index_end
             .saturating_add(keys.len())
@@ -423,9 +390,8 @@ impl Sfo {
 fn value_of(format: Format, raw: &[u8]) -> Result<Value, SfoError> {
     Ok(match format {
         Format::Utf8 => {
-            // The stated length includes the terminator, so trailing zeroes are the format
-            // rather than the value. Trimming all of them rather than exactly one also covers
-            // a writer that reserved more than it used, which real files do.
+            // The stated length includes the terminator, so trailing zeroes are not the value.
+            // All are trimmed, which also covers a writer that reserved more than it used.
             let end = raw
                 .iter()
                 .rposition(|byte| *byte != 0)
@@ -435,19 +401,8 @@ fn value_of(format: Format, raw: &[u8]) -> Result<Value, SfoError> {
                 .to_owned();
             Value::Text(text)
         }
-        // The unterminated format is a length and nothing else, so **nothing is trimmed** and
-        // nothing is refused. Two things were wrong here and both were invisible until a
-        // current-generation save arrived:
-        //
-        // Trailing zeroes are content in this format, not padding - the length is exact
-        // because there is no terminator to exclude - and trimming them shortened a value
-        // that a byte-for-byte round trip then wrote back one byte lighter.
-        //
-        // And it is not always text. `ACCOUNT_ID` is eight bytes of user id in this format,
-        // so a `from_utf8` that returns `Err` was failing an entire file over one key the
-        // caller had not asked for. `Unknown` already carries the argument for keeping bytes
-        // rather than refusing them; this format needed the same treatment and had a
-        // different variant only because the first material to reach it happened to be text.
+        // The unterminated format's length is exact, so trailing zeroes are content and
+        // nothing is trimmed. Bytes that are not UTF-8 (an `ACCOUNT_ID`) are kept as binary.
         Format::Utf8Special => core::str::from_utf8(raw).map_or_else(
             |_| Value::Binary(raw.to_vec()),
             |text| Value::TextUnterminated(text.to_owned()),
@@ -509,6 +464,7 @@ impl std::error::Error for SfoError {}
 mod tests {
     use super::{Entry, Format, Sfo, SfoError, Value};
 
+    /// A written table parses back to what was written.
     #[test]
     fn a_written_table_parses_back_to_what_was_written() {
         let mut sfo = Sfo::new();
@@ -517,9 +473,10 @@ mod tests {
         sfo.set(Entry::integer("PARENTAL_LEVEL", 1));
 
         let parsed = Sfo::parse(&sfo.to_bytes()).expect("a table");
-        assert_eq!(parsed, sfo, "principle 4: a round trip is the test");
+        assert_eq!(parsed, sfo, "a round trip is the test");
     }
 
+    /// The key table pads to a multiple of four and the file ends at the last value.
     #[test]
     fn the_key_table_pads_to_four_and_the_file_does_not_pad_at_all() {
         // `CATEGORY` plus its terminator is nine bytes, so the key table is padded to twelve.
@@ -538,15 +495,10 @@ mod tests {
         );
     }
 
+    /// The padding rule reproduces every measured key-table length.
     #[test]
     fn the_padding_rule_reproduces_every_measured_file() {
-        // Seven distinct key-table lengths from eleven files spanning three console
-        // generations: three PS5 packages, two PS4 toolchain samples, and six PS3 titles and
-        // saves. Every one pads the key table to a multiple of four and stops there.
-        //
-        // The rule the cited C writer implements - pad so the *whole file* is a multiple of
-        // sixteen - reproduces none of them. This test exists so that source cannot be
-        // re-read and re-believed. (D019)
+        // Key-table lengths measured across three hardware generations' titles and saves.
         for (strings, expected) in [
             (100_usize, 100_usize),
             (58, 60),
@@ -564,6 +516,7 @@ mod tests {
         }
     }
 
+    /// Entry order is preserved and replacing a key does not move it.
     #[test]
     fn order_is_preserved_and_editing_does_not_reorder() {
         let mut sfo = Sfo::new();
@@ -580,10 +533,9 @@ mod tests {
         assert_eq!(sfo.text("A"), Some("3"));
     }
 
+    /// A reserved length larger than the value survives a round trip.
     #[test]
     fn a_reserved_length_larger_than_the_value_survives_a_round_trip() {
-        // A title reserves 128 bytes for a name that uses 12. Shrinking it to fit changes
-        // the file, and `max_length` is not derivable from the value.
         let mut sfo = Sfo::new();
         sfo.set(Entry::text_reserving("TITLE", "Short", 128));
         let bytes = sfo.to_bytes();
@@ -594,11 +546,9 @@ mod tests {
         assert_eq!(parsed.to_bytes(), bytes, "and writes back identically");
     }
 
+    /// Unterminated text keeps format `0x0004` and gains no terminator through a round trip.
     #[test]
     fn unterminated_text_stays_unterminated_through_a_round_trip() {
-        // A PS3 save carries `0x0004` fields. Writing one back as `0x0204` produces a file
-        // one byte longer, differing in a format code fifty-five bytes in - which is how
-        // this was found, and only because real files were checked byte for byte. (D020)
         let mut sfo = Sfo::new();
         sfo.set(Entry {
             key: "PARAMS".to_owned(),
@@ -617,6 +567,7 @@ mod tests {
         assert_eq!(parsed.entries()[0].format(), Format::Utf8Special);
     }
 
+    /// An unrecognised format code keeps its bytes rather than failing the file.
     #[test]
     fn an_unrecognised_format_keeps_its_bytes_rather_than_failing_the_file() {
         let mut sfo = Sfo::new();
@@ -632,12 +583,14 @@ mod tests {
         );
     }
 
+    /// A file without the `\0PSF` magic is refused.
     #[test]
     fn the_wrong_magic_is_refused() {
         assert_eq!(Sfo::parse(b"NOPE").unwrap_err(), SfoError::NotAnSfo);
         assert_eq!(Sfo::parse(&[]).unwrap_err(), SfoError::NotAnSfo);
     }
 
+    /// A truncated file is an error, not a shorter table.
     #[test]
     fn a_truncated_file_is_an_error_rather_than_a_short_table() {
         let mut sfo = Sfo::new();
@@ -649,6 +602,7 @@ mod tests {
         );
     }
 
+    /// The format codes are the ones both cited sources write.
     #[test]
     fn the_format_codes_are_the_ones_both_sources_write() {
         assert_eq!(Format::Utf8.code(), 0x0204);
@@ -660,16 +614,12 @@ mod tests {
 
     /// Eight bytes that are not valid UTF-8, which is what a user id usually is.
     ///
-    /// `0xff` cannot begin a UTF-8 sequence, so this is guaranteed to take the binary path
-    /// rather than depending on luck - the point being tested is what happens when text
-    /// decoding fails, and a fixture that sometimes decoded would sometimes test nothing.
+    /// `0xff` cannot begin a UTF-8 sequence, so this always takes the binary path.
     const ACCOUNT_ID: [u8; 8] = [0xff, 0x01, 0x00, 0x9a, 0x2b, 0x00, 0x7c, 0xd3];
 
+    /// A non-UTF-8 `ACCOUNT_ID` parses, reads back as its exact bytes and round-trips.
     #[test]
     fn an_account_id_reads_back_as_its_exact_eight_bytes() {
-        // The parameter a save carries for the user it belongs to. It lives in the
-        // unterminated format beside PS3 text, and before D090 this crate ran it through
-        // `from_utf8` and returned `NotUtf8` - failing the entire file over one key.
         let mut sfo = Sfo::new();
         sfo.set(Entry::text("TITLE_ID", "CUSA00001"));
         sfo.set(Entry {
@@ -686,12 +636,9 @@ mod tests {
         assert_eq!(parsed.to_bytes(), bytes, "and writes back identically");
     }
 
+    /// `bytes` answers for a binary value that happened to decode as text.
     #[test]
     fn bytes_answers_for_a_value_that_decoded_as_text_too() {
-        // The trap this accessor exists to close. Some eight-byte ids decode as UTF-8 by
-        // luck, and a caller matching on `Value::Binary` alone would work on most saves and
-        // silently miss on those - a failure that looks like a bad save rather than a bad
-        // reader. `bytes` answers whichever variant the parse chose.
         let readable = *b"abcdefgh";
         let mut sfo = Sfo::new();
         sfo.set(Entry {
@@ -713,11 +660,9 @@ mod tests {
         );
     }
 
+    /// A trailing zero in the unterminated format is part of the value.
     #[test]
     fn a_trailing_zero_in_the_unterminated_format_is_content() {
-        // There is no terminator in this format, so the stated length is exact and a zero at
-        // the end is a byte of the value. Trimming it shortened an id and wrote the file back
-        // a byte lighter, which a round trip against real material is what catches.
         let ending_in_zero = [0xd3, 0x2b, 0x9a, 0x01, 0x7c, 0x00, 0xff, 0x00];
         let mut sfo = Sfo::new();
         sfo.set(Entry {
@@ -732,11 +677,9 @@ mod tests {
         assert_eq!(parsed.to_bytes(), bytes);
     }
 
+    /// A `utf8` value's terminator and reserved padding are not part of the value.
     #[test]
     fn a_terminated_text_value_still_loses_its_terminator() {
-        // The other half of the same rule: `utf8` states a length that *includes* the
-        // terminator, so trimming there is right and stopping it would have been the fix
-        // applied one variant too widely.
         let mut sfo = Sfo::new();
         sfo.set(Entry::text_reserving("TITLE", "Name", 32));
         let parsed = Sfo::parse(&sfo.to_bytes()).expect("a table");
@@ -745,6 +688,7 @@ mod tests {
         assert_eq!(parsed.bytes("TITLE"), Some(b"Name".as_slice()));
     }
 
+    /// An integer is read through `as_integer` and has no raw bytes.
     #[test]
     fn an_integer_has_no_bytes_because_its_endianness_is_already_decided() {
         let mut sfo = Sfo::new();

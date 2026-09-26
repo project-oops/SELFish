@@ -1,14 +1,7 @@
-//! `sce_sys/keystone`, which is derived rather than supplied.
+//! `sce_sys/keystone`, which is derived from the passcode rather than supplied.
 //!
-//! # Why this is a format product and not title content
-//!
-//! Every real package carries a 96-byte `keystone` in its filesystem, and a builder was
-//! demanding it as an input because it looked like one more file the caller owns. It is not:
-//! it is two `HMAC-SHA256` operations over the **passcode**, which the builder already has.
-//! Nothing about it identifies a title.
-//!
-//! It was missing from every package this crate produced, and every real package has one - the
-//! kind of difference that is invisible until an installer refuses.
+//! Every package carries this 96-byte file in its filesystem. It identifies nothing about the
+//! title: it is two `HMAC-SHA256` operations over the passcode.
 //!
 //! ```text
 //! header      "keystone" 02 00 01 00, then zeros, to 32 bytes
@@ -17,12 +10,8 @@
 //! keystone    header || fingerprint || final          -- 96 bytes
 //! ```
 //!
-//! # Confirmed against real packages
-//!
-//! `examples/keystone.rs` extracts the `keystone` from packages in hand and compares. Two of
-//! the three to hand were built with the fake passcode and both reproduce **byte for byte**;
-//! the third used a passcode nobody can recover, so it differs and is reported as such rather
-//! than as a failure.
+//! `examples/keystone.rs` compares this against the file in real packages built with the fake
+//! passcode.
 
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
@@ -49,8 +38,7 @@ pub const PATH: &str = "sce_sys/keystone";
 ///
 /// # Errors
 ///
-/// If either MAC key cannot be read from the keyset, which is a build problem rather than a
-/// runtime one.
+/// If either MAC key cannot be read from the keyset.
 pub fn create(passcode: &[u8]) -> Result<Vec<u8>, PackageError> {
     let fingerprint = mac("keystone_hmac_key_hex", passcode)?;
 
@@ -84,20 +72,18 @@ mod tests {
     use super::{HEADER, LEN, create};
     use crate::keys::FAKE_PASSCODE;
 
+    /// A keystone is 96 bytes and begins with the fixed header.
     #[test]
     fn it_is_ninety_six_bytes_and_starts_with_its_name() {
-        // Every real package's keystone is exactly this long. A different length means the
-        // construction changed, not that a value did.
         let keystone = create(FAKE_PASSCODE).expect("a keystone");
         assert_eq!(keystone.len(), LEN);
         assert_eq!(&keystone[..8], b"keystone");
         assert_eq!(&keystone[..HEADER.len()], &HEADER);
     }
 
+    /// Different passcodes give different keystones past the shared header.
     #[test]
     fn it_follows_the_passcode() {
-        // The whole point: it is derived from the passcode, so two packages keyed differently
-        // carry different keystones. If this ever stops being true the derivation is broken.
         let fake = create(FAKE_PASSCODE).expect("a keystone");
         let other = create(b"anotherpasscodethirtytwochars000").expect("a keystone");
         assert_ne!(fake, other);
@@ -105,11 +91,9 @@ mod tests {
         assert_eq!(&fake[..HEADER.len()], &other[..HEADER.len()]);
     }
 
+    /// The final MAC covers the header and fingerprint, so it follows the passcode.
     #[test]
     fn the_last_third_covers_the_first_two() {
-        // The final MAC is taken over the header *and* the fingerprint, so changing the
-        // passcode has to move it too. Computing it over the fingerprint alone would be an
-        // easy simplification to make and would produce a file that looks right.
         let fake = create(FAKE_PASSCODE).expect("a keystone");
         let other = create(b"anotherpasscodethirtytwochars000").expect("a keystone");
         assert_ne!(&fake[64..], &other[64..], "the final MAC must follow too");

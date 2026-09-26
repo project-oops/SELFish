@@ -672,6 +672,7 @@ mod tests {
         }
     }
 
+    /// The outer image's superblock declares it signed and sizes it exactly.
     #[test]
     fn the_outer_image_declares_itself_signed() {
         let image = build(&options(b"payload", false)).expect("an image");
@@ -681,10 +682,9 @@ mod tests {
         assert_eq!(sb.image_len(), u64::try_from(image.len()).unwrap());
     }
 
+    /// An unencrypted outer image reads back, with the reader using the signed inode stride.
     #[test]
     fn an_unencrypted_outer_image_reads_back_through_the_reader() {
-        // Signed inodes are 0x2C8 rather than 0xA8, so this also proves the reader picks the
-        // right stride from the mode flags - a wrong one puts every field somewhere else.
         let payload = vec![0x5A_u8; 100_000];
         let image = build(&options(&payload, false)).expect("an image");
         let fs = Filesystem::new(Slice::new(&image, 0)).expect("a filesystem");
@@ -694,10 +694,9 @@ mod tests {
         assert_eq!(fs.contents(found[0].inode).expect("bytes"), payload);
     }
 
+    /// The writer's XTS encryption and the reader's XTS decryption agree.
     #[test]
     fn an_encrypted_image_decrypts_to_the_same_thing() {
-        // The encryption written here and the decryption already in this crate are separate
-        // implementations of XTS. If either has the tweak wrong, this fails.
         let payload = vec![0x33_u8; 90_000];
         let plain = build(&options(&payload, false)).expect("a plain image");
         let secret = build(&options(&payload, true)).expect("an encrypted image");
@@ -712,11 +711,9 @@ mod tests {
         assert_eq!(fs.contents(found[0].inode).expect("bytes"), payload);
     }
 
+    /// Inner filesystem, `PFSC` container and encrypted outer filesystem round-trip together.
     #[test]
     fn the_whole_package_filesystem_stack_round_trips() {
-        // The real shape: an inner plain filesystem, wrapped in PFSC, carried as the single
-        // file of a signed and encrypted outer filesystem. Every layer this crate can write,
-        // read back by every layer it can read.
         let inner = write::Tree::new(write::ROOT_NAME)
             .with_file("eboot.bin", vec![0xE1; 3000])
             .with_dir(write::Tree::new("sce_sys").with_file("param.sfo", b"sfo".to_vec()));
@@ -753,16 +750,16 @@ mod tests {
         assert_eq!(paths, ["/eboot.bin", "/sce_sys/param.sfo"]);
     }
 
+    /// The sign key and the encryption keys come from different derivation indices.
     #[test]
     fn the_two_derived_keys_differ() {
-        // One derivation with two indices. Reusing the wrong one would sign with the encryption
-        // key and still produce an image that reads back fine here.
         let signing = sign_key(EKPFS, &[0; 16]).expect("a sign key");
         let (tweak, data) = encryption_keys(EKPFS, &[0; 16]).expect("enc keys");
         assert_ne!(&signing[..16], &tweak[..]);
         assert_ne!(&signing[16..], &data[..]);
     }
 
+    /// A payload needing a doubly-indirect signature block is refused.
     #[test]
     fn a_payload_needing_double_indirection_is_refused_rather_than_guessed() {
         // Just past twelve direct blocks plus one block of signatures.

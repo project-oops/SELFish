@@ -1,9 +1,7 @@
 //! Reading `data/sfo-format.tsv`.
 //!
-//! The same arrangement `selfish-container` uses for its own table, and for the same reason:
-//! a constant that exists in two places is a constant that will eventually disagree with
-//! itself. Deliberately duplicated as a *reader* rather than shared, because sharing it would
-//! mean this crate depending on the container for a `split('\t')`.
+//! The table is the one copy of every constant. The reader mirrors `selfish-container`'s
+//! rather than sharing it, so this crate does not depend on the container.
 
 /// The field table, with its provenance header.
 const FORMAT: &str = include_str!("../../../data/sfo-format.tsv");
@@ -12,9 +10,8 @@ const FORMAT: &str = include_str!("../../../data/sfo-format.tsv");
 ///
 /// # Panics
 ///
-/// If the row is absent. That is a build-time fact - the table is compiled in - and a missing
-/// row means the table changed shape while this code did not. Continuing with a plausible
-/// zero produces a file that is wrong in a way nothing downstream can detect.
+/// If the row is absent. The table is compiled in, so a missing row means it and this code
+/// disagree; a substituted zero would write an undetectably wrong file.
 #[must_use]
 pub(crate) fn u16_at(group: &str, field: &str) -> u16 {
     let value = lookup(group, field)
@@ -74,18 +71,19 @@ fn column(group: &str, field: &str, index: usize) -> Option<String> {
 mod tests {
     use super::{bytes_at, lookup, u16_at};
 
+    /// The magic is read as bytes, so it cannot be serialised in the wrong byte order.
     #[test]
     fn the_magic_is_read_as_bytes_rather_than_as_a_number() {
-        // The one mistake this crate inherited a warning about: a magic stored as an integer
-        // and serialised back is a magic written backwards. (D002)
         assert_eq!(bytes_at("header", "magic"), vec![0x00, 0x50, 0x53, 0x46]);
     }
 
+    /// The version is four bytes, not a number.
     #[test]
     fn the_version_is_four_bytes_and_not_a_number() {
         assert_eq!(bytes_at("header", "version"), vec![0x01, 0x01, 0x00, 0x00]);
     }
 
+    /// The value format codes are read from the table.
     #[test]
     fn the_format_codes_come_from_the_table() {
         assert_eq!(u16_at("format", "utf8"), 0x0204);
@@ -93,6 +91,7 @@ mod tests {
         assert_eq!(u16_at("format", "integer"), 0x0404);
     }
 
+    /// A missing row reads as absent, never as zero.
     #[test]
     fn a_missing_row_is_absent_rather_than_zero() {
         assert_eq!(lookup("header", "nothing_here"), None);

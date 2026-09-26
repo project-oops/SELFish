@@ -1,9 +1,6 @@
-//! The whole chain, once: linker script → linker → vendor segment → back through the reader.
+//! The whole chain on a real linked file: linker script, linker, vendor segment, reader.
 //!
-//! Each piece has its own tests against synthetic input. This is the one that says they agree
-//! about a real linked file, which is where the disagreements have historically been.
-//!
-//! Skipped rather than failed without `clang` and `ld.lld`; see `links.rs` for why.
+//! Skipped rather than failed without `clang` and `ld.lld`, as in `links.rs`.
 
 #![allow(
     clippy::unwrap_used,
@@ -90,6 +87,7 @@ fn link(dir: &Path) -> Option<Vec<u8>> {
     Some(std::fs::read(&linked).expect("the linked module"))
 }
 
+/// A linked module, rebuilt and stamped, reads back with its import, adjacency and initialiser.
 #[test]
 fn a_linked_module_becomes_one_the_reader_understands() {
     let dir = std::env::temp_dir().join("selfish-module-test");
@@ -97,7 +95,7 @@ fn a_linked_module_becomes_one_the_reader_understands() {
         return;
     };
 
-    // Pull the linked tables out of their sections. This is the half `section.rs` exists for.
+    // Pull the linked tables out of their sections.
     let (symbols, names, jmprel, rela, pltgot, init) = {
         let elf = selfish_elf::Elf::parse(&bytes).expect("a readable module");
         let sections = elf
@@ -162,8 +160,7 @@ fn a_linked_module_becomes_one_the_reader_understands() {
         "probe",
         &libraries,
         &|name| {
-            // The manifest's job: which library, and what identifier. Hashed here because
-            // this import has a name; one that arrived already encoded would `Nid::decode`.
+            // The manifest names the library and the identifier.
             (name == "sceKernelLoadStartModule").then(|| dynlib::Resolution {
                 nid: selfish_nid::Nid::with_suffix(name, &selfish_nid::suffix()),
                 library: 0,
@@ -188,8 +185,7 @@ fn a_linked_module_becomes_one_the_reader_understands() {
         "the orbis convention leaves the tables unmapped"
     );
 
-    // The identity a loader checks before it reads anything else. A linker leaves `e_type` as
-    // an ordinary shared object and `EI_OSABI` as SysV, and a loader refuses both outright.
+    // A linker leaves `e_type` as an ordinary shared object and `EI_OSABI` as SysV.
     let stamped = selfish_elf::identity::stamp(
         &mut bytes,
         selfish_elf::ObjectType::Executable,
@@ -201,8 +197,6 @@ fn a_linked_module_becomes_one_the_reader_understands() {
         "the linker leaves an ordinary shared object, which a loader refuses: {stamped:?}"
     );
 
-    // And now read the result as a loader would, through code that knows nothing about how it
-    // was made.
     let elf = selfish_elf::Elf::parse(&bytes).expect("the rebuilt module");
     assert_eq!(elf.object_type(), selfish_elf::ObjectType::Executable);
     assert!(elf.has_platform_osabi());
@@ -224,8 +218,7 @@ fn a_linked_module_becomes_one_the_reader_understands() {
         selfish_nid::Nid::of("sceKernelLoadStartModule")
     );
 
-    // The adjacency the tag meanings were established from, now true of output as well. At
-    // least one of the two has to have been checked, or this says nothing.
+    // At least one adjacency must be checked for this to assert anything.
     let mut checked = 0;
     if info.jmprel != 0 && info.pltrelsz > 0 {
         assert_eq!(
@@ -244,10 +237,10 @@ fn a_linked_module_becomes_one_the_reader_understands() {
         "neither adjacency was checked, so this proves nothing"
     );
 
-    // The initialiser is present because the module defines one.
     assert_eq!(info.init, init.unwrap_or(0));
 }
 
+/// An import the manifest does not claim stops the build and is named in the error.
 #[test]
 fn an_unclaimed_import_stops_the_build_rather_than_shipping() {
     let dir = std::env::temp_dir().join("selfish-module-unclaimed");
@@ -267,8 +260,7 @@ fn an_unclaimed_import_stops_the_build_rather_than_shipping() {
         .and_then(|header| sections.contents(header))
         .expect("its string table");
 
-    // A manifest that claims nothing. Giving the symbol library zero instead would be a
-    // valid-looking answer that resolves to nothing at run time.
+    // A manifest that claims nothing.
     let error = dynlib::build(
         Linked {
             symbols: sections.contents(dynsym).expect("bytes"),
@@ -286,6 +278,6 @@ fn an_unclaimed_import_stops_the_build_rather_than_shipping() {
     let message = error.to_string();
     assert!(
         message.contains("sceKernelLoadStartModule"),
-        "the error names what is unclaimed, since the fix is always to add it: {message}"
+        "the error names what is unclaimed: {message}"
     );
 }

@@ -30,9 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let bytes = std::fs::read(path)?;
         println!("{name}");
 
-        // A bare `param.sfo` is as good an oracle as one inside a package, and homebrew
-        // projects keep them in the open next to their `.gp4`. Taking either means the check
-        // can be run against files nobody had to extract first.
+        // A bare `param.sfo`, such as one kept next to a `.gp4`, is accepted as well as a package.
         let (raw, content_id_from_package) = match Package::parse(&bytes) {
             Ok(package) => {
                 let Some(entry) = package.entry(entry_id::PARAM_SFO) else {
@@ -183,9 +181,8 @@ fn text_of(value: &Value) -> Option<String> {
 
 /// One field's value and the room it reserves.
 ///
-/// The reserved width is the part that matters for a shape comparison: a reader takes the
-/// field to be that wide whatever the value is, so two files agreeing on a value and
-/// disagreeing on the width are not the same file.
+/// The shape comparison uses the reserved width, which a reader takes as the field's width
+/// whatever the value is.
 fn reserved_of<'a>(sfo: &'a Sfo, key: &str) -> Option<(&'a Value, u32)> {
     sfo.entries()
         .iter()

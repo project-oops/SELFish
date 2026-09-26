@@ -37,8 +37,7 @@ fn parse(given: &str) -> Result<Wanted, String> {
         .or_else(|| given.strip_prefix("0X"))
     {
         let value = u64::from_str_radix(hex, 16).map_err(|e| format!("{given}: {e}"))?;
-        // Both readings, because two projects print the same import differently and neither
-        // is wrong about its own convention.
+        // Both byte orders, because projects print the same value in different conventions.
         return Ok(Wanted {
             given: given.to_owned(),
             readings: vec![
@@ -62,9 +61,7 @@ fn parse(given: &str) -> Result<Wanted, String> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut wanted = Vec::new();
     let mut vocabularies = Vec::new();
-    // The committed suffix unless told otherwise. Varying it is an experiment the crate
-    // already provides for: an identifier that no name explains is one of the few reasons to
-    // ask whether the salt itself is what differs, and asking is cheaper than speculating.
+    // The committed suffix unless `--suffix` tests whether the salt is what differs.
     let mut suffix = selfish_nid::suffix();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -87,9 +84,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // The forward direction first: what each reading looks like as a symbol name spells it.
-    // Printed whether or not a vocabulary is supplied, because it is what makes the value
-    // greppable in a corpus that stores the encoded form rather than the raw one.
+    // Each reading's encoded form, printed always so the value can be grepped in a corpus
+    // that stores encoded names.
     for want in &wanted {
         println!("{}", want.given);
         for (label, nid) in &want.readings {
@@ -143,8 +139,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}  no name in this vocabulary produces it", want.given);
         }
         for (_, reading, name, path) in hits {
-            // Re-hashing the name is the point: the answer verifies itself, and a reader
-            // holding only the name can reproduce it without the corpus it came from.
+            // The re-hash lets a reader verify the answer without the corpus.
             println!("{}  = {}  ({}, from {})", want.given, name, reading, path);
             println!(
                 "      check: hash({:?}) = {}",
@@ -158,8 +153,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Sixteen hex digits, or any even number of them, as bytes.
 ///
-/// Only here for `--suffix`. The library parses the committed one itself and does not take a
-/// suffix from anywhere a caller could reach at run time - that is the point of D004.
+/// Only for `--suffix`; the library embeds the committed suffix and takes none at run time.
 fn hex_bytes(hex: &str) -> Result<Vec<u8>, String> {
     if !hex.len().is_multiple_of(2) {
         return Err(format!("{hex}: an odd number of hex digits"));

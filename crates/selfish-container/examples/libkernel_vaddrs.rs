@@ -31,7 +31,6 @@ fn main() {
     let elf = selfish_elf::Elf::parse(&inner).expect("an executable");
     let (blob, info) = elf.tables().expect("tables").expect("vendor tables");
 
-    // The library's own reader, rather than a second hand-rolled walk of the same table.
     let symbols = selfish_elf::dynamic::symbols(blob, &info).expect("a symbol table");
 
     let at = info.strtab as usize;

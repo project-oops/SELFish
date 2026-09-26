@@ -4,19 +4,10 @@
 //! `0x401` is a shorter record naming the same content. Both are stored encrypted; see
 //! [`crate::keys::decrypt_entry`] for how they come out.
 //!
-//! # Every offset here was measured, not transcribed
-//!
-//! A published field list places the disc key at `0x1E8` and the signature at `0x2A8`. Neither
-//! can be reconciled with a real licence: the populated region is exactly `0x260..0x400` in
-//! every sample, and a signature at `0x2A8` would end `0x58` short of the structure. The
-//! offsets below put the signature's last byte exactly on the boundary, and every field lands
-//! where the bytes say it does. (D046)
-//!
-//! # What proves this is right
-//!
-//! [`Licence::build`] reproduces a **real licence byte for byte** from nothing but its content
-//! id and passcode - including the encrypted secret and the signature. That is the whole test:
-//! a builder that gets any field, any derivation or any key wrong produces different bytes.
+//! The offsets are measured from real licences. A published field list places the disc key at
+//! `0x1E8` and the signature at `0x2A8`, which cannot fit: the populated region is
+//! `0x260..0x400` and the signature ends on the structure's last byte. [`Licence::build`]
+//! reproduces a real licence byte for byte from its content id and passcode.
 
 use aes::cipher::{BlockEncryptMut, KeyIvInit, block_padding::NoPadding};
 use sha2::{Digest, Sha256};
@@ -58,7 +49,7 @@ pub mod field {
     pub const FLAGS: usize = 0x58;
     /// Unnamed, `1` in every sample.
     pub const UNK_64: usize = 0x64;
-    /// Disc key. **Entirely zero in every sample.**
+    /// Disc key. Zero in every sample.
     pub const DISC_KEY: usize = 0x240;
     /// The IV over the secret.
     pub const SECRET_IV: usize = 0x260;
@@ -90,8 +81,7 @@ const SECRET_LEN: usize = 144;
 const SIGNATURE_LEN: usize = 256;
 /// The `DigestInfo` prefix for a SHA-256 signature, per PKCS#1.
 ///
-/// Confirmed rather than assumed: with it, signing a real licence reproduces its stored
-/// signature exactly, in all three packages. Without it, nothing matches.
+/// With it, signing a real licence reproduces its stored signature exactly.
 const DIGEST_INFO: [u8; 19] = [
     0x30, 0x31, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
     0x00, 0x04, 0x20,
@@ -107,8 +97,7 @@ pub struct Licence {
 impl Licence {
     /// Build one for a content id.
     ///
-    /// `drm_type`, `content_type` and `sku_flag` are the caller's: they describe what the title
-    /// *is*, and nothing here can know that.
+    /// `drm_type`, `content_type` and `sku_flag` describe the title and come from the caller.
     ///
     /// # Errors
     ///
@@ -141,11 +130,10 @@ impl Licence {
         put(&mut out, field::SKU_FLAG, &sku_flag.to_be_bytes());
         put(&mut out, field::UNK_64, &value::UNK_64.to_be_bytes());
 
-        // The account id, the flags and the disc key are all zero in every sample, and zero is
-        // what an unset field holds - so they are left rather than written.
+        // The account id, flags and disc key are zero in every sample and are left unwritten.
 
-        // The IV and the first half of the secret are two halves of one digest over the padded
-        // content id. Confirmed against real licences: `secret_iv` matches in all three.
+        // The IV and the first half of the secret are the two halves of one digest over the
+        // padded content id.
         let digest = padded_content_digest(content_id);
         put(&mut out, field::SECRET_IV, digest.get(..16).unwrap_or(&[]));
 
@@ -166,7 +154,7 @@ impl Licence {
 
     /// The shorter licence record, entry `0x401`.
     ///
-    /// The content id, then zeros, to a fixed length. That is what every sample holds.
+    /// The content id, then zeros, to a fixed length, as in every sample.
     #[must_use]
     pub fn info(content_id: &[u8]) -> Vec<u8> {
         let mut out = vec![0_u8; INFO_SIZE];
@@ -191,8 +179,7 @@ impl Licence {
 
 /// SHA-256 of the content id padded to 48 bytes with NULs.
 ///
-/// **The padding is hashed.** Trimming the id to its own length gives a different digest and a
-/// licence whose secret nothing recognises.
+/// The padding is part of what is hashed.
 fn padded_content_digest(content_id: &[u8]) -> [u8; 32] {
     let mut padded = [0_u8; 48];
     let take = content_id.len().min(padded.len());
@@ -202,12 +189,10 @@ fn padded_content_digest(content_id: &[u8]) -> [u8; 32] {
     Sha256::digest(padded).into()
 }
 
-/// AES-128-**CBC** over the secret, in place.
+/// AES-128-CBC over the secret, in place.
 ///
-/// The routine that does this in the source is called `AesCbcCfb128Encrypt` and sets
-/// `CipherMode.CBC`. The name says CFB; the code says CBC, and the bytes agree with the code -
-/// a CFB implementation reproduces every other field of a real licence and gets these 144
-/// wrong. Named here for what it is. (D047)
+/// The source routine is named `AesCbcCfb128Encrypt` but sets `CipherMode.CBC`, and real
+/// licences agree with CBC.
 fn encrypt_secret(secret: &mut [u8], iv: &[u8; 16]) -> Result<(), PackageError> {
     let key = keys::rif_secret_key().ok_or(PackageError::KeysUnreadable)?;
     let encryptor = Aes128CbcEnc::new_from_slices(&key, iv).map_err(|_| PackageError::BadKey)?;
@@ -220,7 +205,7 @@ fn encrypt_secret(secret: &mut [u8], iv: &[u8; 16]) -> Result<(), PackageError> 
 
 /// Sign a digest of `over` with the debug RIF keyset.
 ///
-/// PKCS#1 v1.5 with a `DigestInfo` prefix, confirmed by reproducing three real signatures.
+/// PKCS#1 v1.5 with a `DigestInfo` prefix, which reproduces real signatures.
 fn sign(over: &[u8]) -> Result<Vec<u8>, PackageError> {
     let digest: [u8; 32] = Sha256::digest(over).into();
 
@@ -255,6 +240,7 @@ mod tests {
 
     const ID: &[u8] = b"IV0002-ITEM00001_00-STOREUPD00000000";
 
+    /// A built licence has the measured size, magic, content id and zero regions.
     #[test]
     fn a_built_licence_has_the_shape_the_measurements_describe() {
         let licence = Licence::build(ID, 0, 0, 0).expect("a licence");
@@ -278,6 +264,7 @@ mod tests {
         );
     }
 
+    /// The start time is the fixed value real licences carry.
     #[test]
     fn the_start_time_is_the_one_every_real_licence_carries() {
         let licence = Licence::build(ID, 0, 0, 0).expect("a licence");
@@ -286,14 +273,14 @@ mod tests {
         assert_eq!(u64::from_be_bytes(raw), value::START_TIME);
     }
 
+    /// A built licence's signature verifies against the keyset.
     #[test]
     fn a_licence_this_crate_builds_verifies_against_the_keyset() {
-        // Not proof it matches a real one - that is `examples/decrypt --rebuild`, which needs
-        // material. This is the half that can run anywhere.
         let licence = Licence::build(ID, 0, 0, 0).expect("a licence");
         assert!(licence.signature_is_valid().expect("a keyset"));
     }
 
+    /// Changing one signed byte invalidates the signature.
     #[test]
     fn changing_one_byte_invalidates_the_signature() {
         let mut licence = Licence::build(ID, 0, 0, 0).expect("a licence");
@@ -304,6 +291,7 @@ mod tests {
         );
     }
 
+    /// The info record is the content id followed by zeros.
     #[test]
     fn the_info_record_is_the_content_id_then_zeros() {
         let info = Licence::info(ID);

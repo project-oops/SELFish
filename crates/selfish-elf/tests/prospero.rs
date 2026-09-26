@@ -1,23 +1,8 @@
-//! The current convention, written and read back.
+//! The Prospero convention, written by `dynlib` and read back through `Elf::tables`.
 //!
-//! Every real module this repository has been pointed at is previous-generation, so
-//! `Elf::tables`'s current-convention branch was **reasoned rather than measured** - code that
-//! had never been executed against anything. That is the shape of defect this project keeps
-//! finding in other people's work, and leaving one in is not defensible.
-//!
-//! It cannot be fixed with material nobody has. It *can* be fixed with the other half of the
-//! crate: the writer can produce a current-convention module, and the reader can be made to
-//! read it. That is principle 4 doing the job it exists for - the two halves check each other
-//! where reality is unavailable.
-//!
-//! # What this proves and what it does not
-//!
-//! It proves the two halves agree: the tag numbers, the virtual-address origin, the mapped
-//! segment, and the rebasing all round-trip. It does **not** prove a console agrees, because
-//! nothing here has seen a current-generation module. If one ever turns up, this is the test
-//! to point at it.
-//!
-//! Skipped rather than failed without `clang` and `ld.lld`; see `links.rs` for why.
+//! This checks the writer and reader agree on tag numbers, the virtual-address origin, the
+//! mapped segment and the rebasing; it is not checked against a Prospero-generation module.
+//! Skipped rather than failed without `clang` and `ld.lld`, as in `links.rs`.
 
 #![allow(
     clippy::unwrap_used,
@@ -102,7 +87,7 @@ fn link(dir: &Path) -> Option<Vec<u8>> {
     Some(std::fs::read(&linked).expect("the linked module"))
 }
 
-/// Build a module under one convention and hand back its bytes.
+/// Build a module under one convention in place and return what `install` did.
 fn build(bytes: &mut Vec<u8>, table: Table, generation: Generation) -> dynlib::Installed {
     let (symbols, names, jmprel, rela, pltgot) = {
         let elf = selfish_elf::Elf::parse(bytes).expect("a readable module");
@@ -135,9 +120,8 @@ fn build(bytes: &mut Vec<u8>, table: Table, generation: Generation) -> dynlib::I
         )
     };
 
-    // Two libraries with distinct ids, so the library and module tables have something to get
-    // wrong. One of them is the display library, which is the row in
-    // `data/library-versions.tsv` - see the version assertion below.
+    // Two libraries with distinct ids; the display library has a row in
+    // `data/library-versions.tsv`.
     let libraries = vec![
         Library {
             name: "libkernel".to_owned(),
@@ -183,6 +167,7 @@ fn build(bytes: &mut Vec<u8>, table: Table, generation: Generation) -> dynlib::I
     installed
 }
 
+/// A Prospero-convention module maps its tables and reads back with rebased offsets.
 #[test]
 fn a_prospero_convention_module_reads_back_through_the_reader() {
     let dir = std::env::temp_dir().join("selfish-prospero-test");
@@ -191,8 +176,7 @@ fn a_prospero_convention_module_reads_back_through_the_reader() {
     };
     let installed = build(&mut bytes, Table::Prospero, Generation::Prospero);
 
-    // The half that distinguishes the conventions: the tables are *mapped*, so the tags hold
-    // virtual addresses rather than offsets and the segment is an ordinary `PT_LOAD`.
+    // The tables are mapped, so the tags hold virtual addresses in an ordinary `PT_LOAD`.
     assert_ne!(
         installed.table_base, 0,
         "the prospero convention places the tables in the address space"
@@ -202,7 +186,7 @@ fn a_prospero_convention_module_reads_back_through_the_reader() {
     assert_eq!(elf.generation(), Some(Generation::Prospero));
     assert!(
         elf.vendor_segment().is_none(),
-        "there is no PT_SCE_DYNLIBDATA under this convention, which is why `tables` exists"
+        "there is no PT_SCE_DYNLIBDATA under this convention"
     );
 
     let (segment, info) = elf
@@ -235,11 +219,9 @@ fn a_prospero_convention_module_reads_back_through_the_reader() {
     );
 }
 
+/// One source built under both conventions has different tags and identical imports.
 #[test]
 fn the_two_conventions_disagree_about_the_bytes_and_agree_about_the_meaning() {
-    // The same source, built both ways. Every tag number and every table value differs; the
-    // imports that come back out are identical. That is the whole claim of having two
-    // conventions in one crate, and nothing else in the suite states it end to end.
     let dir = std::env::temp_dir().join("selfish-conventions-both");
     let Some(linked) = link(&dir) else {
         return;
@@ -287,16 +269,13 @@ fn the_two_conventions_disagree_about_the_bytes_and_agree_about_the_meaning() {
     assert_ne!(
         tags(&orbis_entries),
         tags(&prospero_entries),
-        "the conventions use different tag numbers, which is the thing that gets confused"
+        "the conventions use different tag numbers"
     );
 }
 
+/// The display library is declared 0.0 on Orbis and 1.1 on Prospero in a built module.
 #[test]
 fn the_display_library_gets_its_measured_version_only_on_the_orbis_generation() {
-    // `data/library-versions.tsv` has exactly one row and this is what it is for: declaring
-    // 1.1 for this library on the orbis generation binds a module to the prospero
-    // generation's registration, which has no way to present a frame. The module runs and
-    // draws nothing, which is the worst kind of wrong.
     let dir = std::env::temp_dir().join("selfish-display-version");
     let Some(linked) = link(&dir) else {
         return;

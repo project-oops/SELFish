@@ -6,161 +6,73 @@
 #            OpenOrbis-PS4-Toolchain@0a1aaf9  scripts/make_fself.py   Python    WRITER
 #            prosperity@3475257          tools/pkg_extract/pkg_extract.py  Python  reader
 #
-# The fourth arrived after the builder was written and confirms it independently, including
-# the two fields whose absence a loader rejected: `if not (flags & 0x800): continue` and
-# `idx = (flags >> 20) & 0xFFF`. It also pins something the others leave implicit — the ELF
-# begins at `0x20 + segment_count * 0x20`, immediately after the entry table with no padding,
-# which is where mkself already puts it.
-# **No vendor binary was read to produce this table**, and none may be read to extend it.
-# Derivation happens against sources that can be named; what enters the repository is text
-# with a header saying where it came from; a generator reads the text rather than the thing
-# it was derived from. `titles/` holds packages to check output against - nothing in `tool/`
-# may open them. (orbistoun#D181, orbistoun#D182)
+# The fourth source, a reader, confirms the writer independently, including the two fields a
+# loader rejects a container without: `if not (flags & 0x800): continue` and
+# `idx = (flags >> 20) & 0xFFF`. It also pins that the ELF begins at
+# `0x20 + segment_count * 0x20`, immediately after the entry table with no padding.
 #
-# # THE LIMIT THAT MATTERS: this is still the previous console's container
+# No vendor binary was read to produce this table, and none may be read to extend it. `titles/`
+# holds packages to check output against, never to derive from.
 #
-# OpenOrbis is a PS4 toolchain and both readers are PS4-generation loaders. **Nothing here is
-# confirmed against current-generation vendor material.** The container is expected to be
-# closely related and it is the only lawful starting point available, but every row is
-# `IMPLEMENTATIONS` at PS4 level until something current accepts or rejects a file built from it.
+# The sources describe the Orbis-generation container: OpenOrbis is an Orbis-generation
+# toolchain and the readers are Orbis-generation loaders. Rows are IMPLEMENTATIONS-level except
+# where a measurement below settles them, and a file built from this table is a hypothesis
+# until the hardware accepts or rejects it.
 #
-# That is not a footnote. This project has been caught believing an emulator-derived fact that
-# turned out to describe a different program, and the whole reason `mkself` matters is to
-# reach the *current* system loader. A file built from this table is a hypothesis.
+# The fixed header rows against 32 containers installed on Prospero-generation hardware:
 #
-# ## What was measured on hardware, and why it does not lift that limit
-#
-# On 2026-09-09 obSCEne walked every installed application tree on a current-generation console
-# and audited **32 containers**, reporting each one's `ex_info.ptype` before its verdict. The
-# split is total and it falls exactly on the fake marker:
-#
-#   ptype 0x1 (PTYPE_FAKE)  9 containers   all NINE fixed rows match this table
-#   ptype 0x0              23 containers   the same FIVE rows differ, identically, on every one
+#   ptype 0x1 (PTYPE_FAKE)  9 containers   all nine fixed rows match this table
+#   ptype 0x0              23 containers   the same five rows differ, identically, on every one
 #
 #   the five:  version 0x10 (table 0x0)      attributes 0x32 (table 0x12)
 #              key_type 0x10000301 (0x101)   program_type 0x3 (table 0x1)
 #              flags 0x52 (table 0x22)
 #
-# **No container that is not marked fake matches this table, and every container that is,
-# does.** Nine for nine and twenty-three for twenty-three, with no partial cases in either
-# direction.
+# The other four (`mode` 0x1, `endian` 0x1, `category` 0x1, `padding3` 0x0) hold on all 32 and
+# each row says so in place. The table derives from OpenOrbis, a fake-SELF writer, so it
+# describes what that writer produces.
 #
-# ### Four rows *are* confirmed against genuine material, and that was under-recorded
+# In this sample authenticity and container kind coincide: every ptype 0x1 container is a
+# `PPSA` game and every ptype 0x0 container an `NPXS` system application. The five rows may
+# track fake-versus-genuine or application-versus-system. The fake reading is better supported
+# (it is what the source wrote, and `ptype` is the field for it) but not established; a genuine
+# application container or a fake system one would separate them. `mkself` emits the same five
+# values at every privilege tier, since `Privilege` reaches only `paid` in `self_ex_info`.
 #
-# The five that differ took all the attention. The other four - `mode` 0x1, `endian` 0x1,
-# `category` 0x1, `padding3` 0x0 - hold on **all 23 genuine containers as well as all 9 fake
-# ones**, and each row now says so in place.
+#   measured-by: obscene 048-selfaudit, payload leg
+#   settles: no non-fake container on the measured hardware matches these five rows, and all
+#            nine fixed rows hold for fake ones. Does not settle whether the five track
+#            authenticity or container kind.
 #
-# That is the first confirmation this table has ever had from material this repository could not
-# have produced, and it is principle 2 working exactly as written: derived from citable
-# previous-generation sources, then checked against current-generation reality, and the rows
-# reality settled recorded as settled. Four of nine is a smaller claim than the one withdrawn
-# this afternoon and it is the one that survives.
+# Magic against `ex_info.ptype`, all 32 containers:
 #
-# The simplest explanation is also the one this table's provenance predicts: it was derived from
-# **OpenOrbis, a fake-SELF writer**, so it describes what that writer produces. A container
-# written by an OpenOrbis-lineage tool agrees with it because of where the rows came from, not
-# because a console confirmed them - which is why the `confirmed` verdicts here are round trips
-# and the limit above stands.
-#
-# ## The confound, stated because an earlier version of this file glossed it
-#
-# **Authenticity and container kind are perfectly correlated in this sample.** Every `ptype 0x1`
-# container is `PPSA`-shaped - a game title id - and every `ptype 0x0` container is `NPXS`-shaped,
-# a system application. There is not one genuine application container on the box, and not one
-# fake system one.
-#
-# So these five rows may describe *a fake container* or *an application container*, and **this
-# measurement cannot tell those apart**. An earlier revision of this section said the limit was
-# categorical - "these five rows describe an application container" - and that was reading one
-# arm of a confound as the cause. The fake reading is the better-supported of the two, because
-# it is what the table's own source wrote and because `ptype` is literally the field the format
-# provides for saying so; it is not established, and neither is the other.
-#
-# What would separate them is a container that is genuine **and** application-shaped - a real
-# retail game - or a fake system-tier one. The console holds neither, so this question is not
-# answerable from it and is not being asked of it again.
-#
-# One thing the sample does settle about *this* writer: `mkself` emits the same five values at
-# every privilege tier, because `Privilege` reaches only `paid` in `self_ex_info`. So within what
-# this repository builds, these rows do not encode a tier. That is a fact about the writer, not
-# about the platform.
-#
-#   measured-by: obscene 048-selfaudit, sweep 20260909-175052, payload leg (REQ-20260909T1605Z-9c40)
-#   settles: that no non-fake container on one current-generation console matches these five
-#            rows, and that all nine fixed rows hold for fake ones. Does NOT settle whether the
-#            five track authenticity or container kind - the sample confounds them.
-#
-# ## The magic: settled, and here the confound really is broken
-#
-# The five rows above are stuck behind a confound. The **magic** is not, and it is worth being
-# clear about why, because it is the one place on this console where the sample separates the two
-# things it was asked to.
-#
-# A 2x2 cross-census of all 32 containers, magic against `ex_info.ptype`
-# (obscene 048-selfaudit, sweep 20260909-184538):
-#
-#                     current magic (54 14 F5 EE)   previous magic (4F 15 3D 1D)
+#                     Prospero magic (54 14 F5 EE)   Orbis magic (4F 15 3D 1D)
 #   ptype 0x0                    23                             0
 #   ptype 0x1                     7                             2
 #
-# **Every genuine container carries the current magic, and none carries the previous one.** The
-# reason that is not just "everything on this console is current-generation" is the bottom row:
-# the fake population spans **both** values, so carrying the current magic is not something the
-# console imposes on whatever is installed. Genuine is 23/0; fake is 7/2. The correlation
-# survives having a control group, which is exactly what the five header rows lack.
+# Every genuine container carries the Prospero-generation magic. The fakes span both values,
+# so the hardware does not impose it; the correlation has the control group the five header
+# rows lack. A title's eboot does not carry the Orbis-generation magic; the two that do are
+# fake.
 #
-# So the claim this file used to carry - that a current-generation title's eboot carries the
-# *previous* magic, "hardware-confirmed" - is **refuted**, not merely unsupported. Its evidence
-# was PPSA02664, which is one of the two gen-4 containers and is `ptype 0x1`: fake.
+# Both magics are accepted, each on its own delivery route:
 #
-# ### Both magics are accepted, each on its own delivery route
+#   Orbis magic     a package built with it installs, mounts, loads and executes
+#   Prospero magic  a native title directory whose eboot carries it installs, launches and runs
+#                   to completion; the eboot was built by `mkself --generation 5` and read back
+#                   by the census probe as one of the seven fake/Prospero entries above
 #
-# The question a default actually turns on is acceptance, and it is now answered for both values -
-# separately, because the two are proven on **different routes** and neither on the other's:
+# Because acceptance differs by route, there is no default magic: the pipeline requires
+# `--target`, so every container built here names its magic by naming its machine (D100).
 #
-#   previous magic  a *package* built with it installs, mounts, loads and executes (worklog 040)
-#   current magic   a *native title directory* whose eboot carries it installs, launches and runs
-#                   to completion - 292 checks (obscene sweep 20260909-184538)
+#   measured-by: obscene 048-selfaudit, payload and eboot legs
+#   settles: genuine Prospero-generation containers carry the Prospero magic, 23 of 23, with
+#            fakes on both sides as a control; a container built here with that magic is
+#            accepted on the native-title route. Does not settle either magic on the other route.
 #
-# The second was measured twice over, which is why it is worth stating: the container was built
-# here by `mkself --generation 5`, and then **read back off console storage** by the same probe
-# that produced the census above - `/system_ex/app/PPSA99980/eboot.bin`, `magic 0xeef51454`,
-# `ptype 0x1`. It is one of the 7 fake/current-magic entries in that 2x2. The cross-census
-# already contained this repository's own output as a data point.
-#
-# ### And then there was no default at all
-#
-# `selfish wrap` defaulted to the previous generation's magic. Until the measurement above that was
-# because it was the only value shown to be accepted. When it stopped being the only one the reason
-# changed and the default did not: it became a route decision. The previous magic is proven on the
-# *package* path and the current magic on the *native title* path, and D082 already records that
-# those are different delivery routes rather than two spellings of one.
-#
-# **`wrap` is retired (D100)**, and nothing replaced its default. Its last two reasons for existing,
-# `--privilege` and `--sdk`, are pipeline options now, and the pipeline requires `--target` - so
-# every container built here names its magic by naming its machine. A default that is right for
-# one route is wrong for the other, and there is no longer one to be wrong.
-#
-# What never happened at any point is the default moving on a population. It did not move when the
-# population said previous (that claim was withdrawn, and its evidence was a fake container), and
-# it did not move when the population turned out to say current, 23 of 23. A default turned on what
-# a loader accepts, and the answer differed by route.
-#
-#   measured-by: obscene 048-selfaudit, sweep 20260909-184538, payload leg (REQ-20260909T2020Z-8a17)
-#                and the eboot leg of the same sweep (REQ-20260909T2125Z-3f9d)
-#   settles: that genuine current-generation containers carry the current magic, 23 of 23, with
-#            fakes present on both sides as a control; and that a container built here with the
-#            current magic is accepted on the native-title route. Does NOT settle what either
-#            magic does on the *other* route.
-#
-# ## The tail: `header_size - 0x70` survived its first contact with material we did not write
-#
-# The layout `[... ex_info 64][npdrm 48]` ending at `header_size` comes from OpenOrbis, a **PS4
-# writer**, and is the part of this table no reader could have supplied. On 2026-09-09 the probe
-# was changed to report the four `ex_info` scalars unconditionally instead of hiding them behind
-# a known-`ptype` test, and read seven containers that were demonstrably not written from this
-# table (six system apps under `/system/vsh/app/`, plus `/system_ex/app/FAKE00000/`):
+# The tail layout `[... ex_info 64][npdrm 48]` ending at `header_size` comes from OpenOrbis, a
+# writer; no reader supplies it. Seven containers not written from this table (six system apps
+# under `/system/vsh/app/`, plus `/system_ex/app/FAKE00000/`) read:
 #
 #   paid       0x1bac98  0x7ce04  0x20a0a0  0x176144  0x219d74  0xa36c4  0x8e7a34
 #   ptype      0x0       0x0      0x0       0x0       0x0       0x0      0x0
@@ -168,66 +80,36 @@
 #   fw_version 0x48      0x48     0x48      0x48      0x48      0x48     0x48
 #   npdrm.type 0x0       0x0      0x0       0x0       0x0       0x0      0x0
 #
-# **Seven files of different sizes agreeing exactly on three of four fields is not what a
-# misaligned read produces.** Reading the wrong bytes of seven unrelated files gives seven
-# unrelated answers; this gives one answer with a single field varying. So the offset is very
-# probably right, and what these containers carry is simply a *kind this table does not
-# describe*. That is a real result and the first one from material this repository could not
-# have produced.
+# Files of different sizes agreeing on three of four fields is not what a misaligned read
+# gives, and the full census finds `ptype 0x0` and `npdrm.type 0x0` on all 23 genuine
+# containers, so the offset is consistent with the measurement. `paid` varying per application
+# fits a program authority id. `ptype 0x0` is not among the `ptype` values listed below, and
+# `npdrm.type 0x0` (the table pins 0x3) reads as no npdrm control block; neither gets a row,
+# since an unexplained value is not named.
 #
-# **The sample later grew from seven to twenty-three and the agreement held**: the 32-container
-# census above found `ptype 0x0` and `npdrm.type 0x0` on every non-fake container on the box.
-# Twenty-three unrelated files agreeing is further past coincidence than seven was, so the
-# offset is right and the reading below stands.
+#   measured-by: obscene 048-selfaudit, payload leg
+#   settles: nothing about what the values mean; the tail is where this table says for seven
+#            containers not written here, and they carry `ptype` 0x0 and no npdrm block.
 #
-# It is stated as *consistent with* rather than proven, because the alternative was not ruled
-# out by measurement - only by argument. `paid` varying per application is what a program
-# authority id does; it is also what an offset does.
+# Two readers give the shape and one constant; the writer gives the blocks a loader skips
+# (everything from `ex_info` down) and settles two things the readers leave open:
 #
-# Recorded as observed, and **not named**: `ptype` `0x0` is not one of the eight values the
-# `ptype` group below lists, and `npdrm.type` `0x0` where the table pins `0x3` reads as *no
-# npdrm control block*, which a system container plausibly has no use for. Neither gets a row
-# here. Principle 5 - an unexplained value is named `unknown` and left alone, and inventing
-# `ptype system = 0x0` from one console's system apps is exactly the guess that principle
-# exists to stop.
+#   * bytes 4..7 - shadPS4 names four fields without values, fpPS4 gives `00 01 01 12` as one
+#     word, OpenOrbis names them and gives the values. All three agree.
+#   * `0x22` at offset 26 is computed: `0x2 | (signed_block_count & 0x7) << 4`, with
+#     signed_block_count = 2.
 #
-#   measured-by: obscene 048-selfaudit, sweep 20260909-155928, payload leg (REQ-20260909T1545Z-2d84)
-#   settles: nothing about what the values mean. Records that the tail is where this table says
-#            it is for seven containers this repository did not write, and that they carry
-#            `ptype` 0x0 and no npdrm block.
-#
-# # Why three sources, and what each was needed for
-#
-# A single reading is a guess with a citation. Two readers gave the shape and one constant.
-# The writer gave what neither reader could: **the blocks a loader skips**. A reader walks a
-# container to find an ELF and never looks at the metadata; a writer has to put something
-# there. Everything from `ex_info` down exists only because a packer was available.
-#
-# It also settled two things the readers left open:
-#
-#   * bytes 4..7 - shadPS4 names four fields and gives no values, fpPS4 gives `00 01 01 12`
-#     as one word, OpenOrbis names them AND gives the values. All three agree.
-#   * `0x22` at offset 26 - both readers record "always 0x22" and neither says why. It is
-#     computed: `0x2 | (signed_block_count & 0x7) << 4`, with signed_block_count = 2.
-#
-# # One genuine disagreement, recorded rather than resolved
-#
-# Bytes 8..11. shadPS4 reads `category:u8, program_type:u8, padding1:u16`; OpenOrbis writes a
-# single `key_type:u32 = 0x101`. Little-endian those are the same bytes - `01 01 00 00` - so
-# the disagreement is in naming, not in layout, and a file built either way is identical.
-# Both readings are recorded because neither can be shown wrong from here.
-#
-# # How the pieces assemble
+# Bytes 8..11: shadPS4 reads `category:u8, program_type:u8, padding1:u16`; OpenOrbis writes one
+# `key_type:u32 = 0x101`. Little-endian those are the same bytes, `01 01 00 00`, so both
+# readings are recorded.
 #
 #   [self_header 32][entry 32 x N][ELF ehdr + phdrs][pad to 16][ex_info 64][npdrm 48]   <- header_size
 #   [meta_block 80 x N][meta_footer 80][signature 256]                                  <- meta_size
 #   [segment payloads, each aligned to 16]                                              <- from header_size + meta_size
 #
-# **Two entries per segment, not one.** A digest entry carrying one 32-byte digest per
-# BLOCK_SIZE block of the segment, then a data entry carrying the segment itself. So
-# `segment_count` is twice the number of qualifying program headers, which is the single
-# thing most likely to be got wrong by reading the readers alone - neither of them says it,
-# because neither has to build one.
+# Two entries per segment: a digest entry carrying one 32-byte digest per BLOCK_SIZE block of
+# the segment, then a data entry carrying the segment itself. `segment_count` is twice the
+# number of qualifying program headers; the readers do not say so.
 #
 # Qualifying program header types: PT_LOAD, PT_SCE_RELRO, PT_SCE_DYNLIBDATA, PT_SCE_COMMENT.
 # PT_SCE_VERSION is kept aside as version_data rather than becoming an entry.
@@ -235,29 +117,15 @@
 # For a fake SELF every digest and the whole signature are zero, which is the same statement
 # `meta_block` makes by being 80 zero bytes: nothing here is claiming to be signed.
 #
+# The magic differs by generation and only the first four bytes change; header size, segment
+# size and layout are identical. orbistoun (`crates/orbistoun-elf/src/wrapper.rs`) records
+# both from real material, and that both appear in one title: bundled modules use the
+# Prospero-generation format, substituted stub libraries the Orbis-generation one.
 #
-# # THE MAGIC DIFFERS BY GENERATION, AND EVERY SOURCE ABOVE IS THE OLD ONE
+#     Prospero generation  54 14 F5 EE
+#     Orbis generation     4F 15 3D 1D    <- what every source above describes
 #
-# orbistoun (`crates/orbistoun-elf/src/wrapper.rs`, decision D049, status "observed from real
-# material") records two magics for one container:
-#
-#     current generation   54 14 F5 EE
-#     previous generation  4F 15 3D 1D    <- what this table described, and what mkself emitted
-#
-# and notes that both appear inside a single title: bundled modules use the current format,
-# substituted stub libraries the older one. Its header size, segment size and layout are
-# byte-identical to the rows below, so **only the first four bytes change**.
-#
-# This was sitting in a sibling repository the whole time. The header above already said
-# "nothing here is confirmed for the current console", which was true and was treated as a
-# limit to note rather than a question to go and answer - and the answer was one directory
-# across, derived from real material rather than from an emulator. Reading the readers and
-# the writer was the right method; not checking who had already done it was not.
-#
-# Still absent
-#
-# `version_data` handling, and the auth_info path that `make_fself.py` takes when given one.
-# An absent row is visible; an invented one is not.
+# `version_data` handling and the auth_info path `make_fself.py` takes are not described.
 #
 struct	field	offset	size	type	value	note
 self_header	magic	0	4	u32	0x1D3D154F	bytes 4F 15 3D 1D. All three sources

@@ -42,9 +42,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Format::Integer => "integer".to_owned(),
             Format::Other(code) => format!("format {code:#06x}"),
         };
-        // The variant, separately from the format code, because for one format they differ:
-        // an unterminated value comes back as text or as bytes depending on whether it
-        // decoded, and seeing which is the point of running this against a real file.
+        // The variant, shown apart from the format code: an unterminated value reads as text
+        // or as bytes depending on whether it decodes.
         let read_as = match &entry.value {
             Value::Text(text) | Value::TextUnterminated(text) => format!("{text:?}"),
             Value::Integer(number) => format!("{number} ({number:#x})"),
@@ -55,8 +54,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "  {:<20} {:<14} value {:<5} reserved {:<5} {}",
             entry.key,
             kind,
-            // The value's own bytes, which for a terminated string is one less than the
-            // `length` the index states - the terminator belongs to the format.
+            // The value's own bytes; for a terminated string, one less than the index's
+            // `length`.
             entry.value.as_bytes().map_or(4, <[u8]>::len),
             entry.reserved,
             read_as
@@ -66,9 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     for key in &wanted {
         match sfo.bytes(key) {
-            // Hex rather than a number, and no byte order chosen: which end of a user id is
-            // significant is the consumer's question, and a probe that picked one would be
-            // making the decision on their behalf in a place they would never look.
+            // Hex in file order; the byte order of a user id is the consumer's choice.
             Some(bytes) => println!(
                 "  {key} = {} ({} bytes, as written)",
                 hex(bytes),

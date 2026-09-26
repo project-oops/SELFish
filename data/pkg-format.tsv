@@ -11,87 +11,45 @@
 #                    titles/PS5_LAPY20011_v1.05.pkg
 #                    titles/Store-R2-PS5.pkg
 #
-# **Two different activities, and the order between them is the whole provenance argument.**
-# Structure comes from source that can be named. The packages then *confirm or refute* it,
-# and rows marked `measured` are ones they settled. Deriving the structure from the packages
-# would be the thing principle 6 forbids; using them to check a structure taken from source
-# is what `derive` already does to a finished module. (orbistoun#D181, orbistoun#D182)
+# Structure comes from the named sources. The packages confirm or refute it, and rows marked
+# `measured` are ones they settled; structure is never derived from them.
 #
-# # Big-endian, unlike everything else here
+# Entry names come from `LibOrbisPkg`, an open-source Orbis-generation packaging tool and
+# writer: `LibOrbisPkg/PKG/Enums.cs` names every entry id and `PKG/PkgBuilder.cs` says how
+# each is produced. Entries `0x1`, `0x80`, `0x100` and `0x1002` were derived from the packages
+# independently, and the source agrees with all four (`DIGESTS`, `GENERAL_DIGESTS`, `METAS`,
+# `PLAYGO_CHUNK_SHA`).
 #
-# # The entry names come from LibOrbisPkg, and the derivations came first
+# Rows marked DERIVED state a hypothesis a machine can falsify: `selfish derive <package>...`
+# reports how many samples each claim survives and exits non-zero if any fails. They are
+# computable from data a writer holds; the remaining unknown entries are not, and are not
+# guessed at.
 #
-# `LibOrbisPkg` (maxton) is an open-source PS4 packaging tool — a **writer**, which is what
-# unblocked the container format too. `LibOrbisPkg/PKG/Enums.cs` names every entry id and
-# `PKG/PkgBuilder.cs` says how each is produced. This repository already trusted that project
-# for the fake keyset; the names below come from the same place.
+# The package container is big-endian: magic, counts and offsets. The SELF container is
+# little-endian throughout.
 #
-# Worth recording in this order because it happened in this order: `0x1`, `0x100`, `0x80` and
-# `0x1002` were derived from packages *before* the source was read, and the source then agreed
-# with all four — `DIGESTS`, `METAS`, `GENERAL_DIGESTS`, `PLAYGO_CHUNK_SHA`. A derivation that
-# survives meeting its source is worth more than either alone.
-#
-# # Two rows here were DERIVED rather than cited, and can be re-checked
-#
-# `entry_content` rows `0x1` and `0x100` came from no source. They were established by stating
-# a hypothesis a machine can falsify and running it against every package available, which is
-# the same method that settled the vendor dynamic tags (`RELA + RELASZ == HASH`) and a
-# current-generation tag by counting.
-#
-# **Re-run it yourself**: `selfish derive <package> <package> ...`. It reports how many samples
-# each claim survived and exits non-zero if any fails. Three packages backed both when written;
-# more packages can only strengthen or kill them, and either is worth knowing.
-#
-# Both are *computable*, which is why they were worth chasing: a writer can produce them from
-# data it already holds. The remaining four unknown entries are not, and are not guessed at.
-#
-# The SELF container is little-endian throughout. This one is not: magic, counts and offsets
-# are all big-endian. A reader that assumes one convention across both formats gets a
-# plausible-looking entry count in the tens of millions.
-#
-# # Every reference found is previous-generation, and the packages are not
-#
-# The extractor says so in its own header. That makes this table unusual for the project:
-# the *structure* is previous-generation and the *confirmation* is current, so where they
-# agree is evidence the format did not change, and any place they disagree is a finding
-# nobody here has published. So far they agree on everything checked.
-#
-# # What a package actually contains
+# Every cited reader describes the Orbis-generation format and the confirming packages are
+# Prospero-generation; they agree on every field checked, so the format is unchanged.
 #
 #   .pkg  ->  header + entry table
-#         ->  PFS image at a fixed 0x700000, AES-XTS encrypted under ekpfs
+#         ->  PFS image at the header's pfs_image_offset, AES-XTS encrypted under ekpfs
 #         ->  block 11 of that holds a PFSC (zlib-compressed) inner image
 #         ->  inner PFS: the real filesystem, each executable an fSELF
 #
-# Four nested formats, not one container. Recovering `ekpfs` needs RSA-2048, SHA-256 and
-# AES-CBC before any of the above can be read, and the inner filesystem needs AES-XTS and
-# zlib on top. The keys are the public fake-package keyset; retail packages use a key
-# nobody outside the vendor has and are out of scope in the same way retail signing is.
+# Recovering `ekpfs` needs RSA-2048, SHA-256 and AES-CBC, and the inner filesystem needs
+# AES-XTS and zlib on top. The keys are the public fake-package keyset; retail packages use a
+# key only the vendor holds and are out of scope.
 #
+# `pfs_image_offset` is a header field, measured as `0x80000`, `0x580000` and `0x80000`; it is
+# not a fixed `0x700000`. High-entropy data at an offset confirms nothing in an encrypted
+# package.
 #
-# # A row here that was wrong, and how
+# Every container inside the three packages (thirty-three) carries the Orbis-generation magic,
+# including a homebrew store for Prospero-generation hardware; community tooling emits the
+# older format and the loader accepts it.
 #
-# `pfs_image_offset` was recorded as a fixed `0x700000` — taken from a previous-generation
-# extractor and "confirmed" by finding high-entropy data at that offset in all three samples.
-# That confirmed nothing: in an encrypted package almost every offset holds high-entropy data,
-# so the check could not have come out any other way.
-#
-# The real values are `0x80000`, `0x580000` and `0x80000`, and the offset is a header field.
-# The corrected rows are below. The lesson is recorded here rather than quietly fixed, because
-# the failure was in the method rather than the number: the search asked whether a value that
-# was already believed appeared in the header, and treated its absence as support. (D011)
-#
-# # Every container inside these packages is previous-generation
-#
-# Thirty-three of them, across all three samples, and not one carries the current generation's
-# magic — including a working homebrew store for the current console. Retail material uses the
-# newer format; community tooling emits the older one and the loader takes it. (D010)
-#
-# # Still unknown
-#
-# Most of the header. Only three fields are named below because only three are used by the
-# reader this came from, and inventing names for the rest would be worse than leaving the
-# gap visible. The body between the entry table and 0x700000 is likewise undescribed.
+# Only the three header fields the cited reader uses are named; the rest of the header and the
+# body between the entry table and the PFS image are undescribed.
 #
 struct	field	offset	size	type	value	note
 entry_record	id	0x00	4	u32be	-	measured: all three
@@ -176,12 +134,11 @@ entry_content	0x400	-	-	kind	license-dat	LICENSE_DAT. RIF, 0x400, big-endian. en
 entry_content	0x401	-	-	kind	license-info	LICENSE_INFO. padded to 0x200. encrypted, key index 2. DECRYPTED 2/3 (third uses a non-default passcode): content id then zeros
 entry_content	0x1002	-	-	kind	playgo-chunk-sha	PLAYGO_CHUNK_SHA. DERIVED+CITED: 4 bytes of sha256 per 0x10000 block of the package. 3/3, every block from the image on. selfish derive
 #
-# # The licence structure, measured from decrypted entries
+# The licence structure, measured from decrypted entries.
 #
-# Entry 0x400 decrypts to a RIF. The offsets below are **measured** from three real licences,
-# not taken from a summary: a published field list gave DiscKey at 0x1E8 and Signature at 0x2A8,
-# which cannot be reconciled with the bytes and would put the signature's end 0x58 short of the
-# structure. The populated region is exactly 0x260..0x400 in every sample. (D046)
+# Entry 0x400 decrypts to a RIF. The offsets below are measured from three real licences. A
+# published field list gives DiscKey at 0x1E8 and Signature at 0x2A8, which the bytes refute;
+# the populated region is exactly 0x260..0x400 in every sample.
 #
 # `secret_iv` is confirmed derived, not merely located: it equals the first sixteen bytes of
 # sha256 of the content id padded to 48 with NULs, in every sample.
@@ -206,35 +163,30 @@ rif	(size)	-	0x400	size	-
 entry_content	0x80	0x1c	4	u32be	0x6e	measured: identical in all three packages while every digest slot differs. Not interpreted. selfish manifest_probe
 
 #
-# # `playgo-chunk.dat`, entry `0x1001` - the rows below, and why they are here
+# `playgo-chunk.dat`, entry `0x1001`.
 #
-# Two independent readings, one a writer and one a reader, and they agree field for field:
-# `LibOrbisPkg`'s `PlayGo/ChunkDat.cs` builds it, shadPS4's `playgo_chunk.h` declares it. The
-# names in the `field` column are shadPS4's, which are the more descriptive of the two.
+# A writer and a reader agree field for field: `LibOrbisPkg`'s `PlayGo/ChunkDat.cs` builds it,
+# shadPS4's `playgo_chunk.h` declares it. The `field` names are shadPS4's.
 #
-# **Little-endian, unlike the package container around it**, which is big-endian. The magic is
-# stored as bytes rather than as the number shadPS4 spells `0x6F676C70`, because a magic held as
-# an integer and written back is a magic written backwards. (D002)
+# Little-endian, unlike the big-endian package container around it. The magic is stored as
+# bytes rather than as the number shadPS4 spells `0x6F676C70`, so it cannot be written back
+# reversed.
 #
-# Every value below is fixed for a single-chunk title except two sizes, and both of those this
-# repository computes:
+# Every value below is fixed for a single-chunk title except two sizes, both computed here:
 #
 #   mchunk_attrs[0].size        the finished package - 0x80000 + the outer image
 #   inner_mchunk_attrs[0].size  the inner PFS image
 #
-# `ChunkDat.cs` names both in comments beside the zeros it leaves for them: *"must update this to
-# outer pfs image size + pfs offset"* and *"must update this to inner pfs image size"*. Neither is
-# unknown and neither is supplied - the second is what `write::inner_image_size` already reads out
-# of the outer filesystem, from the `PFSC` header's decompressed length. (D099)
+# `ChunkDat.cs` leaves zeros for both, with comments naming them. The second is what
+# `write::inner_image_size` reads from the outer filesystem's `PFSC` header (D099).
 #
-# The eight `(offset, size)` pairs at `0xC0` are **not in address order**: the last pair points at
-# `0x150`, between the fourth and fifth. That is what both sources write, so it is preserved
-# rather than tidied. A reader indexes the pairs by position, so reordering them would move
-# `inner_mchunk_attrs` to whatever slot came fourth.
+# The eight `(offset, size)` pairs at `0xC0` are not in address order: the last points at
+# `0x150`, between the fourth and fifth. Both sources write this order, and a reader indexes
+# the pairs by position, so it is preserved.
 #
-# The header-only version of this entry is a recorded failure rather than a hypothetical: a
-# console read `chunk_count = 1` and `scenario_count = 1`, found no records behind them, and
-# `scePlayGoCoreGetRawContentInfo` returned `0x80f00200` **after** the header had passed.
+# The sub-tables are required: with the header alone, the hardware reads `chunk_count = 1` and
+# `scenario_count = 1`, finds no records, and `scePlayGoCoreGetRawContentInfo` returns
+# `0x80f00200` after the header passes.
 playgo	magic	0x00	4	bytes	70 6c 67 6f	"plgo". shadPS4 spells it PLAYGO_MAGIC 0x6F676C70, a little-endian u32 of these bytes
 playgo	version_major	0x04	2	u16le	0	the writer sets zero
 playgo	version_minor	0x06	2	u16le	0	

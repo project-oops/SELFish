@@ -1,41 +1,12 @@
-//! Assembling a package, as far as what is established allows.
+//! Assembling a package.
 //!
-//! Everything derivable is derived. Everything cited is written. **Everything unknown must be
-//! supplied by the caller or the build refuses**, because the alternative is a package that is
-//! wrong in a way a console acts on rather than rejects.
-//!
-//! # What this produces on its own
-//!
-//! The whole header, the entry table, and eight entry contents:
-//!
-//! | entry | how |
-//! |---|---|
-//! | `0x1` | computed - one SHA-256 per entry (D034) |
-//! | `0x100` | computed - the entry table again (D034) |
-//! | `0x80` | computed as far as it is known: the image digest and the `param.sfo` digest (D036) |
-//! | `0x1002` | computed - four bytes of SHA-256 per block of the finished package |
-//! | `0x400`, `0x401` | computed - the licences, signed under the debug RIF keyset (D047) |
-//! | `0x10`, `0x20` | computed - the key blobs, reproduced byte-for-byte from real packages (D054) |
-//! | `0x409` | eight kilobytes of zero, which is what every sample holds |
-//!
-//! # What it demands, and why that is not a gap
-//!
-//! Five entries are the **title's** content rather than the format's: `param.sfo`, the icon,
-//! the playgo pair and the entry name table. A library that generated those would be inventing
-//! the title. They are required inputs and the build names every missing one.
-//!
-//! # What it still cannot fill
-//!
-//! Three thirty-two-byte slots of `0x80` digest something that has never been found anywhere
-//! in a package. They are left zero and **reported** on the builder's output rather than
-//! hidden, so `is_complete()` says `false` and a caller can see exactly what is missing.
-//!
-//! # What it signs, and what it does not
-//!
-//! Nothing here claims to be the vendor. The licences are signed under the published debug RIF
-//! keyset, which asserts "this is a debug licence" and is true (D047). The key blobs are
-//! *wrapped* under public keys - a public key cannot unwrap, so producing them gains no ability
-//! to read anything (D054). The container's own signature area stays zero. (principle 6)
+//! The builder writes the header and entry table and computes the digest table, the table
+//! copy, the manifest digests, the playgo block digests, the licences, the key blobs, the
+//! zero-filled `0x409` entry, the entry name table and the playgo chunk descriptor. The caller
+//! supplies the image and the title's own content, such as `param.sfo` and the icon; a missing
+//! required entry fails the build and names every one. Manifest slots the builder leaves zero
+//! are reported as [`Built::gaps`]. Licences are signed with the debug RIF
+//! keyset and declare themselves debug licences (D047).
 
 use selfish_bytes::{write_be, write_slice};
 use sha2::{Digest, Sha256};
@@ -54,15 +25,10 @@ const CONTENT_ID_LEN: usize = 36;
 /// Offset of the image offset, as a 64-bit value.
 const IMAGE_AT: usize = 0x410;
 
-/// The rest of the header, which a console reads and this crate wrote none of until now.
+/// Offsets of the remaining header fields.
 ///
-/// # Why this was worth finding before a hardware trip and not after
-///
-/// A package whose header says its image is zero bytes long is not a package with a subtle
-/// problem - there is nothing for a console to mount. Every field below was measured out of a
-/// real package (`xxd -s 0x400`) and matches `LibOrbisPkg@6434772`'s writer offset for offset,
-/// including two constants nobody would guess: a version date of `0x20161020` and a version
-/// hash of `0x1738551`, both of which appear verbatim in the sample. (D056)
+/// Measured from a real package and matching `LibOrbisPkg@6434772`'s writer offset for offset
+/// (D056).
 mod header {
     /// Package flags.
     pub(super) const FLAGS: usize = 0x04;
@@ -98,7 +64,7 @@ mod header {
     pub(super) const IMAGE_COUNT: usize = 0x404;
     /// Flags describing the image.
     pub(super) const PFS_FLAGS: usize = 0x408;
-    /// **How long the image is.** Zero here and there is nothing to mount.
+    /// How long the image is. Zero here leaves nothing to mount.
     pub(super) const IMAGE_SIZE: usize = 0x418;
     /// Where the mount image begins.
     pub(super) const MOUNT_IMAGE_OFFSET: usize = 0x420;
@@ -108,25 +74,22 @@ mod header {
     pub(super) const PACKAGE_SIZE: usize = 0x430;
     /// How much of the image is signed.
     pub(super) const SIGNED_SIZE: usize = 0x438;
-    /// How much of it a console caches.
+    /// How much of it the hardware caches.
     pub(super) const CACHE_SIZE: usize = 0x43C;
     /// A digest of the whole image.
     pub(super) const IMAGE_DIGEST: usize = 0x440;
     /// A digest of the image's first signed region.
     pub(super) const SIGNED_DIGEST: usize = 0x460;
-    /// SHA-256 of the five SC entry bodies (`0x10,0x20,0x80,0x100,0x1`). Measured 1/1.
+    /// SHA-256 of the five SC entry bodies (`0x10,0x20,0x80,0x100,0x1`), measured in one package.
     pub(super) const SC_ENTRIES1_HASH: usize = 0x100;
-    /// SHA-256 of four SC entry bodies, `0x100` truncated to `sc_entry_count * 0x20`. Measured 1/1.
+    /// SHA-256 of four SC entry bodies, `0x100` truncated to `sc_entry_count * 0x20`, measured
+    /// in one package.
     pub(super) const SC_ENTRIES2_HASH: usize = 0x120;
-    /// A digest of the digest table, entry `0x1`. Measured: matches `sha256(entry 0x1)`.
-    ///
-    /// One of four thirty-two byte slots at `0x100`-`0x17F` that this crate left entirely zero
-    /// while every real package fills them. A console fetched a package built here, parsed it,
-    /// and refused it with `0x80f00101` - content rejected, not transport.
+    /// SHA-256 of the digest table, entry `0x1`. The hardware refuses a package with this and
+    /// its neighbouring slots zero with `0x80f00101`.
     pub(super) const DIGEST_TABLE_DIGEST: usize = 0x140;
-    /// A digest of the body, the region [`BODY_OFFSET`]..[`BODY_SIZE`] describes.
-    ///
-    /// Measured: matches `sha256(file[0x2000..0x2000 + 0x7E000])`.
+    /// SHA-256 of the body, the region [`BODY_OFFSET`]..[`BODY_SIZE`] describes:
+    /// `file[0x2000..0x2000 + 0x7E000]`.
     ///
     /// [`BODY_OFFSET`]: self::BODY_OFFSET
     /// [`BODY_SIZE`]: self::BODY_SIZE
@@ -135,21 +98,19 @@ mod header {
 
 /// The cache size every real package declares, and the default this crate writes.
 ///
-/// Public because a caller has to be able to compare its own image against it: a package whose
-/// inner filesystem is smaller than this cannot mount, and the check belongs where the inner size
-/// is known. See [`Builder::cache_size`]. (D070)
+/// Public so a caller can compare its inner image against it: a package whose inner filesystem
+/// is smaller than the declared cache size does not mount. See [`Builder::cache_size`].
 pub const DEFAULT_CACHE_SIZE: u32 = 0xD_0000;
 
 /// Constants the header carries that are the same in every package examined.
 mod header_value {
     /// The only flag a fake package sets.
     pub(super) const FLAGS: u32 = 0x01;
-    /// Content flags. Zero reads as an unconfigured package; this is the value a real homebrew
-    /// title carries, observed in a working package on a console (an oracle, not a source).
+    /// Content flags. Zero reads as an unconfigured package; this is the value a working
+    /// homebrew package carries.
     pub(super) const CONTENT_FLAGS: u32 = 0x0A00_0000;
-    /// How many SC entries a package declares at `0x14`. Six in all three packages examined,
-    /// regardless of total entry count (14, 23, 14) - so it counts the format own entries,
-    /// not the title ones. (measured 3/3)
+    /// How many SC entries a package declares at `0x14`. Six in every package examined,
+    /// whatever the total entry count, so it counts the format's own entries.
     pub(super) const SC_ENTRY_COUNT: u16 = 6;
     /// Unnamed.
     pub(super) const UNK_0C: u32 = 0x0F;
@@ -161,7 +122,7 @@ mod header_value {
     pub(super) const PFS_FLAGS: u64 = 0x8000_0000_0000_03CC;
     /// How much of the image is covered by the signed digest.
     pub(super) const SIGNED_SIZE: u32 = 0x10000;
-    /// How much a console caches.
+    /// How much the hardware caches.
     pub(super) const CACHE_SIZE: u32 = super::DEFAULT_CACHE_SIZE;
     /// Where the body begins, in every package examined.
     pub(super) const BODY_OFFSET: u64 = 0x2000;
@@ -177,28 +138,18 @@ mod header_value {
 
 /// Where the image goes.
 ///
-/// Fixed at `0x80000` rather than packed in behind the entries. Real packages put it here, and
-/// so does `LibOrbisPkg@6434772`; a console has never been observed reading it from anywhere else, and
-/// the saving from moving it would be half a megabyte. (D056)
+/// Fixed at `0x80000`, as in real packages and `LibOrbisPkg@6434772`.
 const IMAGE_OFFSET: usize = 0x80000;
-/// Where the entry table begins, which is **fixed** rather than merely clear of the header.
+/// Where the entry table begins: `0x2A80` in every package examined, whatever the entry count.
 ///
-/// This was `0x1000`, on the reasoning that the table starts past the last header field this
-/// crate knows about and "a builder only has to not collide". A console refuted that: a package
-/// built here was refused by `scePlayGoCoreGetRawContentInfo` with `0x80f00101`, and bisecting a
-/// working package against ours - copying our bytes into it a region at a time - narrowed the
-/// rejection to **four bytes**, the table offset at `0x18`. Nothing else in the header mattered;
-/// with the real value restored the same package parsed.
-///
-/// `0x2A80` in all three packages examined, whatever their entry count. So it is a constant of
-/// the format, not an arithmetic result, and a package whose table is merely *somewhere valid*
-/// is one a console will not read. (measured 3/3)
+/// A fixed constant of the format. `scePlayGoCoreGetRawContentInfo` refuses a package with any
+/// other table offset with `0x80f00101`.
 const HEADER_RESERVED: usize = 0x2A80;
 
 /// Entries this module fills in by itself.
 ///
-/// A caller supplying one of these is refused rather than silently overridden: two sources for
-/// one entry is how a digest table stops matching the entries it describes.
+/// A caller supplying one of these is refused rather than overridden, so the digest table
+/// always matches the entries it describes.
 const COMPUTED: [u32; 8] = [
     derive::entry::DIGESTS,
     derive::entry::TABLE_COPY,
@@ -206,10 +157,7 @@ const COMPUTED: [u32; 8] = [
     derive::entry::PLAYGO_CHUNK_SHA,
     entry_id::LICENSE_DAT,
     entry_id::LICENSE_INFO,
-    // The two key blobs. These used to be demanded from the caller, and a caller with nothing
-    // to hand supplied zeros - which produces a package that parses, extracts and passes every
-    // test here, and that a console cannot open, because the filesystem key is inside them.
-    // Both are now reproduced byte-for-byte from real packages (D054).
+    // The key blobs, computed from the passcode and the public keys (D054).
     entry_id::ENTRY_KEYS,
     entry_id::IMAGE_KEY,
 ];
@@ -230,14 +178,9 @@ pub struct Builder {
 impl Builder {
     /// Start one, with the defaults an installable homebrew package needs.
     ///
-    /// A package left at zero for these describes nothing: an installer reads `content_type = 0`
-    /// as "not a title I will register" and reports an empty content id, type and platform for
-    /// the whole package - which is exactly what a fake package built with zeros hit on
-    /// hardware. So the defaults are the values a real homebrew title carries, deterministically,
-    /// rather than zeros that pass the writer and fail the console. A caller building something
-    /// other than an application - additional content, a patch - overrides them with [`kind`].
-    ///
-    /// `0x0F` is the free/fake DRM type; `0x1A` is `CONTENT_TYPE_GD`, an application's own data.
+    /// The installer does not register a package with `content_type = 0`, so the defaults are
+    /// a homebrew application's: DRM type `0x0F` (free/fake) and content type `0x1A`
+    /// (`CONTENT_TYPE_GD`). Additional content or a patch overrides them with [`kind`].
     ///
     /// [`kind`]: Self::kind
     #[must_use]
@@ -258,14 +201,8 @@ impl Builder {
 
     /// The passcode the package is keyed with.
     ///
-    /// Defaults to [`keys::FAKE_PASSCODE`], which is what community tooling uses and what two
-    /// of the three packages examined here were built with. It is an *input*: nothing can
-    /// recover it from a finished package, so a caller choosing its own must remember it.
-    ///
-    /// It reaches further than it looks. The filesystem key, both key blobs and the encryption
-    /// over the encrypted entries all derive from it, and they have to move together - a
-    /// package whose entries are keyed one way and whose blobs point another cannot be opened
-    /// by anything. (D055)
+    /// Defaults to [`keys::FAKE_PASSCODE`]. The filesystem key, both key blobs and the entry
+    /// encryption all derive from it, so the image must be built with the same passcode.
     #[must_use]
     pub fn passcode(mut self, passcode: &[u8]) -> Self {
         self.passcode = Some(passcode.to_vec());
@@ -274,35 +211,19 @@ impl Builder {
 
     /// The filesystem image, already built and encrypted.
     ///
-    /// Taken whole rather than assembled here, because a package holds an image and does not
-    /// care how one is made. `selfish_pfs::write`, `selfish_pfs::pfsc` and `selfish_pfs::outer`
-    /// now produce one from a tree of files; the note that once stood here saying they could
-    /// not is gone with the gap it described.
+    /// `selfish_pfs::write`, `selfish_pfs::pfsc` and `selfish_pfs::outer` produce one from a
+    /// tree of files.
     #[must_use]
     pub fn image(mut self, image: Vec<u8>) -> Self {
         self.image = image;
         self
     }
 
-    /// How much of the image a console may cache, overriding the constant every real package
-    /// carries.
+    /// How much of the image the hardware may cache, overriding [`DEFAULT_CACHE_SIZE`].
     ///
-    /// # Why this is not simply a constant
-    ///
-    /// It was one - `0xD0000`, which is what all three real packages hold. All three are also
-    /// tens of megabytes, and a constant measured only from large samples turned out to be a
-    /// constraint nobody had stated: a console **refuses an image whose inner filesystem is
-    /// smaller than the cache the header declares**, with
-    /// `sceFsMountGamePkg ***ERR*** Failed to enable GDDR5 cache` and `EINVAL`, after the outer
-    /// image has already mounted and `pfs_image.dat` has already opened.
-    ///
-    /// A minimal package hit exactly that: an inner image of `0xB0000` against a declared
-    /// `0xD0000`. Padding the inner image past the declared size cleared the error outright,
-    /// which is what establishes the rule rather than a guess about it. (measured)
-    ///
-    /// So a caller that knows its inner image is small can say so. What the field *means* beyond
-    /// "not larger than the thing being cached" is still unknown, and nothing here pretends
-    /// otherwise - this is a ceiling, not a formula.
+    /// The hardware refuses an image whose inner filesystem is smaller than the declared cache
+    /// size, with `sceFsMountGamePkg ***ERR*** Failed to enable GDDR5 cache` and `EINVAL`. The
+    /// value is a ceiling; its meaning beyond that is unknown.
     #[must_use]
     pub fn cache_size(mut self, bytes: u32) -> Self {
         self.cache_size = Some(bytes);
@@ -311,10 +232,7 @@ impl Builder {
 
     /// What the title is, for the licence.
     ///
-    /// Override the content kind. These describe the *content* - game, patch or add-on - so a
-    /// caller that is not building an application overrides the application defaults [`new`] sets
-    /// here. What must not happen is zeros reaching the header: an installer reads those as a
-    /// package it will not register, so the default is a working application, not nothing.
+    /// Overrides the application defaults [`new`] sets, for a patch or add-on.
     ///
     /// [`new`]: Self::new
     #[must_use]
@@ -479,8 +397,7 @@ impl Builder {
                 id if id == derive::entry::PLAYGO_CHUNK_SHA => {
                     *body = vec![0_u8; playgo_len(&self.image)];
                 }
-                // Both licences come from the content id. `Licence::build` reproduces a real
-                // one byte for byte, so these are computed rather than demanded.
+                // Both licences are computed from the content id.
                 id if id == entry_id::LICENSE_DAT => {
                     *body = crate::licence::Licence::build(
                         &content_id_bytes(&self.content_id),
@@ -494,8 +411,8 @@ impl Builder {
                 id if id == entry_id::LICENSE_INFO => {
                     *body = crate::licence::Licence::info(&content_id_bytes(&self.content_id));
                 }
-                // The key blobs, which are what a console unwraps to reach the filesystem.
-                // `0x10` is stored in the clear; `0x20` is encrypted below like the licences.
+                // The key blobs the hardware unwraps to reach the filesystem. `0x10` is stored
+                // in the clear; `0x20` is encrypted below like the licences.
                 id if id == entry_id::ENTRY_KEYS => {
                     *body = keys::entry_keys_blob(
                         &content_id_bytes(&self.content_id),
@@ -574,7 +491,7 @@ impl Builder {
             }
         }
         // Everything the bodies feed: the SC-entry hashes, the body and digest-table digests,
-        // and the whole-header digest and signature. Only correct now that the bodies are in.
+        // and the whole-header digest and signature.
         finalize_digests(&mut out, entries)?;
 
         Ok(Built {
@@ -591,23 +508,20 @@ impl Builder {
         if let Some(slot) = out.get_mut(..derive::manifest::LEADING.len()) {
             slot.copy_from_slice(&derive::manifest::LEADING);
         }
-        // The fixed word three packages agree on. Writing zero here is a difference from every
-        // real package, and this crate was doing exactly that.
+        // The fixed word every package examined carries.
         if let Some(slot) =
             out.get_mut(derive::manifest::FIXED_1C..derive::manifest::FIXED_1C.saturating_add(4))
         {
             slot.copy_from_slice(&derive::manifest::FIXED_1C_VALUE.to_be_bytes());
         }
-        // GameDigest (the image) and ParamDigest (the param.sfo) - the two this crate always had.
+        // GameDigest (the image) and ParamDigest (the param.sfo).
         put_digest(&mut out, derive::manifest::IMAGE_DIGEST, &self.image);
         if let Some((_, sfo)) = contents.iter().find(|(id, _)| *id == entry_id::PARAM_SFO) {
             put_digest(&mut out, derive::manifest::PARAM_SFO_DIGEST, sfo);
 
-            // ContentDigest and MajorParamDigest, computed from the param.sfo per LibOrbisPkg.
-            // These were left blank and reported as gaps; a console reads them as the content's
-            // identity, so a package built without them describes nothing. HeaderDigest (`0x60`)
-            // still cannot be taken here - it hashes header fields that do not exist until `emit`
-            // writes them - so it stays a gap that `finalize_digests` fills.
+            // ContentDigest and MajorParamDigest, computed from the param.sfo per LibOrbisPkg;
+            // the hardware reads them as the content's identity. HeaderDigest (`0x60`) hashes
+            // header fields `emit` has not written yet, so `finalize_digests` fills it.
             if let Ok(parsed) = selfish_title::sfo::Sfo::parse(sfo) {
                 let major = major_param_string(&parsed);
                 let major_digest: [u8; DIGEST] = Sha256::digest(major.as_bytes()).into();
@@ -638,7 +552,7 @@ impl Builder {
                 });
             }
         }
-        // The one slot left: HeaderDigest, filled once the header is written.
+        // HeaderDigest, filled once the header is written.
         gaps.push(Gap {
             entry: derive::entry::MANIFEST,
             offset: derive::manifest::HEADER_DIGEST,
@@ -658,9 +572,8 @@ impl Builder {
         let mut hasher = Sha256::new();
         let mut id = [0_u8; 36];
         let bytes = self.content_id.as_bytes();
-        // A content id longer than the field is truncated and a shorter one leaves zeroes, which
-        // is what the fixed-width field means. Written through `get` so an over-long id cannot
-        // panic here - the length is the caller's and this is a digest, not a validator.
+        // Fixed-width: a longer id is truncated and a shorter one leaves zeroes. `build` has
+        // already validated the length.
         let take = bytes.len().min(id.len());
         if let (Some(into), Some(from)) = (id.get_mut(..take), bytes.get(..take)) {
             into.copy_from_slice(from);
@@ -714,8 +627,7 @@ fn lay_out(contents: &mut [(u32, Vec<u8>)]) -> Result<(Vec<Entry>, usize), Write
 
 /// The two flag words of an entry's table row.
 ///
-/// One arm per id even where two agree: this is a format table written as code, and merging
-/// rows that agree today would hide which ids were measured.
+/// One arm per measured id, even where two agree.
 #[allow(clippy::match_same_arms)]
 fn entry_flags(id: u32) -> (u32, u32) {
     match id {
@@ -742,8 +654,7 @@ pub struct Built {
     pub entries: usize,
     /// Every region this crate could not fill.
     ///
-    /// **Empty means nothing was left blank**, not that the package is correct. A caller that
-    /// ignores this ships a package with holes in it and finds out from a console.
+    /// Empty means nothing was left blank, not that the package is correct.
     pub gaps: Vec<Gap>,
 }
 
@@ -770,17 +681,8 @@ pub struct Gap {
 
 /// How long the block-digest table will be for a package carrying this image.
 ///
-/// Everything before the image is a fixed layout once the entry count is known, so this is
-/// exact rather than an estimate - but it is computed rather than measured because the table's
-/// own size is one of the things that decides where the image lands.
+/// Exact, because the image sits at the fixed [`IMAGE_OFFSET`].
 fn playgo_len(image: &[u8]) -> usize {
-    // Everything before the image, which is now a fixed offset rather than something that
-    // moves with the entry sizes. It used to be computed from the entries and rounded up, and
-    // when the image moved to its real place that estimate silently went stale - the table came
-    // out sized for a package half a megabyte shorter than the one being built.
-    //
-    // Caught by the test that re-runs the derivation against this crate's own output, which is
-    // the whole reason that test exists.
     IMAGE_OFFSET
         .saturating_add(image.len())
         .checked_div(derive::PLAYGO_BLOCK)
@@ -790,8 +692,7 @@ fn playgo_len(image: &[u8]) -> usize {
 
 /// Encrypt the licence entries in place, before anything digests them.
 ///
-/// Order matters: the digest table covers what a package **stores**, so a reader checking it
-/// against the ciphertext would otherwise find the plaintext's digest recorded there.
+/// The digest table covers what a package stores, which is the ciphertext.
 fn encrypt_licences(
     contents: &mut [(u32, Vec<u8>)],
     entries: &[Entry],
@@ -807,10 +708,7 @@ fn encrypt_licences(
         };
         let row = entry.row();
         if let Some((_, body)) = contents.iter_mut().find(|(id, _)| *id == entry.id) {
-            // The builder's passcode, not the fake one. Hardcoding the fake passcode here
-            // encrypted these entries under a key the package's own key blobs do not lead to,
-            // so a package built with any other passcode could not be opened - by a console or
-            // by this crate's own reader. Caught by a test that keys a package differently.
+            // The builder's passcode, so the entries match the package's own key blobs.
             keys::encrypt_body(&row, &content_id_bytes(content_id), passcode, index, body)
                 .map_err(|_| WriteError::LicenceFailed)?;
         }
@@ -845,32 +743,17 @@ fn entry_name(id: u32) -> Option<&'static str> {
 
 /// The order a real package lists its entry names in.
 ///
-/// **Not ascending entry id** - `icon0.png` is `0x1200` and comes first. Taken from a real
-/// package, where the table is 75 bytes and reads
+/// Not ascending entry id: a real package's table reads
 /// `\0icon0.png\0param.sfo\0playgo-chunk.dat\0playgo-chunk.sha\0playgo-manifest.xml\0`.
-///
-/// The format does not require this order - `name_offset` points at whatever offset a name
-/// happens to sit at, so any order is self-consistent - but a package built here should look
-/// like one that works rather than merely parse like one, and this is the sequence material
-/// shows. Ids not listed here follow, in the order the package carries them.
+/// `name_offset` makes any order self-consistent; this one matches real packages. Ids not
+/// listed follow in the order the package carries them.
 const NAME_TABLE_ORDER: [u32; 5] = [0x1200, 0x1000, 0x1001, 0x1002, 0x1003];
 
 /// Build entry `0x200`, the entry name table, from the entries the package actually carries.
 ///
 /// A NUL-separated list of the *named* entries' filenames, opening with a NUL and closing with
-/// one. It is what `entry_record.name_offset` points into, so a package without it leaves a
-/// console unable to name the entries it is about to read.
-///
-/// # Why this is computed rather than required
-///
-/// It was in the "supply these yourself" set with `0x1001`, and it did not belong there: it is a
-/// pure function of which entries are present, and this crate already knows every name through
-/// [`entry_name`]. Nothing about it needs a source this repository does not have. The two were
-/// grouped because they arrived together in the same refusal, which is not the same as being
-/// the same kind of problem.
-///
-/// `0x1001` genuinely is the other kind - a `plgo` structure with sub-tables and records - and
-/// stays supplied.
+/// one. `entry_record.name_offset` points into it. It is a pure function of which entries are
+/// present, with names from [`entry_name`].
 fn entry_names_table(ids: &[u32]) -> Vec<u8> {
     let mut ordered: Vec<u32> = NAME_TABLE_ORDER
         .iter()
@@ -958,8 +841,7 @@ fn major_param_string(sfo: &selfish_title::sfo::Sfo) -> String {
         match value {
             Value::Text(text) | Value::TextUnterminated(text) => text.clone(),
             Value::Integer(number) => format!("0x{number:08x}"),
-            // Bytes are not a display string. A major-parameter line that rendered them
-            // would put a save id into a package field, so both byte kinds are empty here.
+            // Bytes are not a display string, so both byte kinds render empty.
             Value::Binary(_) | Value::Unknown(..) => String::new(),
         }
     }
@@ -979,12 +861,10 @@ fn major_param_string(sfo: &selfish_title::sfo::Sfo) -> String {
     out
 }
 
-/// Write everything in the header past the four fields this crate already knew.
+/// Write the header fields past the magic, count, table offset and image offset.
 ///
-/// Split out of `emit` because it is one self-contained structure, and because a console
-/// reading any of it as zero is a package that does not install. Every offset and every
-/// constant here was measured out of a real package and cross-checked against `LibOrbisPkg@6434772`'s
-/// writer. (D056)
+/// Offsets and constants are measured from a real package and cross-checked against
+/// `LibOrbisPkg@6434772`'s writer.
 fn write_header_fields(
     out: &mut [u8],
     count: usize,
@@ -994,8 +874,6 @@ fn write_header_fields(
     kind: (u16, u16, u16),
     cache_size: Option<u32>,
 ) -> Result<(), WriteError> {
-    // The rest of the header. Everything here was zero until it was measured out of a real
-    // package, and a console reading `IMAGE_SIZE` as zero has nothing to mount. (D056)
     let (drm_type, content_type, _sku) = kind;
     let image_len64 = u64::try_from(image_len).map_err(|_| WriteError::TooLarge)?;
     let image_at64 = u64::try_from(image_at).map_err(|_| WriteError::TooLarge)?;
@@ -1005,22 +883,16 @@ fn write_header_fields(
 
     write_be(out, header::FLAGS, header_value::FLAGS);
     write_be(out, header::UNK_0C, header_value::UNK_0C);
-    // **Not the entry count.** This crate wrote the total here, and three real packages hold
-    // `6` regardless of how many entries they carry (14, 23, 14). It counts the *SC* entries -
-    // the format's own, ahead of the title's - and a console reads it to find them. Writing the
-    // total made an installer read past them and reject the package. (measured 3/3)
+    // Not the entry count: the count of SC entries, the format's own ahead of the title's. The
+    // installer rejects a package with the total here.
     write_be(out, header::SC_ENTRY_COUNT, header_value::SC_ENTRY_COUNT);
     write_be(
         out,
         header::ENTRY_COUNT_2,
         u16::try_from(count).unwrap_or(u16::MAX),
     );
-    // The size of the *entry data*, not the distance to the image.
-    //
-    // Written as "everything between the table and the image", which is the whole gap and was
-    // two orders out: real packages hold 3584 and 4160 where that arithmetic gives ~520000.
-    // Measured, it is the summed size of the SC entries rounded down to a 512-byte boundary
-    // (3659 -> 3584, 4347 -> 4160), and the padding after them is not counted.
+    // The summed size of the SC entries rounded down to 512 bytes (measured: 3659 -> 3584,
+    // 4347 -> 4160), not the distance to the image.
     let sc_data: usize = entries
         .iter()
         .take(usize::from(header_value::SC_ENTRY_COUNT))
@@ -1032,20 +904,8 @@ fn write_header_fields(
         u32::try_from(sc_data & !0x1FF).unwrap_or(0),
     );
     write_be(out, header::BODY_OFFSET, header_value::BODY_OFFSET);
-    // **Derived, not constant.** This was `0x7E000`, on the strength of two packages holding it -
-    // and the third holds `0x57E000`. The rule all three fit is that the body runs from
-    // `BODY_OFFSET` to where the image begins:
-    //
-    //     body_size = image_offset - body_offset
-    //
-    //     item   524288 - 8192 =  516096   (0x7E000)
-    //     lapy  5767168 - 8192 = 5758976   (0x57E000)
-    //     store  524288 - 8192 =  516096   (0x7E000)
-    //
-    // The constant was right for every package this crate had built only because they all put the
-    // image at `0x80000`. It would have been silently wrong for any that did not - and
-    // `BODY_DIGEST` hashes exactly this region, so the digest would have covered the wrong bytes
-    // while looking perfectly well-formed. Found by auditing the other constants after D070.
+    // The body runs from `BODY_OFFSET` to the image: `0x7E000` with the image at `0x80000`,
+    // `0x57E000` with it at `0x580000`. `BODY_DIGEST` hashes exactly this region.
     let body_size = image_at
         .checked_sub(usize::try_from(header_value::BODY_OFFSET).unwrap_or(0))
         .and_then(|len| u64::try_from(len).ok())
@@ -1054,11 +914,8 @@ fn write_header_fields(
     write_be(out, header::DRM_TYPE, u32::from(drm_type));
     write_be(out, header::CONTENT_TYPE, u32::from(content_type));
     write_be(out, header::CONTENT_FLAGS, header_value::CONTENT_FLAGS);
-    // What the installer promotes, which is everything ahead of the image.
-    //
-    // Zero here is what this crate wrote, and it is the field an installer reads to decide there
-    // is nothing to promote. In all three real packages it equals the image offset exactly
-    // (0x80000, 0x580000, 0x80000). (measured 3/3)
+    // What the installer promotes: everything ahead of the image. It equals the image offset
+    // in every package examined; zero means nothing to promote.
     write_be(
         out,
         header::PROMOTE_SIZE,
@@ -1082,8 +939,7 @@ fn write_header_fields(
         cache_size.unwrap_or(header_value::CACHE_SIZE),
     );
 
-    // Two digests over the image, taken now because the image is already in the buffer and
-    // nothing written after this point lands inside it.
+    // Two digests over the image, which nothing written after this point touches.
     let signed_len = usize::try_from(header_value::SIGNED_SIZE).unwrap_or(0);
     if let Some(region) = out.get(image_at..image_at.saturating_add(signed_len)) {
         let digest: [u8; 32] = Sha256::digest(region).into();
@@ -1097,35 +953,26 @@ fn write_header_fields(
             slot.copy_from_slice(&digest);
         }
     }
-    // The digests that cover the entry data (`0x100`-`0x17F`) and the whole-header digest and
-    // signature (`0xFE0`, `0x1000`) are **not** written here. They are taken over the finished
-    // buffer, once the entry bodies are in place, by `finalize_digests` at the end of `emit`.
-    // Taking them here would hash a body region that is still zero - the mistake this note
-    // replaces.
+    // The entry-data digests (`0x100`-`0x17F`) and the header digest and signature (`0xFE0`,
+    // `0x1000`) cover the entry bodies, so `finalize_digests` writes them at the end of `emit`.
     Ok(())
 }
 
 /// The digests and signature that cover the whole assembled package.
 ///
-/// Called once the header, entry table, entry bodies and image are all in `out`, because every
-/// digest here reads bytes that are only correct by then. The order follows `LibOrbisPkg`'s
-/// `CalcBodyDigests` then the final header digest and signature (`PkgBuilder.cs`), each recipe
-/// confirmed against a real package before it was written:
+/// Called once the header, entry table, entry bodies and image are all in `out`. The order
+/// follows `LibOrbisPkg`'s `CalcBodyDigests`, then the header digest and signature
+/// (`PkgBuilder.cs`):
 ///
-/// - `0x100` `sc_entries1` = SHA-256 of five SC entry bodies, in the order `0x10,0x20,0x80,0x100,0x1`
-/// - `0x120` `sc_entries2` = the same minus `0x1`, with `0x100` truncated to `sc_entry_count * 0x20`
-/// - `0x140` `digest_table_hash` = SHA-256 of entry `0x1`
-/// - `0x160` `body_digest` = SHA-256 of the body region
-/// - `0xFE0` header digest = SHA-256 of `out[0..0xFE0]`
-/// - `0x1000` signature = the header digest hash wrapped under pkg public key 3 (D054's primitive)
-///
-/// The signature is a wrap under a **published** key, exactly as the key blobs are; it asserts
-/// nothing about the vendor, and a console with the matching public keyset accepts it where it
-/// accepts fake packages at all. (principle 6)
-// Long for the same reason `build` is: these digests have to be written in this order, because
-// each covers bytes an earlier one put there. The header digest covers the region the four before
-// it wrote into, and the signature covers the header digest. Splitting it into named halves would
-// let a caller run them out of order, which is the one mistake the ordering exists to prevent.
+/// ```text
+/// 0x100   sc_entries1        SHA-256 of SC entry bodies 0x10, 0x20, 0x80, 0x100, 0x1
+/// 0x120   sc_entries2        the same minus 0x1, with 0x100 truncated to sc_entry_count * 0x20
+/// 0x140   digest_table_hash  SHA-256 of entry 0x1
+/// 0x160   body_digest        SHA-256 of the body region
+/// 0xFE0   header digest      SHA-256 of out[0..0xFE0]
+/// 0x1000  signature          SHA-256 of out[0..0x1000], wrapped under pkg public key 3
+/// ```
+// One function, because each digest covers bytes an earlier one wrote and the order must hold.
 #[allow(clippy::too_many_lines)]
 fn finalize_digests(out: &mut [u8], entries: &[Entry]) -> Result<(), WriteError> {
     let body_of = |id: u32| -> Option<(usize, usize)> {
@@ -1146,8 +993,7 @@ fn finalize_digests(out: &mut [u8], entries: &[Entry]) -> Result<(), WriteError>
     };
 
     // HeaderDigest (`0x60`) in the manifest: SHA-256 of the top of the header and its image
-    // block, which only exist now. This changes the manifest body, so the digest table below is
-    // recomputed after it rather than trusting the one built before the header existed.
+    // block. This changes the manifest body, so the digest table is recomputed below.
     if let Some((man_at, _)) = body_of(derive::entry::MANIFEST) {
         let mut header_slice = Vec::with_capacity(64 + 128);
         header_slice.extend_from_slice(out.get(..64).unwrap_or_default());
@@ -1211,12 +1057,8 @@ fn finalize_digests(out: &mut [u8], entries: &[Entry]) -> Result<(), WriteError>
         s.copy_from_slice(&dt);
     }
 
-    // body_digest: the whole body region.
-    //
-    // The length is read back out of the header rather than taken from the constant, so it cannot
-    // disagree with what the header declares. Writing `BODY_SIZE` as a derived value and hashing a
-    // constant-sized region would be two answers to one question, and the digest is the half that
-    // fails silently: it would be well-formed and cover the wrong bytes. (D070)
+    // body_digest: the whole body region, with the length read back from the header so the
+    // digest covers exactly what the header declares.
     let body_at = usize::try_from(header_value::BODY_OFFSET).unwrap_or(0);
     let body_len = out
         .get(header::BODY_SIZE..header::BODY_SIZE.saturating_add(8))
@@ -1255,11 +1097,10 @@ fn finalize_digests(out: &mut [u8], entries: &[Entry]) -> Result<(), WriteError>
 
 /// Where an entry falls in a real package's body layout.
 ///
-/// **Not** ascending id. A real package lays the format's own entries first - keys, image key,
-/// general digests, the metas table, the digest table - then the entry names, the playgo trio,
-/// the licences, `param.sfo`, the reserved block and the icon. The first four are exactly
-/// `main_ent_data_size` long, which is what puts the metas entry (the table) at `0x2A80`. An id
-/// this does not list sorts to the end, so an unexpected entry never displaces a known one.
+/// Not ascending id. The format's own entries come first (keys, image key, general digests, the
+/// metas table, the digest table), then the entry names, the playgo trio, the licences,
+/// `param.sfo`, the reserved block and the icon. The first four are `main_ent_data_size` long,
+/// which puts the metas entry at `0x2A80`. An unlisted id sorts to the end.
 fn layout_rank(id: u32) -> usize {
     const ORDER: [u32; 14] = [
         0x10, 0x20, 0x80, 0x100, 0x1, 0x200, 0x1001, 0x1002, 0x1003, 0x400, 0x401, 0x1000, 0x409,
@@ -1272,9 +1113,7 @@ fn layout_rank(id: u32) -> usize {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum WriteError {
-    /// Entries with no established meaning that nobody supplied.
-    ///
-    /// Named rather than counted: the fix is always to go and find them.
+    /// Required entries this crate cannot compute and the caller did not supply, by id.
     Missing(Vec<u32>),
     /// An entry this crate computes was also handed in.
     AlreadyComputed(u32),
@@ -1326,34 +1165,19 @@ impl std::error::Error for WriteError {}
 
 /// How large the *inner* filesystem inside an outer image is, or `None` if it cannot be read.
 ///
-/// Reaching it means decrypting, because the inner image is a `PFSC` container held as a file
-/// inside the encrypted outer filesystem. Everything needed is in hand - the key comes from the
-/// content id and the passcode - so this is the same walk an extractor does, from an image rather
-/// than from a whole package. Only the `PFSC` header is read: it records the length its contents
-/// decompress to.
+/// The inner image is a `PFSC` container held as a file inside the encrypted outer filesystem;
+/// the key comes from the content id and passcode. Only the `PFSC` header is read, which records
+/// the length its contents decompress to.
 ///
-/// Returns `None` rather than failing: a package whose image cannot be walked has a larger
-/// problem than any one field, and it will be reported by whatever reads it next.
-///
-/// # Two callers, one number
-///
-/// The package header's cache size has to be compared against this rather than against the outer
-/// image, which is larger and would have hidden the problem: a minimal package's outer image was
-/// comfortably above the declared cache while its inner filesystem was below it, and a console
-/// refused the mount.
-///
-/// The second caller is [`crate::playgo::chunk_dat`], where the same number is
-/// `inner_mchunk_attrs[0].size`. That entry was the last one a caller had to supply, on the
-/// grounds that its inner size was unaccountable - while this function, written for the cache
-/// warning, had been computing it all along. It lives here rather than in a consumer because
-/// two callers needing one number is the definition of a fact belonging to the library. (D099)
+/// The declared cache size is compared against this, not the larger outer image. The same
+/// number is `inner_mchunk_attrs[0].size` in [`crate::playgo::chunk_dat`].
 #[must_use]
 pub fn inner_image_size(image: &[u8], content_id: &str, passcode: &[u8]) -> Option<u64> {
     use selfish_pfs::{Filesystem, Slice, Source, Xts};
 
     let ekpfs = keys::derive_filesystem_key(content_id.as_bytes(), passcode);
     let source = Slice::new(image, 0);
-    // The superblock is in the clear even where the rest is not, which is what carries the seed.
+    // The superblock, which carries the seed, is in the clear.
     let superblock = source.read(0, 0x400).ok()?;
     let block_size = u64::from(u32::from_le_bytes([
         *superblock.get(0x20)?,
@@ -1377,6 +1201,7 @@ pub fn inner_image_size(image: &[u8], content_id: &str, passcode: &[u8]) -> Opti
     }
     None
 }
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -1403,13 +1228,7 @@ mod tests {
         builder
     }
 
-    /// The body runs from its offset to the image, and is not the constant it used to be.
-    ///
-    /// `BODY_SIZE` was `0x7E000`, which two of three real packages hold and the third
-    /// (`0x57E000`) does not. It is `image_offset - body_offset`, and it had been right in every
-    /// package this crate built only because they all put the image at `0x80000`. `BODY_DIGEST`
-    /// hashes exactly this region, so the failure it would have caused is a well-formed digest
-    /// over the wrong bytes - which nothing else here would have noticed. (D070)
+    /// The header's body size runs from the body offset to the image.
     #[test]
     fn the_body_size_is_derived_from_where_the_image_begins() {
         let built = supplied(Builder::new().content_id("UP0000-TEST00001_00-0000000000000000"))
@@ -1432,12 +1251,7 @@ mod tests {
         );
     }
 
-    /// A package may not declare a cache larger than the filesystem being cached.
-    ///
-    /// A console refuses one that does - `Failed to enable GDDR5 cache`, `EINVAL` - after the
-    /// outer image has already mounted, which is late enough to look like something else
-    /// entirely. The default stays what every real package carries; this is the override that
-    /// lets a small title say so. (D070)
+    /// The cache size can be set below the default, and the default is written otherwise.
     #[test]
     fn the_cache_size_can_be_clamped_below_the_default() {
         let small = 0xB_0000_u32;
@@ -1466,6 +1280,7 @@ mod tests {
         assert_eq!(u32::from_be_bytes(bytes), super::DEFAULT_CACHE_SIZE);
     }
 
+    /// A built package parses back with its entries and image offset.
     #[test]
     fn a_package_this_crate_builds_is_one_it_can_read_back() {
         let built = supplied(Builder::new().content_id("UP0000-TEST00001_00-0000000000000000"))
@@ -1479,11 +1294,9 @@ mod tests {
         assert!(package.missing_expected_entries().is_empty());
     }
 
+    /// Every derived entry claim holds on a package this crate built.
     #[test]
     fn the_derivation_holds_on_a_package_this_crate_built() {
-        // The strongest check available: the same command that re-derives the entry meanings
-        // from somebody else's packages, run against one of ours. If the writer and the
-        // derivation disagree, one of them is wrong and this says so.
         let built = supplied(Builder::new().content_id("UP0000-TEST00001_00-0000000000000000"))
             .image(vec![0xCD; 0x1000])
             .build()
@@ -1498,6 +1311,7 @@ mod tests {
         );
     }
 
+    /// The manifest's image digest is SHA-256 of the supplied image.
     #[test]
     fn the_image_digest_covers_the_image_that_was_supplied() {
         let image = vec![0x5A_u8; 0x3000];
@@ -1519,12 +1333,9 @@ mod tests {
         assert_eq!(&manifest[at..at + 32], &want);
     }
 
+    /// A built package's licence entries are flagged, decrypt, and the licence verifies.
     #[test]
     fn the_licence_in_a_built_package_decrypts_and_verifies() {
-        // The whole chain in one test: build a licence, encrypt it, flag the entry, lay out a
-        // package, then read it back the way anything else would and check the signature. A
-        // writer that gets the flags, the key index, the row or the derivation wrong fails
-        // here rather than on a console.
         let id = "UP0000-TEST00001_00-0000000000000000";
         let built = supplied(Builder::new().content_id(id))
             .image(vec![0x11; 0x1000])
@@ -1556,28 +1367,26 @@ mod tests {
         assert_eq!(&info[..id.len()], id.as_bytes());
     }
 
+    /// A missing title entry fails the build by id instead of being zero-filled.
     #[test]
     fn a_missing_entry_is_named_rather_than_zero_filled() {
-        // The whole point of the module. Zero-filling would produce a package a console reads
-        // and acts on, and the failure would surface as a refused install with no clue.
         let error = Builder::new().image(vec![0; 16]).build().unwrap_err();
         let WriteError::Missing(missing) = &error else {
             panic!("expected a missing-entry error, got {error:?}");
         };
-        // What is left is the title's own content, which no format library can invent.
         assert!(missing.contains(&entry_id::PARAM_SFO), "param.sfo");
         for computed in [0x1_u32, 0x80, 0x100, 0x400, 0x401, 0x1002] {
             assert!(
                 !missing.contains(&computed),
-                "{computed:#x} is computed now, not demanded"
+                "{computed:#x} is computed, not demanded"
             );
         }
         assert!(error.to_string().contains("0x1000"));
     }
 
+    /// Supplying an entry the builder computes is refused.
     #[test]
     fn a_computed_entry_cannot_also_be_supplied() {
-        // Two sources for one entry is how a digest table stops matching what it describes.
         let error = supplied(Builder::new())
             .entry(derive::entry::DIGESTS, vec![0; 32])
             .build()
@@ -1585,6 +1394,7 @@ mod tests {
         assert_eq!(error, WriteError::AlreadyComputed(derive::entry::DIGESTS));
     }
 
+    /// Unfilled manifest slots are reported as gaps on the built package.
     #[test]
     fn the_gaps_are_reported_rather_than_left_for_a_console_to_find() {
         let built = supplied(Builder::new())
@@ -1601,11 +1411,9 @@ mod tests {
         );
     }
 
+    /// The entry name table matches a real package's byte for byte, icon first.
     #[test]
     fn the_entry_name_table_matches_the_one_a_real_package_carries() {
-        // Byte for byte against a real package, via obSCEne's `build-pkg.sh`, where the table is
-        // 75 bytes. The order is not ascending entry id - `icon0.png` is `0x1200` and comes
-        // first - which is why the sequence is taken from material rather than sorted.
         let table = entry_names_table(&[0x1000, 0x1001, 0x1002, 0x1003, 0x1200]);
         assert_eq!(
             table,
@@ -1614,11 +1422,9 @@ mod tests {
         assert_eq!(table.len(), 75, "the length a real package's table has");
     }
 
+    /// Each entry's name offset points at its own name in the table.
     #[test]
     fn a_name_offset_lands_on_the_name_it_belongs_to() {
-        // The table is only useful if `resolve_name_offset` finds each name in it, since that is
-        // what an entry record carries. Generating one and then pointing at the wrong place
-        // would be worse than not generating it.
         let table = entry_names_table(&[0x1000, 0x1001, 0x1002, 0x1003, 0x1200]);
         let contents = vec![(0x200_u32, table.clone())];
         for id in [0x1000_u32, 0x1001, 0x1002, 0x1003, 0x1200] {
@@ -1633,10 +1439,9 @@ mod tests {
         }
     }
 
+    /// Entries without a filename, such as `0x200` and the digests, are not listed.
     #[test]
     fn entries_without_a_name_are_left_out_of_the_table() {
-        // `0x200` itself has no name, and neither do the digest entries. A table listing them
-        // would shift every offset after it.
         let table = entry_names_table(&[0x200, 0x1000, 0x0080, 0x1200]);
         assert_eq!(table, b"\0icon0.png\0param.sfo\0");
     }

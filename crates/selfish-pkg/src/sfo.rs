@@ -1,45 +1,24 @@
-//! The `PARAM.SFO` field set a package carries.
+//! Which keys a package's `PARAM.SFO` carries.
 //!
-//! # This is not a `PARAM.SFO` implementation, and it used to be
-//!
-//! The format - the magic, the index, the two tables, the padding rule - lives in
-//! `selfish-title`, which reads its offsets from `data/sfo-format.tsv` and carries a measured
-//! correction that overturned both of its cited sources (D019). This module writes **none of
-//! that**. It supplies the one thing `selfish-title` deliberately refuses to: *which keys*.
-//!
-//! That refusal is deliberate and correct - `selfish-title`'s own header says a format crate
-//! asserting a required-key list "would report the first title that omits one as malformed",
-//! and names the consumer as the right place for it. A package is that consumer.
-//!
-//! **A second implementation of `PSF` briefly existed here and has been deleted (D062.)** It
-//! hardcoded the offsets `selfish-title` reads from the table, and it did not know about D019.
-//! It is exactly the failure this repository was built to stop, committed inside the
-//! repository built to stop it.
-//!
-//! # What is here
-//!
-//! [`Params`] - what identifies a title, which nothing can derive - and [`game`], the field
-//! set measured out of real current-generation packages (D061).
+//! The format itself (magic, index, tables, padding) belongs to `selfish-title`, and the table
+//! is built with it. `selfish-title` asserts no required-key list; a package is the
+//! consumer that supplies one. [`Params`] holds what identifies a title, and [`game`] builds the
+//! Prospero-generation field set measured out of real packages.
 
 use selfish_title::sfo::{Entry, Sfo};
 
-/// Values measured out of real packages rather than chosen.
-///
-/// Each of these is **identical in both current-generation packages examined**, which is what
-/// makes them constants rather than guesses. Where the two samples disagreed, the field is
-/// title-specific and is not here.
+/// Values measured out of real packages, each identical in both Prospero-generation packages
+/// examined. Fields where the samples disagree are title-specific and are not here.
 mod measured {
-    /// An application. The previous generation's packages carry `4` here; both current ones
-    /// carry `1`.
+    /// An application. Orbis-generation packages carry `4` here.
     pub(super) const APP_TYPE: u32 = 1;
     /// The bit both samples set. One of them sets more; that extra is title-specific.
     pub(super) const ATTRIBUTE: u32 = 0x0080_0002;
-    /// Identical in both samples, and absent from the previous generation's field set.
+    /// Identical in both samples, and absent from the Orbis-generation field set.
     pub(super) const ATTRIBUTE2: u32 = 0x400;
     /// Not a development build.
     pub(super) const DEV_FLAG: u32 = 0;
-    /// Identical in both samples. **Not zero**, which is what a previous-generation default
-    /// writes and what this crate wrote until real packages were read.
+    /// Identical in both samples. An Orbis-generation default writes zero here.
     pub(super) const SYSTEM_VER: u32 = 0x0800_8000;
     /// The publishing tool's version, identical in both samples.
     pub(super) const PUBTOOL_VER: u32 = 0x0289_0000;
@@ -57,10 +36,8 @@ mod measured {
 
 /// How much room each text field reserves.
 ///
-/// **Not the length of the value.** A title reserves 128 bytes for a name using 12, and a
-/// reader takes the field to be that wide whatever is in it - so deriving the width from the
-/// text would move every value after it. `selfish-title` carries this per entry for the same
-/// reason.
+/// Not the length of the value: a reader takes the field to be this wide whatever it holds,
+/// so sizing it to the text would move every value after it.
 mod width {
     /// The content id.
     pub(super) const CONTENT_ID: u32 = 48;
@@ -98,19 +75,9 @@ pub struct Params<'a> {
 
 /// The table a game package carries.
 ///
-/// # The field set is the current generation's, and that was not a free choice
-///
-/// The first version carried twelve fields, copied from `LibOrbisPkg@6434772`'s default - which is a
-/// **previous-generation** set. Two real current-generation packages carry **twenty-nine**, and
-/// they agree with each other on every field this does not have to guess.
-///
-/// Three differences would have shipped silently: `SYSTEM_VER` was zero here and is
-/// `0x8008000` in both samples, `APP_TYPE` was `4` and is `1`, and `ATTRIBUTE2` did not exist.
-/// None would have been visible until a console refused the package - or accepted it and
-/// behaved oddly. (D061)
-///
-/// Every value identifying the title comes from `params`. Everything else is a measured
-/// constant in this module's `measured` block, each with a note saying what the evidence was.
+/// The Prospero-generation set of twenty-nine fields, not the Orbis-generation twelve of
+/// `LibOrbisPkg@6434772`'s default. Every value identifying the title comes from `params`;
+/// the rest are measured constants.
 #[must_use]
 pub fn game(params: &Params<'_>) -> Sfo {
     let mut sfo = Sfo::new();
@@ -194,10 +161,9 @@ mod tests {
         }
     }
 
+    /// The table serialises through `selfish-title` and parses back with the chosen values.
     #[test]
     fn it_serialises_through_the_format_crate_and_reads_back() {
-        // The format belongs to `selfish-title`; this only chooses keys. Parsing with the same
-        // crate is the round trip, and it is that crate's tests that prove the encoding.
         let bytes = game_bytes(&params());
         assert_eq!(&bytes[..4], b"\0PSF");
         let back = sfo::Sfo::parse(&bytes).expect("a readable table");
@@ -206,11 +172,9 @@ mod tests {
         assert_eq!(back.text("CATEGORY"), Some("gd"));
     }
 
+    /// The generation-specific fields carry the Prospero-generation measured values.
     #[test]
     fn the_fields_measured_from_real_packages_are_the_measured_values() {
-        // The ones that would ship silently wrong. The first version of this carried a
-        // previous-generation field set: `APP_TYPE` was 4, `SYSTEM_VER` zero, and `ATTRIBUTE2`
-        // did not exist. Both current-generation packages agree on all three. (D061)
         let sfo = game(&params());
         assert_eq!(sfo.get("APP_TYPE"), Some(&Value::Integer(1)));
         assert_eq!(sfo.get("SYSTEM_VER"), Some(&Value::Integer(0x0800_8000)));
@@ -219,10 +183,9 @@ mod tests {
         assert_eq!(sfo.get("PUBTOOLMINVER"), Some(&Value::Integer(0x0299_0000)));
     }
 
+    /// The table carries all twenty-nine fields, including the empty service-id slots.
     #[test]
     fn the_field_set_is_the_one_real_packages_carry() {
-        // Twenty-nine, not twelve. The seven service-id slots are empty in every real sample,
-        // and a field that is absent is not the same as a field that is present and empty.
         let sfo = game(&params());
         let keys: Vec<&str> = sfo.entries().iter().map(|e| e.key.as_str()).collect();
         assert_eq!(keys.len(), 29, "{keys:?}");
@@ -234,10 +197,9 @@ mod tests {
         }
     }
 
+    /// A text field reserves its full width whatever the text's length.
     #[test]
     fn a_field_reserves_its_full_width_whatever_the_text_is() {
-        // `reserved` is the field's width; the text is what happens to be in it. Sizing to the
-        // text would move every value after it.
         let short = game_bytes(&Params {
             title: "a",
             ..params()

@@ -4,44 +4,28 @@
 #            prosperity@3475257   carries the same and states the same origin in its own header
 #
 # Three RSA-2048 keypairs as modulus and private exponent, one AES key, and seven RSA public
-# moduli. Together they read *and* write a **fake** package - one built by a community tool
-# rather than signed by the vendor.
+# moduli. Together they read and write a fake package: one built by a community tool rather
+# than signed by the vendor.
 #
-# ## What each is for
+#   key                  reads                                  writes
+#   fake_*               unwraps the image key                  -
+#   dk3_*                unwraps the key that decrypts entries  -
+#   debugrif_*           checks a licence signature             signs one, saying debug (D047)
+#   rif_secret_key_hex   decrypts a licence's secret field      encrypts it
+#   pkg_public_0..6      -                                      wraps the per-index keys at
+#                                                               entries 0x10 and 0x20
 #
-# | key | reads | writes |
-# |---|---|---|
-# | `fake_*` | unwraps the image key | - |
-# | `dk3_*` | unwraps the key that decrypts entries | - |
-# | `debugrif_*` | checks a licence signature | signs one, saying *debug* (D047) |
-# | `rif_secret_key_hex` | decrypts a licence's secret field | encrypts it |
-# | `pkg_public_0..6` | - | wraps the per-index keys at entry `0x10` and `0x20` (D054) |
+# The `pkg_public_*` are public halves only: they wrap and cannot unwrap, so they add the
+# ability to write a key blob and no ability to read anything.
 #
-# The seven `pkg_public_*` are **public halves only**. A public key wraps and cannot unwrap, so
-# they add the ability to write a blob and no ability to read anything that was not already
-# readable.
+# Published in LibOrbisPkg, an open-source packaging tool, and carried by open-source extractors
+# since; reached here through prosperity@3475257 (`tools/pkg_extract/pkg_extract.py`), which
+# states the same origin. Not taken from any binary, and usable only on material built with
+# them. They do not open a retail package, whose image key is encrypted under a key only the
+# vendor holds.
 #
-# ## Provenance
-#
-# Published in LibOrbisPkg, an open-source packaging tool, and carried by every open-source
-# extractor since. Reached here by way of prosperity@3475257
-# (`tools/pkg_extract/pkg_extract.py`), which states the same origin in its own header.
-#
-# **Not taken from any binary by this project**, and not usable on anything that was not
-# already built with them.
-#
-# ## What they are not
-#
-# These do not open a retail package. A retail image key is encrypted under a key nobody
-# outside the vendor has, and the extractor these came from says so plainly: *"Retail pkgs
-# (Sony-signed image_key) are not supported."* That is a wall rather than a gap, in the same
-# way retail signing is, and nothing here should be made to climb it.
-#
-# ## Why committed rather than fetched
-#
-# Same reasoning as the hash suffix beside it. A build that reaches the network to compute a
-# constant is a build that behaves differently depending on where it is run, and these have
-# been public for years - the secrecy that would justify keeping them out is long gone.
+# Committed rather than fetched, like the hash suffix: the values are public and a build does
+# not reach the network for a constant.
 #
 # `dk3` unwraps the entry-keys blob; `fake` unwraps the image key that the first one, hashed
 # with the image-key entry's own table row, decrypts.
@@ -79,25 +63,15 @@ dk3_exponent_hex = """
   70873c4408ec498f815ae240ff77fc0d
 """
 
-# ## The debug RIF keyset, and the key over a licence's secret
-#
-# A third keypair and one AES key, for the licence entries a package carries. Same origin as
-# the two above - LibOrbisPkg names them `DebugRifKeyset` and `rif_debug_key` - and read from
-# `LibOrbisPkg/Util/Keys.cs` directly rather than transcribed.
-#
-# **That distinction is not pedantry.** An earlier attempt to obtain this key through a
-# summarising reader produced 519 hex characters where 512 were needed, and two further
-# attempts returned overlapping byte ranges. A key that is nearly right signs nothing and looks
-# exactly like one that is right. (D047)
-#
-# ### Confirmed against real material
+# The debug RIF keyset and the key over a licence's secret: a third keypair and one AES key,
+# for the licence entries a package carries. Same origin as the two above; LibOrbisPkg names
+# them `DebugRifKeyset` and `rif_debug_key`, and they are read from `LibOrbisPkg/Util/Keys.cs`
+# directly rather than transcribed, since a nearly-right key fails silently.
 #
 # Signing `sha256` of the first `0x400` bytes of a decrypted licence with `debugrif` reproduces
-# that licence's stored signature **byte for byte, in all three packages**, under PKCS#1 v1.5
-# with a DigestInfo prefix. Re-run it with `selfish licence --verify <package>`.
-#
-# These sign nothing retail. A debug RIF is what a fake package carries and what a console
-# accepts only where fake packages are accepted at all.
+# that licence's stored signature byte for byte in all three measured packages, under PKCS#1
+# v1.5 with a DigestInfo prefix; `selfish licence --verify <package>` re-runs it. A debug RIF
+# signs nothing retail and is accepted only where fake packages are.
 debugrif_modulus_hex = """
   c2d244bcdd843fd9c522aff7fc888a3380ed8ee2cc81f7ecf81c79bf02bb128e6168291b15b65ec6f8bf5ae0
   3b6a6cd9d6f575aba06f3481349a5baded31e3c6ea1ad11322bbb3dab3b253bd457987ad0a017218102949f4
@@ -120,16 +94,14 @@ rif_secret_key_hex = "96c2268d69261c8b1e3b6bff2fe04e12"
 
 # The seven package public moduli, used to wrap the per-index entry keys.
 #
-# Public halves only. They wrap; they cannot unwrap, so nothing here gains the ability to
-# read anything it could not read before - what they add is the ability to *write* the key
-# blobs a package carries at entry 0x10 and 0x20, which is what stood between this
-# repository and a package a console could open.
+# Public halves only: they write the key blobs a package carries at entries 0x10 and 0x20
+# and read nothing (D054).
 #
-# Index 3 is the same key as `dk3_modulus_hex` above, which arrived by a different route.
-# They are byte-identical, and the generator refuses to emit unless they are.
+# Index 3 is byte-identical to `dk3_modulus_hex` above, and the generator refuses to emit
+# unless it is.
 #
-# Source: LibOrbisPkg `LibOrbisPkg/Util/Keys.cs`, `PkgPublicKeys`. Extracted by a parser
-# rather than transcribed, because transcription of key material has failed here before.
+# Source: LibOrbisPkg `LibOrbisPkg/Util/Keys.cs`, `PkgPublicKeys`, extracted by a parser rather
+# than transcribed.
 pkg_public_0_hex = """
   d6aa0c5c0d6dc9e5ee28f9aa8dbc7236699617b65f8a4d969c8841330cb3fba0d6332d202fe30dade07a3e4a282f7629
   1b4f8a347436c8c940464db2beedcb723e81ffa3ac52a24513c781b2215cbe979d070e8fc846e9bba6a56ed44887bbe6
@@ -189,22 +161,17 @@ pkg_public_6_hex = """
 
 # The two keys behind `sce_sys/keystone`.
 #
-# Every real package carries a 96-byte `keystone` in its filesystem, and it is **derived from
-# the passcode** rather than being title content:
+# Every real package carries a 96-byte `keystone` in its filesystem, derived from the passcode
+# rather than supplied as title content:
 #
 #     header      "keystone" 02 00 01 00, then zeros to 32 bytes
 #     fingerprint HMAC-SHA256(keystone_hmac_key, passcode)
 #     final       HMAC-SHA256(keystone_mac_data, header || fingerprint)
 #
-# So it is a format product, not something a caller supplies. `selfish-pkg::keystone` builds it
-# and the CLI puts one in every image it lays out. (D067)
+# `selfish-pkg::keystone` builds it and the CLI puts one in every image it lays out.
 #
-# ## Provenance
-#
-# LibOrbisPkg `LibOrbisPkg/Util/Keys.cs`, `keystone_hmac_key` and `keystone_mac_data`, with the
-# construction in `Util/Crypto.cs` `CreateKeystone`. Extracted by a parser rather than
-# transcribed, for the same reason as the moduli above.
-#
-# These are MAC keys over a passcode a builder chose. They open nothing.
+# Source: LibOrbisPkg `LibOrbisPkg/Util/Keys.cs`, `keystone_hmac_key` and `keystone_mac_data`,
+# with the construction in `Util/Crypto.cs` `CreateKeystone`, extracted by a parser. These are
+# MAC keys over a passcode a builder chose; they open nothing.
 keystone_hmac_key_hex = "c74405f67424ba342bc1276251bbc2f555f16025b6a1b6714780dbaec852fa2f"
 keystone_mac_data_hex = "783d6f3ae91c0e0712fcaab7950bde06855cf7a22dcdbde127e9bfcbad0ff0fe"

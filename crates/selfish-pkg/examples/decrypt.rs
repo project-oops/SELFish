@@ -70,15 +70,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 entry.key_index(),
                 entry.size
             );
-            // What the crate actually produces, which picks the route that works.
+            // What the crate produces, through whichever route works.
             match keys::decrypt_entry(&package, entry) {
                 Ok(plain) => print!("{}", describe(&plain)),
                 Err(error) => print!("{error}"),
             }
 
-            // The cross-check is only meaningful where the two routes are genuinely
-            // independent - the key blob carries one index, and only for that one is the
-            // computed route a second opinion rather than the same call again.
+            // The two routes are independent only for the index the key blob carries.
             if entry.key_index() == keys::IMAGE_KEY_INDEX {
                 let blob = keys::decrypt_entry(&package, entry);
                 let computed =
@@ -91,8 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             println!();
 
-            // A licence, broken into the regions the structure defines, so "is the signature
-            // actually populated" is a question with an answer rather than a guess.
+            // A licence, broken into the regions the structure defines.
             if entry.id == 0x400 {
                 if let Ok(plain) = keys::decrypt_entry(&package, entry) {
                     // Optional side-channel for offline analysis of the signature.
@@ -100,9 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let _ = std::fs::write(&path, &plain);
                     }
                     if plain.len() >= 0x400 && &plain[..4] == b"RIF\0" {
-                        // Where the populated regions actually begin and end, rather than
-                        // where a summary says they do. Two candidate layouts disagree and
-                        // only one can be reconciled with the bytes.
+                        // Where the populated regions begin and end in the bytes.
                         let mut runs: Vec<(usize, usize)> = Vec::new();
                         for (at, byte) in plain.iter().enumerate().skip(0x60) {
                             if *byte != 0 {
@@ -147,9 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         );
 
-                        // Can the committed keypair reproduce the signature? Sign the same
-                        // bytes the structure signs and compare. This is the whole question of
-                        // whether a licence can be produced here.
+                        // Can the committed keypair reproduce the signature over the same bytes?
                         let signed = Sha256::digest(&plain[..0x300]);
                         println!(
                             "      signature: sha256 of the first 0x300 bytes is {}",

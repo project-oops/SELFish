@@ -1,24 +1,9 @@
-//! Re-deriving what a package's entries mean, from packages.
+//! Re-deriving what a package's entries mean, from packages, and building those entries.
 //!
-//! Two of the fourteen entries a package carries were established here rather than taken from
-//! a source, and this module is why that is allowed to stand. **Point it at any packages you
-//! have and it re-runs the derivation in front of you**, saying how many samples each claim
-//! survived. Nothing is asserted that this cannot re-check.
-//!
-//! That is the same arrangement obSCEne uses for the vendor dynamic tags - a `derive` command
-//! that reproduces the assignment from a module rather than trusting the constants that built
-//! it. A derivation nobody can re-run is a claim, and a claim in a format table is how a
-//! transcription error becomes a fact.
-//!
-//! # What a derivation here is allowed to be
-//!
-//! A hypothesis a machine can falsify, checked against every sample available. `RELA + RELASZ
-//! == HASH` was established exactly this way. What is not allowed is asserting a meaning
-//! nothing tests, or lifting bytes out of somebody's package and calling the copy a
-//! definition. (principle 5)
-//!
-//! Everything here reports **how many samples backed it**, because two is a coincidence and
-//! this had three.
+//! Entry meanings marked `DERIVED` in `data/pkg-format.tsv` were established from real
+//! packages rather than a cited source. [`run`] re-tests each such claim against any packages
+//! supplied and reports how many samples it held for. Each claim is a falsifiable hypothesis;
+//! no bytes are copied out of a sample.
 
 use sha2::{Digest, Sha256};
 
@@ -69,13 +54,11 @@ impl Derivation {
 
 /// Re-derive the entry meanings from packages.
 ///
-/// Every claim is tested against every package given. A claim that fails on one sample is
-/// reported as failing - this does not take a majority, because a format that is true of two
-/// packages in three is not a format.
+/// Every claim is tested against every package given. A claim that fails on any sample is
+/// reported as failing; there is no majority vote.
 #[must_use]
 pub fn run(packages: &[Package<'_>]) -> Derivation {
-    // One entry per derived row. A row added to `data/pkg-format.tsv` with `DERIVED` in its
-    // note belongs here too, or the command stops covering the table it claims to check.
+    // One finding per `DERIVED` row in `data/pkg-format.tsv`.
     let findings = vec![
         digest_table_finding(packages),
         entry_table_copy_finding(packages),
@@ -184,9 +167,7 @@ fn entry_table_copy_finding(packages: &[Package<'_>]) -> Finding {
                 wrong = wrong.saturating_add(1);
                 continue;
             };
-            // The same three fields at the same three offsets the outer table uses. Checking
-            // only that the record *contains* the numbers somewhere would also be satisfied by
-            // a coincidence, which is not a derivation.
+            // The same three fields at the same offsets the outer table uses.
             let found = Entry::from_row(record);
             if found.map(|f| (f.id, f.offset, f.size)) != Some((entry.id, entry.offset, entry.size))
             {
@@ -211,8 +192,7 @@ fn entry_table_copy_finding(packages: &[Package<'_>]) -> Finding {
 
 /// Entry `0x80`: a fixed table whose slots digest named things rather than entries.
 ///
-/// Six of its twelve slots are non-zero and two are established. It is reported as a partial
-/// finding on purpose - a row that claims more than was checked is worse than a short row.
+/// Six of its twelve slots are non-zero and two are checked, so the finding is marked partial.
 fn manifest_finding(packages: &[Package<'_>]) -> Finding {
     let mut held = 0_usize;
     let mut tested = 0_usize;
@@ -229,8 +209,7 @@ fn manifest_finding(packages: &[Package<'_>]) -> Finding {
 
         let mut wrong = 0_usize;
         // The leading slot is not a digest: every package examined opens with the same four
-        // bytes and carries a small value at the end of the slot. Recorded as observed and
-        // **not interpreted** - four identical bytes are not a meaning. (principle 5)
+        // bytes, recorded as observed and not interpreted.
         if table.get(..4) != Some(&manifest::LEADING) {
             wrong = wrong.saturating_add(1);
             notes.push("the leading bytes are not the ones every sample carries".to_owned());
@@ -295,19 +274,15 @@ fn manifest_finding(packages: &[Package<'_>]) -> Finding {
 pub mod manifest {
     /// The four bytes every package examined opens this entry with.
     ///
-    /// Recorded as observed, **not interpreted**. It is not a digest - it is identical in
-    /// every sample while every digest slot differs - but four bytes that agree three times
-    /// are an observation, not a meaning.
+    /// Recorded as observed, not interpreted. It is not a digest: it is identical in every
+    /// sample while every digest slot differs.
     pub const LEADING: [u8; 4] = [0xD2, 0x56, 0x01, 0x00];
     /// A fixed word at `0x1C`, `0x6E` in every package examined.
     ///
-    /// Recorded as observed, **not interpreted** - the same standing as [`LEADING`]. It is not
-    /// a digest: it is byte-identical in all three packages while every digest slot differs
-    /// between them. It was found because this crate wrote zero here and a console refused the
-    /// result, so an unexplained constant that three real files agree on is worth writing even
-    /// without a meaning for it.
+    /// Recorded as observed, not interpreted, like [`LEADING`]. The hardware refuses a package
+    /// with zero here, so the builder writes it.
     pub const FIXED_1C: usize = 0x1C;
-    /// The value [`FIXED_1C`] holds. Measured in three packages, 3/3 agreement.
+    /// The value [`FIXED_1C`] holds, identical in the three packages measured.
     pub const FIXED_1C_VALUE: u32 = 0x6E;
     /// The content digest, `ContentDigest` in `LibOrbisPkg`. Slot for enum bit `ContentDigest`.
     pub const CONTENT_DIGEST: usize = 0x20;
@@ -328,10 +303,7 @@ pub const PLAYGO_SLOT: usize = 4;
 
 /// Entry `0x1002`: four bytes of SHA-256 per 64 KiB block of the whole package.
 ///
-/// Only the blocks from the image onward are checked. The earlier ones cover the package
-/// buffer as it stood when the digests were taken, which is before the body and header were
-/// written - so they are a fact about a builder's ordering rather than about the file, and
-/// nothing can verify them after the fact.
+/// Only the blocks from the image onward are checked; the slots before it are zero.
 fn playgo_finding(packages: &[Package<'_>]) -> Finding {
     let mut held = 0_usize;
     let mut tested = 0_usize;
@@ -395,13 +367,8 @@ fn playgo_finding(packages: &[Package<'_>]) -> Finding {
 /// Build entry `0x1001`, the playgo chunk descriptor.
 ///
 /// A fixed 416-byte structure: the magic `plgo`, a fixed header, `0xFF` filler, and the content
-/// id at `0x40`. **Byte-identical in all three packages examined apart from that id**, which is
-/// what makes it something to generate rather than demand from a caller.
-///
-/// It was found by asking a different question than "what is this entry". A package built here
-/// was refused by a console with `0x80f00101`, and the content id appears three times in a real
-/// package - the header, this entry, and `param.sfo` - but only twice in one built here. This
-/// was the missing third. (measured 3/3)
+/// id at `0x40`. Byte-identical in all three packages examined apart from that id. The
+/// hardware refuses a package without it with `0x80f00101`.
 #[must_use]
 pub fn playgo_chunk(content_id: &str) -> Vec<u8> {
     /// What every sample holds before the content id.
@@ -441,17 +408,9 @@ pub fn playgo_chunk(content_id: &str) -> Vec<u8> {
 #[must_use]
 pub fn playgo_chunk_sha(package: &[u8], image_at: usize) -> Vec<u8> {
     let blocks = package.len().checked_div(PLAYGO_BLOCK).unwrap_or(0);
-    // Blocks before the image are **not** digested; their slots are zero.
-    //
-    // This digested from byte zero, which covers the header region too - and every slot from
-    // there on was therefore shifted by however many blocks the header occupies. A real package
-    // zeroes the first eight slots (`0x80000 / 0x10000`) and starts at the image, and the
-    // shifted table is why a console refused a package built here with `0x80f00101` while
-    // accepting the same real package truncated to a fraction of its size: the digest a slot
-    // holds has to be of the block that slot stands for.
-    //
-    // Measured against a real package: slots 0-7 zero, slot 8 == sha256(file[0x80000..])[..4],
-    // and every later slot follows. (3/3 packages, `image_at` is `0x80000` in all of them)
+    // Blocks before the image are not digested; their slots are zero. With `image_at` at
+    // `0x80000`, slots 0-7 are zero and slot 8 is the first image block, as in the packages
+    // measured. The hardware refuses a shifted table with `0x80f00101`.
     let skip = image_at.checked_div(PLAYGO_BLOCK).unwrap_or(0);
     let mut out = Vec::with_capacity(blocks.saturating_mul(PLAYGO_SLOT));
     for block in 0..blocks {
@@ -493,9 +452,6 @@ pub mod entry {
 ///
 /// `self_slot` is the position of entry `0x1` itself, which is zeroed because it cannot hold
 /// its own digest.
-///
-/// This is the half that makes the derivation worth having: a writer can produce this entry
-/// exactly, from data it already holds, with nothing left to guess.
 #[must_use]
 pub fn digest_table(contents: &[&[u8]], self_slot: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(contents.len().saturating_mul(DIGEST));
@@ -511,12 +467,11 @@ pub fn digest_table(contents: &[&[u8]], self_slot: usize) -> Vec<u8> {
 
 /// Build entry `0x100` from an entry table.
 ///
-/// Every field this crate does not have a meaning for is left zero, which is what all three
-/// packages examined hold there.
+/// Rows are copied whole; the fields with no known meaning are zero, as in every package
+/// examined.
 #[must_use]
 pub fn entry_table_copy(entries: &[Entry]) -> Vec<u8> {
-    // Whole rows, flags included: the flags are how an entry declares itself encrypted, and a
-    // copy without them makes the hardware read a licence's ciphertext as its content.
+    // Flags included: without them the hardware reads a licence's ciphertext as its content.
     entries.iter().flat_map(Entry::row).collect()
 }
 
@@ -537,10 +492,9 @@ mod tests {
     use super::{DIGEST, digest_table, entry_table_copy};
     use crate::{ENTRY_SIZE, Entry};
 
+    /// The digest table zeroes its own slot and hashes every other entry.
     #[test]
     fn the_digest_table_zeroes_its_own_slot_and_hashes_the_rest() {
-        // The self-slot is the whole subtlety: an entry cannot contain its own digest, and
-        // every package examined leaves it zero rather than, say, digesting an empty buffer.
         let contents: Vec<&[u8]> = vec![b"first", b"second", b"third"];
         let table = digest_table(&contents, 0);
 
@@ -555,6 +509,7 @@ mod tests {
         );
     }
 
+    /// The table copy holds id, offset and size big-endian, one whole row per entry.
     #[test]
     fn the_table_copy_reproduces_the_three_fields_big_endian() {
         let entries = [
@@ -585,10 +540,9 @@ mod tests {
         assert_eq!(&copy[ENTRY_SIZE..ENTRY_SIZE + 4], &0x10_u32.to_be_bytes());
     }
 
+    /// Table-copy fields with no known meaning are written as zero, never invented.
     #[test]
     fn everything_this_crate_has_no_meaning_for_is_left_zero() {
-        // Principle 5 in the writing direction: an invented value in a package is one a
-        // console reads and acts on. Absent is visible; invented is not.
         let entries = [Entry {
             id: 0x1,
             name_offset: 0,

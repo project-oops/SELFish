@@ -1,27 +1,12 @@
 //! The executable format as the platform spells it.
 //!
-//! A vendor executable is an ELF64 with a small number of differences, each of which a
-//! loader checks before it looks at a single symbol - so getting any of them wrong produces
-//! a rejection that says nothing about the rest of the file.
+//! A vendor executable is an ELF64 that differs from the standard in a few fields a loader
+//! checks before any symbol: `EI_OSABI` is FreeBSD, `EI_ABIVERSION` carries the generation
+//! (see [`selfish_abi`]), `e_type` takes vendor values for executable and shared library, and
+//! the dynamic tables a loader reads are the vendor's, not the standard `PT_DYNAMIC` ones.
 //!
-//! # The differences that matter
-//!
-//! - **`EI_OSABI` is FreeBSD.** `lld` sets it; GNU `ld` does not, and a module linked with
-//!   the latter is refused on that byte alone.
-//! - **`EI_ABIVERSION` carries the generation.** Read before any guest instruction runs, so
-//!   it cannot be negotiated: it is decided when the file is built. See [`selfish_abi`].
-//! - **`e_type` is outside the standard range**, and the two values it takes mean
-//!   *executable* and *shared library*. A loader that respects the difference runs a
-//!   library's initialisers and then looks elsewhere for an entry point, which is a silent
-//!   no-op rather than an error.
-//! - **The dynamic table a loader reads is the vendor's**, carried in its own segment. The
-//!   standard one is present and ignored.
-//!
-//! # Parsing without `unsafe`
-//!
-//! `zerocopy` validates size and alignment before a reference exists, so hostile bytes are a
-//! parse failure rather than a fault. This crate contains no `unsafe` and the workspace
-//! forbids it.
+//! Parsing goes through `zerocopy`, which checks size and alignment before a reference
+//! exists, so hostile bytes are a parse failure. The crate forbids `unsafe`.
 
 #![forbid(unsafe_code)]
 
@@ -75,10 +60,8 @@ pub const MACHINE_X86_64: u16 = 0x3E;
 
 /// What an `e_type` says the file is.
 ///
-/// The two vendor values differ by one bit and mean entirely different things, which is
-/// exactly how the wrong one survives: a loader that does not distinguish them runs either
-/// quite happily, and only one that does reveals the mistake - as a program that loads,
-/// relocates, runs its initialisers and then does nothing at all.
+/// The executable and shared-library values differ by one bit. A loader given a shared
+/// library where it expects an executable runs its initialisers and then does nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectType {
     /// Fixed-address executable.
@@ -135,8 +118,7 @@ impl ObjectType {
 
     /// Whether a loader will look here for a process to start.
     ///
-    /// The distinction a whole class of silent failure rests on: a loader that respects it
-    /// runs a shared library's initialisers and then looks *elsewhere* for an entry point.
+    /// A loader runs a shared library's initialisers and looks elsewhere for an entry point.
     #[must_use]
     pub const fn is_executable(self) -> bool {
         matches!(self, Self::FixedExecutable | Self::Executable)
@@ -167,7 +149,7 @@ pub mod segment {
 
     /// The vendor's relocation table.
     pub const SCE_RELA: u32 = 0x6000_0000;
-    /// **The segment a loader actually reads**: strings, symbols, hashes and relocations.
+    /// The segment a loader reads: strings, symbols, hashes and relocations.
     pub const SCE_DYNLIBDATA: u32 = 0x6100_0000;
     /// Process parameters.
     pub const SCE_PROCPARAM: u32 = 0x6100_0001;
@@ -182,9 +164,8 @@ pub mod segment {
 
     /// The OS-specific range, per the ELF specification.
     ///
-    /// Everything vendor-defined is in here - but so are the GNU extensions, which are
-    /// ordinary and not vendor data at all. Treating the whole range as vendor-specific
-    /// misclassifies three perfectly standard segment types.
+    /// It holds every vendor type and also the GNU extensions in [`GNU`], which are
+    /// standard segment types.
     pub const OS_SPECIFIC: core::ops::RangeInclusive<u32> = 0x6000_0000..=0x6FFF_FFFF;
 
     /// GNU extensions living inside the OS-specific range.
@@ -350,20 +331,9 @@ impl<'a> Elf<'a> {
 
     /// Which generation it was built for, from `EI_ABIVERSION`.
     ///
-    /// `None` only for a byte that is neither generation's - `1`, `3`, anything else. That is
-    /// a narrower answer than it looks, and the narrowness is the point:
-    ///
-    /// **Zero is the previous generation's own value, so an ordinary ELF is indistinguishable
-    /// from a previous-generation module by this byte alone.** Both read as
-    /// [`Generation::Orbis`]. A caller that needs to tell them apart has to ask something
-    /// else - [`Self::has_platform_osabi`] and [`Self::object_type`] between them do it, since
-    /// an ordinary object carries neither the platform's `EI_OSABI` nor one of its three
-    /// `e_type` values.
-    ///
-    /// Said explicitly because this comment previously claimed the opposite - that zero here
-    /// answered `None` "for reasons that have nothing to do with a console" - which is a
-    /// branch that cannot be reached for that reason and would have had a caller trusting a
-    /// distinction this cannot make.
+    /// `None` for a byte that is neither generation's. Zero is the Orbis-generation value,
+    /// so an ordinary ELF also reads as [`Generation::Orbis`]; [`Self::has_platform_osabi`]
+    /// and [`Self::object_type`] tell the two apart.
     #[must_use]
     pub fn generation(&self) -> Option<Generation> {
         match self.header.ident.get(EI_ABIVERSION) {
@@ -428,9 +398,7 @@ impl<'a> Elf<'a> {
             tag.copy_from_slice(entry.get(..8).unwrap_or(&[0; 8]));
             value.copy_from_slice(entry.get(8..16).unwrap_or(&[0; 8]));
             let tag = u64::from_le_bytes(tag);
-            // A zero tag is the terminator, and stopping there matters: the segment is
-            // usually padded, and reading past it yields a long tail of (0, 0) pairs that
-            // look like entries.
+            // The segment is usually padded past the terminator with (0, 0) pairs.
             if tag == 0 {
                 break;
             }
@@ -449,49 +417,20 @@ impl<'a> Elf<'a> {
 
     /// The segment holding the dynamic tables, with every offset already relative to it.
     ///
-    /// **This is what a reader should use rather than [`Self::vendor_segment`]**, because the
-    /// two conventions put the tables in different places and measure them from different
-    /// origins, and the two halves go together:
+    /// Prefer this to [`Self::vendor_segment`]; it reads both conventions:
     ///
-    /// - **Legacy**: a `PT_SCE_DYNLIBDATA` segment that is never mapped, with every table tag
-    ///   holding an *offset into it*.
-    /// - **Current**: no such segment exists - the tables are in the image, and the tags hold
-    ///   *virtual addresses*. The segment is found by which `PT_LOAD` contains the string
-    ///   table, which is also how a loader finds it, so it is not the weaker test it looks.
+    /// - Orbis: an unmapped `PT_SCE_DYNLIBDATA` segment, with each table tag an offset into it.
+    /// - Prospero: the tables are in the image and the tags are virtual addresses. The segment
+    ///   is the `PT_LOAD` containing the string table, which is how a loader finds it.
     ///
-    /// The returned [`dynamic::Info`] has its table offsets rebased, so everything in
-    /// [`dynamic`] reads either convention without knowing which it was handed.
-    ///
-    /// # The unit, stated plainly, because two readers already disagreed about it
-    ///
-    /// The offsets in the returned `Info` are **relative to the returned byte slice**, not
-    /// virtual addresses. `strtab` `0x18` means eighteen bytes into the `&[u8]` handed back
-    /// beside it. Under the current convention the tags hold virtual addresses, so this
-    /// subtracts the holding segment's `vaddr` on the way out; under the legacy convention they
-    /// are already offsets and nothing moves.
-    ///
-    /// That is the whole of a disagreement worth recording. A differential against orbistoun's
-    /// reader over 29 modules found every table address on one eboot differing by exactly
-    /// `0x6bc000` - not a parse difference but a units difference: their reader answers in
-    /// virtual addresses, this one in offsets into the slice it returns. Both are right, and
-    /// neither said so. Add the holding segment's `vaddr` to compare. (D095)
-    ///
-    /// # How far the current-convention path has been checked
-    ///
-    /// Against **this crate's own writer**, not against a console. `tests/current.rs` builds a
-    /// current-convention module with [`crate::dynlib`], reads it back through here, and
-    /// asserts the imports match what the same source produces under the legacy convention.
-    /// That proves the two halves agree about the tag numbers, the virtual-address origin and
-    /// the rebasing.
-    ///
-    /// It does **not** prove a console agrees, because every module this repository has been
-    /// pointed at is previous-generation. If current-generation material ever turns up, that
-    /// test is where to point it.
+    /// The offsets in the returned [`dynamic::Info`] are relative to the returned byte slice,
+    /// not virtual addresses. Add the holding segment's `vaddr` to compare with a reader that
+    /// answers in virtual addresses.
     ///
     /// # Errors
     ///
     /// If the dynamic table cannot be read. `Ok(None)` when the module carries no vendor
-    /// tables at all, which is the correct answer for an ordinary ELF.
+    /// tables, as for an ordinary ELF.
     pub fn tables(&self) -> Result<Option<(&'a [u8], dynamic::Info)>, ElfError> {
         let entries = self.dynamic_entries()?;
         let mut info = dynamic::Info::from_entries(&entries);
@@ -551,8 +490,7 @@ impl<'a> Elf<'a> {
 
     /// The section table, if this file carries one.
     ///
-    /// `Ok(None)` for a finished module, which normally has no sections at all - that is the
-    /// expected state rather than a failure. See [`section`].
+    /// `Ok(None)` for a finished module, which normally has no sections. See [`section`].
     ///
     /// # Errors
     ///
@@ -580,8 +518,8 @@ pub enum ElfError {
     },
     /// The first four bytes are not `\x7fELF`.
     ///
-    /// Carries what was found, because the commonest wrong answer is a *container*, and
-    /// saying which container is far more useful than saying "not an ELF".
+    /// Carries the bytes found, since the commonest wrong input is a container and its magic
+    /// names which one.
     NotAnElf([u8; 4]),
     /// Not a 64-bit object.
     NotSixtyFourBit,
@@ -589,18 +527,11 @@ pub enum ElfError {
     NotLittleEndian,
     /// A program header entry is not the size the format defines.
     UnexpectedProgramHeaderSize(usize),
-    /// A segment's **contents** are not inside these bytes, though its header is.
+    /// A segment's contents are not inside these bytes, though its header is.
     ///
-    /// Distinct from [`Self::ProgramHeadersOutOfBounds`], which is about the header *table*.
-    /// Reusing that one for this cost a second reader a wrong diagnosis: the message says the
-    /// program header table runs past the end, the table was fine, and the real condition was
-    /// that a segment's payload lives somewhere this slice does not reach.
-    ///
-    /// **That is normal, not a malformed file.** The executable inside a signed container is a
-    /// *view*: `ehdr` and the program headers, with every segment's bytes held in the
-    /// container's own entry list. Handed that view on its own, this crate cannot read through
-    /// a segment and says so. Read it through [`crate`]'s container instead of extracting the
-    /// inner ELF first. (D095)
+    /// Distinct from [`Self::ProgramHeadersOutOfBounds`], which concerns the header table.
+    /// The executable inside a signed container is a view whose segment bytes stay in the
+    /// container's entry list, so reading it alone raises this; read it through the container.
     SegmentNotInFile {
         /// The segment's `p_type`.
         p_type: u32,
@@ -613,9 +544,7 @@ pub enum ElfError {
     ProgramHeadersOutOfBounds,
     /// `e_type` is neither what a linker produces nor one of the two the platform accepts.
     ///
-    /// Raised by [`identity::stamp`] rather than by parsing: a reader is happy to describe any
-    /// object type, but stamping one onto a file this code does not understand would assert
-    /// something untrue about it.
+    /// Raised by [`identity::stamp`], not by parsing, which describes any object type.
     UnexpectedObjectType(u16),
 }
 
@@ -697,6 +626,7 @@ mod tests {
         out
     }
 
+    /// A minimal well-formed module parses with its type, generation and OSABI.
     #[test]
     fn a_well_formed_module_parses() {
         let bytes = sample(ObjectType::EXECUTABLE, 2);
@@ -707,15 +637,15 @@ mod tests {
         assert_eq!(elf.program_headers().len(), 1);
     }
 
+    /// Only the executable types report `is_executable`; a shared library does not.
     #[test]
     fn the_two_vendor_types_are_not_interchangeable() {
-        // The distinction a silent no-op rests on: a library's initialisers run and then a
-        // loader looks elsewhere for an entry point, which is not an error anywhere.
         assert!(ObjectType::from_raw(ObjectType::EXECUTABLE).is_executable());
         assert!(ObjectType::from_raw(ObjectType::FIXED_EXECUTABLE).is_executable());
         assert!(!ObjectType::from_raw(ObjectType::SHARED_LIBRARY).is_executable());
     }
 
+    /// `e_type` round-trips through `ObjectType`, unknown values included.
     #[test]
     fn object_type_round_trips_including_values_it_does_not_know() {
         for raw in [0xFE00, 0xFE10, 0xFE18, 0x0002, 0x0003, 0xFFFF] {
@@ -723,12 +653,12 @@ mod tests {
         }
     }
 
+    /// `EI_ABIVERSION` maps to its generation, and any other byte to `None`.
     #[test]
     fn abi_version_tells_the_generations_apart() {
         for (byte, want) in [
             (2_u8, Some(Generation::Prospero)),
             (0, Some(Generation::Orbis)),
-            // A byte matching neither is not a third console.
             (7, None),
         ] {
             let bytes = sample(ObjectType::EXECUTABLE, byte);
@@ -737,10 +667,9 @@ mod tests {
         }
     }
 
+    /// A non-ELF input is refused with the magic it carries.
     #[test]
     fn a_container_is_reported_as_what_it_is_rather_than_as_not_an_elf() {
-        // The commonest wrong input by far, and "not an ELF" would send somebody looking in
-        // entirely the wrong place.
         let container = [0x54_u8, 0x14, 0xF5, 0xEE];
         let mut bytes = vec![0_u8; super::HEADER_SIZE];
         bytes[..4].copy_from_slice(&container);
@@ -750,6 +679,7 @@ mod tests {
         );
     }
 
+    /// A file shorter than a header is refused.
     #[test]
     fn a_truncated_file_is_refused_rather_than_read_past() {
         assert!(matches!(
@@ -758,6 +688,7 @@ mod tests {
         ));
     }
 
+    /// A program header table running past the end of the file is refused.
     #[test]
     fn a_program_header_table_past_the_end_is_refused() {
         let mut bytes = sample(ObjectType::EXECUTABLE, 2);
@@ -769,10 +700,9 @@ mod tests {
         );
     }
 
+    /// GNU segment types in the OS-specific range are not classed as vendor types.
     #[test]
     fn gnu_segments_are_not_mistaken_for_vendor_ones() {
-        // Both live in the OS-specific range. Treating the whole range as the vendor's
-        // misclassifies three ordinary segment types.
         assert!(segment::is_vendor(segment::SCE_DYNLIBDATA));
         assert!(segment::is_vendor(segment::SCE_RELRO));
         for gnu in segment::GNU {
@@ -781,6 +711,7 @@ mod tests {
         assert!(!segment::is_vendor(segment::LOAD));
     }
 
+    /// `header_span` reaches the end of the program header table.
     #[test]
     fn header_span_covers_the_program_header_table() {
         let bytes = sample(ObjectType::EXECUTABLE, 2);
@@ -789,14 +720,10 @@ mod tests {
         assert_eq!(elf.header_span(), 120);
     }
 
+    /// A segment whose contents lie outside the bytes raises `SegmentNotInFile`, not a
+    /// header-table error.
     #[test]
     fn a_segment_whose_contents_are_elsewhere_says_so_rather_than_blaming_the_header_table() {
-        // The executable inside a signed container is a view: ehdr and program headers, with
-        // every segment's bytes held in the container's entry list. Handed that view alone,
-        // `dynamic_entries` cannot read through `PT_DYNAMIC` - and it used to report
-        // `ProgramHeadersOutOfBounds`, whose message says the header *table* runs past the end
-        // of the file. The table was fine. A differential reader took that at face value and
-        // reported 22 of 29 modules as a header-table disagreement. (D095)
         let mut bytes = sample(ObjectType::EXECUTABLE, 1);
         // Point the one segment's contents past the end while leaving its header in place.
         let phoff = usize::try_from(u64::from_le_bytes(
@@ -818,10 +745,9 @@ mod tests {
         }
     }
 
+    /// A header table past the end still raises `ProgramHeadersOutOfBounds`.
     #[test]
     fn the_two_out_of_bounds_conditions_do_not_share_an_error() {
-        // The header table past the end is still its own answer, and still reported as such -
-        // the fix was to stop *one* condition wearing the other's name, not to soften either.
         let mut bytes = sample(ObjectType::EXECUTABLE, 2);
         bytes[56..58].copy_from_slice(&40_u16.to_le_bytes());
         assert_eq!(

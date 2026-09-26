@@ -57,8 +57,7 @@ fn main() {
             bytes.len(),
             container.generation()
         );
-        // What each entry claims, and - for a blocked segment - whether the block arithmetic
-        // comes out whole. A partial trailing block is normal; a partial *first* one is not.
+        // What each entry claims and, for a blocked segment, its block count.
         for (n, entry) in container.entries().iter().enumerate() {
             let blocked = (entry.props >> 11) & 1 == 1;
             let block = 1_u64 << (12 + ((entry.props >> 12) & 0xF));

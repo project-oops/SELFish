@@ -1,39 +1,26 @@
 # The version a module must declare for a platform library, where it is not the default.
 # Columns: library, generation, major, minor, note
 #
-# read-from: KytyPS5@0b4e78c   src/libs/libVideoOut.cpp — `LIB_VERSION("VideoOut", 1, "VideoOut", 1, 1)`,
-#            the current-generation 1.1 registration this row records. (Was cited "Kyty@vendored
-#            src/lib/Core/Libs", a path that exists in no Kyty tree here; corrected to the variant
-#            and file that actually carry the registration, pinned to the commit on hand.)
+# read-from: KytyPS5@0b4e78c   src/libs/libVideoOut.cpp - `LIB_VERSION("VideoOut", 1, "VideoOut", 1, 1)`,
+#            the Prospero-generation 1.1 registration this row records.
 #
-# # Why this is a table and not a constant
+# A loader builds its lookup key from the version the importing module declares and matches it
+# against the version the library was registered with. A wrong version does not fail the load:
+# every symbol from that library silently goes unresolved.
 #
-# A loader builds its lookup key from the version **the importing module declares** and
-# matches it against the version the library was registered with. Declaring the wrong one
-# does not fail: every symbol from that library silently fails to resolve. The module loads,
-# runs, and finds none of its imports.
-#
-# The default is 1.1 and almost everything uses it. One library does not, and it is the one
-# that decides whether anything appears on screen:
+# The default is 1.1. VideoOut differs by version alone between generations:
 #
 #   LibGen4: LIB_VERSION("VideoOut", 1, "VideoOut", 0, 0);   // twelve functions
 #   LibGen5: LIB_VERSION("VideoOut", 1, "VideoOut", 1, 1);   // three
 #
-# The **module version is the only thing separating them** — every other split library uses a
-# different *name* per generation (`GraphicsDriver` against `Graphics5`), which needs no row
-# here. Declaring 1.1 for the previous generation therefore lands a module on the current
-# generation's set, which holds no way to present a frame: a probe set up a framebuffer, had
-# nothing to submit it with, and drew a black window for an entire run. A commercial
-# previous-generation title declares 0.0 and binds all twelve.
+# Other split libraries use a different name per generation (`GraphicsDriver` against
+# `Graphics5`) and need no row. An Orbis-generation module declaring 1.1 binds the
+# Prospero-generation set, which cannot present a frame; a commercial Orbis-generation title
+# declares 0.0 and binds all twelve.
 #
-# # Status
-#
-# `IMPLEMENTATIONS`, from one emulator's registration tables. That is why the default stays
-# 1.1 and only the case with evidence behind it gets a row — an absent row is visible, an
-# invented one is not. (principle 5)
-#
-# The generation column is the console generation as people say it — 5 current, 4 previous —
-# rather than the ABI version byte those map to.
+# The rows come from one emulator's registration tables, so only the case with evidence has a
+# row and the default stays 1.1. The generation column is the build-flag number (5 Prospero,
+# 4 Orbis), not the ABI version byte.
 #
 library	generation	major	minor	note
 libSceVideoOut	4	0	0	twelve functions at 0.0; the current generation registers three at 1.1

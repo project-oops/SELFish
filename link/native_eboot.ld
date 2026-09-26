@@ -1,8 +1,8 @@
 /*
- * Linker script for a native current-generation (Prospero) console executable.
+ * Linker script for a native Prospero-generation executable.
  *
  * Based at offset 0 (ASLR-relocatable, ET_DYN / 0xFE10).
- * No PT_INTERP: the native kernel invokes /libexec/ld-elf.so.1 directly.
+ * No PT_INTERP: the kernel invokes /libexec/ld-elf.so.1 directly.
  */
 
 PHDRS
@@ -31,7 +31,7 @@ SECTIONS
     .rela.plt       : { *(.rela.plt) }        :data
     .rodata         : { *(.rodata .rodata.*) } :data
 
-    /* C++ dynamic-initialiser tables. Run by oops-mesa or C++ runtime via bounds symbols. */
+    /* C++ dynamic-initialiser tables, run by the consumer's runtime through the bounds symbols. */
     . = ALIGN(8);
     .preinit_array  : {
         PROVIDE_HIDDEN(__preinit_array_start = .);
@@ -63,20 +63,14 @@ SECTIONS
     .sce_dynlibdata : { KEEP(*(.sce_dynlibdata)) } :dynlibdata
     .dynamic        : { *(.dynamic); . += 0x20000; } :data :dynamic
 
-    /* .bss MUST be placed last in the :data segment so it remains NOBITS without
-       forcing zero-padding into the file before subsequent PROGBITS sections (REQ-20260923T2350Z-6c1a). */
+    /* .bss is last in the :data segment so it stays NOBITS and no zero padding is written
+       into the file before a later PROGBITS section. */
     .bss            : { *(.bss .bss.* COMMON) } :data
 
-    /* .eh_frame is deliberately NOT discarded. libunwind built freestanding
-       (_LIBUNWIND_IS_BAREMETAL) finds its frame table by scanning between
-       __eh_frame_start and __eh_frame_end rather than through dl_iterate_phdr,
-       so discarding the section left both symbols equal and every table lookup
-       empty. The visible effect was that a `throw` never reached any `catch`,
-       not even `catch (...)`: with no frame table the unwinder cannot walk out
-       of the throwing frame at all, so it calls std::terminate instead. The
-       loader's "corrupted eh_frame_hdr or eh_frame" warning is the same fact
-       reported one layer down. Costs ~19 KiB on a title that uses exceptions
-       and nothing on one that does not. */
+    /* .eh_frame is kept. Freestanding libunwind (_LIBUNWIND_IS_BAREMETAL) finds its
+       frame table between __eh_frame_start and __eh_frame_end rather than through
+       dl_iterate_phdr; without it no `throw` reaches a `catch` and std::terminate
+       runs. About 19 KiB on a title that uses exceptions, nothing otherwise. */
 
     /DISCARD/ : {
         *(.comment)

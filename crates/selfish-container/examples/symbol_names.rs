@@ -73,13 +73,8 @@ fn main() {
         println!("     {suffix:<10} x{n}");
     }
 
-    // The binding, type and section index of every entry, counted.
-    //
-    // The name is what a reader looks at, and it is not what a loader decides on. `st_info`
-    // splits into a binding (GLOBAL, WEAK, LOCAL) and a type (FUNC, OBJECT, NOTYPE), and
-    // `st_shndx` says whether the entry is defined here or expected from somewhere else. A
-    // loader entitled to skip weak undefined symbols would leave exactly the imports this
-    // project cannot get bound, and the name would look correct throughout.
+    // The binding, type and section index of every entry, counted: a loader decides on
+    // these, not on the name. `st_shndx` 0 means the symbol is imported.
     let mut shapes: std::collections::BTreeMap<(u8, u8, u16), usize> =
         std::collections::BTreeMap::new();
     for n in 0..count {

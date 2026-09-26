@@ -1,15 +1,8 @@
-//! The linker script actually links, and produces the layout it claims to.
+//! The linker script links and produces the layout it describes.
 //!
-//! `link/module.ld` is the one artefact in this repository that no compiler checks. Its unit
-//! tests assert that its text names the right constants; this asserts that a linker fed it
-//! emits the segments those constants describe, and then reads the result back through this
-//! crate's own parser.
-//!
-//! # Skipped rather than failed when there is no toolchain
-//!
-//! `clang` and `ld.lld` are not build dependencies of this repository and will not be present
-//! everywhere. A test that fails on a machine without them teaches people to ignore failures,
-//! which costs more than the coverage is worth. It prints what it skipped and why.
+//! A linker fed `link/module.ld` emits the segments the `layout` constants name, read back
+//! through this crate's parser. `clang` and `ld.lld` are not build dependencies, so without
+//! them the test prints that it skipped and passes.
 
 #![allow(
     clippy::unwrap_used,
@@ -45,6 +38,7 @@ fn script() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../link/module.ld")
 }
 
+/// A module linked with the script has two loads, the vendor segments, and headers mapped.
 #[test]
 fn the_script_produces_the_layout_it_describes() {
     if !available("clang") || !available("ld.lld") {
@@ -96,8 +90,6 @@ fn the_script_produces_the_layout_it_describes() {
         .map(|header| header.p_type.get())
         .collect();
 
-    // Two loadable segments and not three. Three is the obvious layout and one loader
-    // silently declines to map the extra one, leaving every byte of read-only data absent.
     assert_eq!(
         types
             .iter()
@@ -119,8 +111,7 @@ fn the_script_produces_the_layout_it_describes() {
         );
     }
 
-    // The headers have to be inside the first mapping. A loader that maps only what the
-    // segments describe cannot otherwise read the header table it just used.
+    // The headers are inside the first mapping.
     let first = elf
         .program_headers()
         .iter()

@@ -1,22 +1,8 @@
-//! Building a filesystem image from a directory of files.
+//! Building a plain filesystem image from a directory of files.
 //!
-//! The writing half of this crate. Reading was always the easy half - a reader follows four
-//! numbers per inode and never looks at the rest - and it is exactly that asymmetry which left
-//! the superblock's other fields unnamed and looking like a wall for as long as they did.
-//!
-//! # Plain images only, and that is a scope rather than a gap
-//!
-//! An image can be **signed** (every block carries a digest, and inodes grow from `0xA8` to
-//! `0x2C8` to hold them) and **encrypted** (AES-XTS over every sector). This builds neither.
-//! What it builds is the structure underneath both: a superblock, an inode table, directory
-//! entries and a block allocation.
-//!
-//! That is the half that can be proved without a key. The tests build a tree, read it back
-//! through this crate's own [`crate::Filesystem`], walk it and compare every file's bytes -
-//! which exercises every offset, every count and every block number in the image. Signing and
-//! encryption sit on top of a correct image and cannot rescue an incorrect one.
-//!
-//! # Layout
+//! Plain means neither signed nor encrypted, which is what a package's inner image is: a
+//! superblock, an inode table, directory entries and a block allocation. The tests read each
+//! image back through [`crate::Filesystem`] and compare every file's bytes.
 //!
 //! ```text
 //! block 0            the superblock
@@ -82,8 +68,7 @@ const DIRENT_ALIGN: usize = 8;
 
 /// What a directory entry points at.
 ///
-/// Shared with [`crate::outer`], which builds a filesystem of its own. One table, because two
-/// spellings of one format rule is how they drift apart. (D063)
+/// Shared with [`crate::outer`], which builds a filesystem of its own.
 pub(crate) mod kind {
     /// A file.
     pub(crate) const FILE: u32 = 2;
@@ -117,19 +102,15 @@ mod field {
 
 /// Where the superblock embeds an inode describing the inode table itself.
 ///
-/// A console's mount reads it to find the inodes, and an image with it left blank is refused by
-/// `nmount()` with `EINVAL` after the outer image has already mounted. (measured)
+/// The hardware's mount reads it to find the inodes; `nmount()` refuses an inner image with it
+/// blank, with `EINVAL`.
 const EMBEDDED_INODE: usize = 0x50;
 
-/// The flags a real package's *inner* filesystem writes on its inodes.
+/// The flags a real package's inner filesystem writes on its inodes.
 ///
-/// This crate wrote zero, and an inner image built that way is refused by the kernel's mount:
-/// with the outer inodes corrected a console gets as far as `nmount()` on the inner image and it
-/// fails `EINVAL`. Every inode in a real inner filesystem carries `0x10`, and the two internal
-/// inodes - the super root and the flat path table - add `0x2_0000`. (measured, three packages)
-///
-/// This is a *different* value from the outer filesystem's `0x0C`: the two layers do not share a
-/// convention, and reproducing each is a measurement, not a deduction.
+/// The hardware's mount refuses an inner image whose inodes carry no flags. Every inode in a
+/// real inner filesystem carries `0x10`, and the super root and the flat path table add
+/// `0x2_0000` (measured on three packages). The outer filesystem uses `0x0C` instead.
 mod iflag {
     /// The flag every inner inode carries.
     pub(super) const BASE: u32 = 0x10;
@@ -167,27 +148,17 @@ pub fn build(root: &Tree, block_size: u32) -> Result<Vec<u8>, PfsError> {
     let fpt = push(&mut nodes, imode::FILE | imode::RX);
     let uroot = push(&mut nodes, imode::DIR | imode::RX);
 
-    // Every path, gathered while walking, so the flat path table lists what the image actually
-    // holds rather than what a caller said it would.
-    // Two paths that hash alike need a second file to disambiguate them, which this does not
-    // write. Refusing is the honest answer: a table with a lost entry is a file the console
-    // cannot find, and nothing in this crate reads the table, so nothing here would notice.
+    // Two paths that hash alike need a collision resolver file, which this does not write. A
+    // table with a lost entry is a file the hardware cannot find, so the build is refused.
     if has_collision(root) {
         return Err(PfsError::Malformed(
             "two paths hash alike and a collision resolver is not built yet",
         ));
     }
+    // Paths are gathered while walking, so the table lists what the image holds.
     let mut paths = Vec::new();
-    // **The root's parent is itself, not the super root.**
-    //
-    // `outer.rs` already states this rule for the filesystem it builds - *pointing it at the
-    // super root would be the obvious guess and is not what a real image does* - and this builder
-    // did exactly that obvious thing, so the two filesystems in one package disagreed about a
-    // structure they share. A real inner image has `uroot`'s `..` naming `uroot`; this named the
-    // super root, which is an internal directory a title's tree is not supposed to reach.
-    //
-    // Measured on three packages, and the kind of fault that does not return an error: anything
-    // walking up from `/app0` left the tree instead of staying at its top. (D072)
+    // The root's parent is itself, not the super root, as in every real inner image; walking
+    // up from `/app0` stays at the top of the tree.
     let root_entries = serialise_dir(root, uroot, uroot, &mut nodes, "", &mut paths, 0)?;
     set_body(&mut nodes, uroot, root_entries);
 
@@ -205,9 +176,8 @@ pub fn build(root: &Tree, block_size: u32) -> Result<Vec<u8>, PfsError> {
         .ok_or(PfsError::Malformed("a block holds no inodes"))?;
     let inode_blocks = nodes.len().div_ceil(per_block);
 
-    // Block 0 is the superblock, the inode table follows it, then every node's data in the
-    // order the inodes were numbered. An empty block sits after the flat path table, which is
-    // what every real image leaves there.
+    // Block 0 is the superblock, the inode table follows it, then every node's data in inode
+    // order. Every real image leaves an empty block after the flat path table.
     let mut next = u32::try_from(inode_blocks.checked_add(1).ok_or(PfsError::OutOfRange)?)
         .map_err(|_| PfsError::OutOfRange)?;
     for (index, node) in nodes.iter_mut().enumerate() {
@@ -259,14 +229,12 @@ fn serialise_dir(
     paths: &mut Vec<(String, u32, bool)>,
     depth: usize,
 ) -> Result<Vec<u8>, PfsError> {
-    // The reader refuses a tree deeper than 64. Refusing to build one is better than building
-    // an image that this crate's own reader will not walk.
+    // The reader refuses a tree deeper than 64, so the writer does too.
     if depth > 64 {
         return Err(PfsError::Malformed("directory nesting is implausibly deep"));
     }
     let mut entries = Vec::new();
-    // Every directory names itself and its parent first. A reader skips them; a filesystem
-    // that omits them is one nothing can walk upwards through.
+    // Every directory names itself and its parent first, so it can be walked upwards.
     dirent(&mut entries, self_inode, kind::DOT, ".");
     dirent(&mut entries, parent_inode, kind::DOT_DOT, "..");
 
@@ -297,9 +265,7 @@ fn serialise_dir(
 
 /// Append one directory entry.
 ///
-/// Shared with [`crate::outer`]. It had a second copy that spelled the header size and the
-/// alignment as bare numbers, with none of the reasoning below attached - the same rule twice,
-/// once explained and once not. (D063)
+/// Shared with [`crate::outer`].
 pub(crate) fn dirent(out: &mut Vec<u8>, inode: u32, kind: u32, name: &str) {
     let name = name.as_bytes();
     // The name is followed by at least one byte of padding and the whole entry is aligned, so
@@ -324,20 +290,12 @@ const FPT_DIRECTORY: u32 = 0x2000_0000;
 
 /// The flat path table: a hash of every path, mapped to the inode holding it.
 ///
-/// A console uses this to reach a file without walking directories. **Nothing in this crate
-/// reads it** - a reader follows directory entries, which are the authority - so a wrong table
-/// here would pass every test and fail only on the machine it was built for. That is exactly
-/// why it is built properly rather than left as a placeholder.
+/// The hardware uses this to reach a file without walking directories. Nothing in this crate
+/// reads it; the reader follows directory entries.
 ///
-/// Entries are `(hash, value)` pairs of little-endian words, **sorted by hash**, where the
-/// value is the inode number with [`FPT_DIRECTORY`] set for a directory.
-///
-/// # Collisions
-///
-/// Two paths hashing alike are resolved through a second file, `collision_resolver`, which the
-/// super root names alongside this one. That is not built here: it has never been needed for a
-/// tree this produces, and [`has_collision`] lets a caller find out before building rather
-/// than after. [`build`] refuses rather than emitting a table with a silently lost entry.
+/// Entries are `(hash, value)` pairs of little-endian words, sorted by hash, where the value
+/// is the inode number with [`FPT_DIRECTORY`] set for a directory. Paths that hash alike need
+/// a `collision_resolver` file, which is not written; [`build`] refuses such a tree.
 fn flat_path_table(entries: &[(String, u32, bool)]) -> Vec<u8> {
     let mut pairs: Vec<(u32, u32)> = entries
         .iter()
@@ -362,10 +320,7 @@ fn flat_path_table(entries: &[(String, u32, bool)]) -> Vec<u8> {
 
 /// One path table entry, for a caller building a table of its own.
 ///
-/// The outer filesystem has a fixed shape - one file - so it builds its table directly rather
-/// than walking a tree it does not have. Sharing the hash matters more than sharing the walk:
-/// two implementations of this hash that disagree produce two images that both read back fine
-/// here and one of which a console cannot use.
+/// The outer filesystem holds one file, so it builds its table directly with the same hash.
 #[must_use]
 pub fn path_table_entry(path: &str, inode: u32, is_dir: bool) -> Vec<u8> {
     flat_path_table(&[(path.to_owned(), inode, is_dir)])
@@ -373,10 +328,8 @@ pub fn path_table_entry(path: &str, inode: u32, is_dir: bool) -> Vec<u8> {
 
 /// The hash the table is keyed by.
 ///
-/// `hash = uppercase(c) + 31 * hash`, wrapping, over the path from the root - the same shape as
-/// the familiar string hash, over an upper-cased path. The upper-casing is why two files
-/// differing only in case collide, and it is ASCII-only here because a path in this filesystem
-/// is bytes rather than text.
+/// `hash = uppercase(c) + 31 * hash`, wrapping, over the path from the root. Paths differing
+/// only in case collide. Upper-casing is ASCII-only because a path here is bytes, not text.
 fn path_hash(path: &str) -> u32 {
     path.bytes().fold(0_u32, |hash, byte| {
         u32::from(byte.to_ascii_uppercase()).wrapping_add(hash.wrapping_mul(31))
@@ -385,8 +338,7 @@ fn path_hash(path: &str) -> u32 {
 
 /// Whether any two paths in a tree hash alike.
 ///
-/// Worth asking before building, because the answer decides whether an image needs a collision
-/// resolver - which this does not write.
+/// Such a tree needs a collision resolver, which [`build`] does not write.
 #[must_use]
 pub fn has_collision(root: &Tree) -> bool {
     let mut seen = std::collections::HashSet::new();
@@ -438,18 +390,15 @@ fn write_superblock(
 ) -> Result<(), PfsError> {
     put_le(out, superblock::VERSION, 1_u64)?;
     put_le(out, superblock::MAGIC, crate::MAGIC)?;
-    // Read-only, and the flag every image sets. Not signed and not encrypted: those describe
-    // layers this does not build, and claiming either would send a reader looking for digests
-    // that are not there and reading inodes at the wrong stride.
+    // Read-only, and the flag every image sets. Neither signed nor encrypted, since claiming
+    // signed changes the inode stride a reader uses.
     if let Some(byte) = out.get_mut(superblock::READ_ONLY) {
         *byte = 1;
     }
     put_le(out, superblock::MODE, mode::UNKNOWN_ALWAYS_SET)?;
     put_le(out, superblock::BLOCK_SIZE, block_size)?;
-    // Not the block count, despite the name a reader would guess. `LibOrbisPkg@6434772` writes a
-    // literal `1` here and remarks that it is always 1; the field that actually sizes the image
-    // is `N_DBLOCK`. Writing the real count here looked more correct and would have made every
-    // image this builds differ from every image examined, in a field nothing checks.
+    // Always `1`, as `LibOrbisPkg@6434772` writes and every image examined holds; the field
+    // that sizes the image is `N_DBLOCK`.
     put_le(out, superblock::N_BLOCK, 1_u64)?;
     put_le(
         out,
@@ -463,11 +412,8 @@ fn write_superblock(
         superblock::INODE_BLOCKS,
         u64::try_from(inode_blocks).map_err(|_| PfsError::OutOfRange)?,
     )?;
-    // The header embeds an inode describing the inode table itself. A console's mount reads it
-    // to find the inodes, and this crate left it blank - which is what an inner image built here
-    // presented, and the kernel's `nmount()` refused it `EINVAL` after the outer image mounted.
-    // Every field below is set in a real inner image; the flag is `0x10` (the inner convention,
-    // not the outer's `0x0C`) and the size is the inode table's own length. (measured)
+    // The embedded inode describing the inode table, as a real inner image sets it: the inner
+    // flag `0x10` and the table's own length.
     let table_len = u64::from(inode_blocks_u32(inode_blocks)?)
         .checked_mul(u64::from(block_size))
         .ok_or(PfsError::OutOfRange)?;
@@ -481,24 +427,11 @@ fn write_superblock(
         inode_blocks_u32(inode_blocks)?,
     )?;
 
-    // An unseeded image puts its `1` four bytes earlier than a seeded one does. The seeded
-    // layout writes an index at `UNKNOWN_INDEX` and the seed after it; without a seed the
-    // source writes `1` at `NO_SEED_INDEX` and stops. Both were measured as "a 1 near the end
-    // of the header", and they are not the same field.
-    // A `1` at `0xD8`, which this crate left zero and every real package sets.
-    //
-    // Reproduced, **not interpreted** - the same standing as the package manifest's `LEADING`.
-    // All three real packages agree on it and they agree with each other everywhere else in this
-    // region, so it is not a per-title value. `LibProsperoPKG@main` names the offset
-    // `UnknownIndex` and does not explain it either, which is two independent readings calling it
-    // unknown rather than one guess.
-    //
-    // Worth having because of *where* it is: this is the inner superblock, the structure a console
-    // reads when it mounts `/app0`, and mounting the inner image is where a package built here
-    // takes the machine down. Reproducing a field a real image sets is cheap; leaving it zero on
-    // the grounds that nobody has named it is how the inode flags stayed wrong for three trips.
+    // Reproduced, not interpreted: every real package sets it, and `LibProsperoPKG@main` names
+    // it `UnknownIndex` without explaining it.
     put_le(out, superblock::UNKNOWN_D8, 1_u32)?;
 
+    // An unseeded image writes its `1` four bytes before a seeded one's `UNKNOWN_INDEX`.
     put_le(out, superblock::NO_SEED_INDEX, 1_u32)
 }
 
@@ -517,8 +450,7 @@ fn write_inode(
 ) -> Result<(), PfsError> {
     let blocks = node.body.len().div_ceil(block).max(1);
     // A directory's size is its entries rounded up to whole blocks; a file's is its own length.
-    // The distinction is not cosmetic: a reader walks a directory by block and reads a file by
-    // size, so a directory sized to its entries would have its last block truncated.
+    // A reader walks a directory by block and reads a file by size.
     let size = if node.mode & imode::DIR == 0 {
         node.body.len()
     } else {
@@ -526,9 +458,7 @@ fn write_inode(
     };
     let size = u64::try_from(size).map_err(|_| PfsError::OutOfRange)?;
 
-    // The first two inodes are the super root and the path table, which are internal to the
-    // filesystem; every other inode is an ordinary file or directory. A console's mount reads
-    // these flags and refuses an inner image whose inodes carry none.
+    // The first two inodes, the super root and the path table, are internal to the filesystem.
     let flags = if index < 2 {
         iflag::BASE | iflag::INTERNAL
     } else {
@@ -565,10 +495,9 @@ mod tests {
 
     const BLOCK: u32 = 0x10000;
 
+    /// A built image reads back with a consistent superblock and every path present.
     #[test]
     fn an_image_this_crate_builds_is_one_it_can_read() {
-        // The whole claim in one test: every offset, count and block number is exercised by
-        // reading the result back, and a wrong one surfaces as a missing file or wrong bytes.
         let tree = Tree::new(ROOT_NAME)
             .with_file("eboot.bin", vec![0xAB; 1000])
             .with_dir(
@@ -602,11 +531,9 @@ mod tests {
         );
     }
 
+    /// Small, empty and multi-block files all read back byte for byte.
     #[test]
     fn every_file_reads_back_with_the_bytes_it_went_in_with() {
-        // Larger than one block, so the block count and the multi-block read are exercised
-        // rather than assumed. Empty, so a zero-length file does not read back as a block of
-        // padding.
         let big: Vec<u8> = (0..70_000_u32)
             .map(|n| u8::try_from(n & 0xFF).unwrap())
             .collect();
@@ -631,14 +558,10 @@ mod tests {
         }
     }
 
+    /// The root directory's `..` entry names the root, not the super root.
     #[test]
     fn the_roots_parent_is_itself_and_not_the_super_root() {
-        // `outer.rs` states this rule for the filesystem it builds and this one did the obvious
-        // thing instead, so the two filesystems in one package disagreed about a shared structure.
-        // Three real packages have `uroot`'s `..` naming `uroot`; this named the super root, and
-        // anything walking up from the mount left the tree rather than staying at its top.
-        //
-        // Checked in the bytes rather than through the reader, which skips `.` and `..`. (D072)
+        // Checked in the bytes, since the reader skips `.` and `..`.
         let image = build(&Tree::new(ROOT_NAME), BLOCK).expect("an image");
         let block = BLOCK as usize;
 
@@ -672,9 +595,9 @@ mod tests {
         );
     }
 
+    /// The super root, inode 0, lists the flat path table.
     #[test]
     fn the_super_root_names_the_root_and_the_path_table() {
-        // Inode 0 is the super root, and what it lists is the entry point to everything else.
         let image = build(&Tree::new(ROOT_NAME), BLOCK).expect("an image");
         let fs = Filesystem::new(Slice::new(&image, 0)).expect("a filesystem");
         let found = fs.walk(0).expect("a walk from the super root");
@@ -685,6 +608,7 @@ mod tests {
         );
     }
 
+    /// Nested directories round-trip with their full path.
     #[test]
     fn nesting_survives_the_round_trip() {
         let tree = Tree::new(ROOT_NAME)
@@ -698,6 +622,7 @@ mod tests {
         assert_eq!(found[0].path, "/a/b/c/deep");
     }
 
+    /// A block size too small to hold an inode is refused.
     #[test]
     fn a_block_too_small_for_an_inode_is_refused_rather_than_silently_wrong() {
         assert!(build(&Tree::new(ROOT_NAME), 0).is_err());

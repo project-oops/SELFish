@@ -9,29 +9,12 @@
 //!       -> PFS  a superblock, inodes, and directories
 //! ```
 //!
-//! and a package nests them twice: an outer filesystem whose only interesting content is a
-//! compressed image, which is itself a filesystem holding the real files.
-//!
-//! # Layered through a trait, because the nesting is the format
-//!
-//! [`Source`] is the seam. Each layer reads through the one beneath without knowing what it
-//! is, which is what lets an outer filesystem be the source for an inner one - the shape the
-//! format actually has, rather than a pipeline flattened for convenience.
-//!
-//! # Reading and writing
-//!
-//! Every layer above can now be written as well as read, and the two halves are checked against
-//! each other rather than against an assertion of what the bytes should be:
-//!
-//! - [`mod@write`] builds the inner filesystem - plain, which is what a package's inner image is.
-//! - [`mod@pfsc`] wraps it. The container does not compress, which is the surprise: the block map
-//!   is a list of offsets and a full-size block is stored as-is.
-//! - [`mod@outer`] builds the outer filesystem - signed and encrypted, holding that container as
-//!   its single file.
-//!
-//! `outer`'s tests run the whole nest and back: build, wrap, sign, encrypt, then decrypt,
-//! decompress, walk, and compare. Nothing in that chain needs a key that cannot be computed -
-//! all of it comes from the content id and the passcode.
+//! A package nests them twice: an outer filesystem whose only content of interest is a
+//! compressed image, which is itself a filesystem holding the real files. [`Source`] is the
+//! seam: each layer reads through the one beneath, so an outer filesystem can be the source
+//! for an inner one. [`mod@write`] builds the plain inner filesystem, [`mod@pfsc`] wraps it,
+//! and [`mod@outer`] builds the signed, encrypted outer filesystem; every key involved comes
+//! from the content id and the passcode.
 
 #![forbid(unsafe_code)]
 
@@ -50,18 +33,11 @@ pub const SECTOR_SIZE: u64 = 0x1000;
 
 /// Offsets within the superblock.
 ///
-/// # Where these come from
-///
-/// Named by `LibOrbisPkg@6434772` (`PFS/PfsStructs.cs`), and every one confirmed against
-/// three real images. Before that source was read this module knew five of them, measured; the
-/// other 95 non-zero bytes were unaccounted for and filesystem writing was blocked on them
-/// (D027). They were not mysterious, only unnamed.
-///
-/// The five that were already here all agreed with the source, which is worth recording in
-/// that order. (D042)
+/// Named by `LibOrbisPkg@6434772` (`PFS/PfsStructs.cs`) and confirmed against three real
+/// images.
 #[allow(
     dead_code,
-    reason = "a faithful record of the format, not a needs-driven subset - a header that omits               fields because no caller wants them is one that becomes wrong the moment a caller               does, and re-adding a field means re-deriving every offset around it"
+    reason = "the full field list of the format; omitting a field means re-deriving every offset around it when a caller needs it"
 )]
 pub(crate) mod superblock {
     /// Format version. `1` in every image examined.
@@ -90,49 +66,33 @@ pub(crate) mod superblock {
     pub(crate) const N_BLOCK: usize = 0x28;
     /// Number of inodes.
     pub(crate) const INODE_COUNT: usize = 0x30;
-    /// **Data block count - the size of the image, in blocks.**
-    ///
-    /// `ndblock * block_size` is the image length exactly, in all three samples: 655, 951 and
-    /// 1152 blocks of 64 KiB. That invariant is checked by [`Filesystem::parse`], and it is
-    /// also, independently, the block count from which a package's `PLAYGO_CHUNK_SHA` table
-    /// starts describing the image. Two facts derived separately that agree.
+    /// Data block count. `ndblock * block_size` is the image length exactly, in all three
+    /// samples; a package's `PLAYGO_CHUNK_SHA` table starts describing the image from it.
     pub(crate) const N_DBLOCK: usize = 0x38;
     /// Number of blocks holding inodes.
     pub(crate) const INODE_BLOCKS: usize = 0x40;
-    /// An inode structure describing the inode block itself.
-    ///
-    /// Measured as "33 non-zero bytes of something" before it had a name; it is a signature
-    /// followed by a block index.
+    /// An inode structure describing the inode block itself: a signature followed by a block
+    /// index.
     pub(crate) const INODE_BLOCK_SIG: usize = 0xB8;
-    /// Unnamed index. `1` in every image examined.
-    ///
-    /// Only written when the image carries a seed. An image without one puts its `1` at
-    /// [`NO_SEED_INDEX`] instead, four bytes earlier.
-    pub(crate) const UNKNOWN_INDEX: usize = 0x36C;
-    /// Where an image with no seed writes its `1`.
-    ///
-    /// The inner filesystem of a package is unseeded and lands here; the outer one is seeded
-    /// and lands at [`UNKNOWN_INDEX`]. Two fields, one measurement, and telling them apart
-    /// needed the writer rather than the reader - nothing reads either.
     /// An index the inner superblock sets to `1`, unexplained.
     ///
-    /// Every real package holds it and this crate wrote zero. Named `UnknownIndex` by
-    /// `LibProsperoPKG` and unexplained there too. Reproduced because it sits in the
-    /// structure a console reads to mount `/app0`. (measured 3/3)
+    /// Every real package holds it. Named `UnknownIndex` by `LibProsperoPKG` and unexplained
+    /// there too. Reproduced because it sits in the structure the hardware reads to mount
+    /// `/app0`.
     pub(crate) const UNKNOWN_D8: usize = 0xD8;
-
+    /// Where an image with no seed writes its `1`: the unseeded inner filesystem of a package
+    /// lands here, the seeded outer one at [`UNKNOWN_INDEX`].
     pub(crate) const NO_SEED_INDEX: usize = 0x368;
-    /// Where the key-derivation seed begins.
-    ///
-    /// **Zero in all three images examined**, which is worth knowing before relying on it: the
-    /// derivation that hashes it is hashing sixteen zero bytes in every sample to hand.
+    /// Unnamed index, `1` in every image examined. Only written when the image carries a
+    /// seed; an image without one puts its `1` at [`NO_SEED_INDEX`].
+    pub(crate) const UNKNOWN_INDEX: usize = 0x36C;
+    /// Where the key-derivation seed begins. Zero in all three images examined, so the
+    /// derivation hashes sixteen zero bytes in every sample.
     pub(crate) const SEED: usize = 0x370;
     /// How long the seed is.
     pub(crate) const SEED_LEN: usize = 16;
-    /// How much of the image the header proper occupies.
-    ///
-    /// The source says `0x380`. This module reads `0x400` because that is the span it slices,
-    /// and the 32 bytes at `0x380` are past the header and not part of it.
+    /// How much of the image the header proper occupies. The 32 bytes from here to
+    /// [`SIZE`] are not part of the header.
     pub(crate) const HEADER_SIZE: usize = 0x380;
     /// How much of the image the superblock occupies.
     pub(crate) const SIZE: usize = 0x400;
@@ -145,10 +105,7 @@ pub const MAGIC: u64 = 0x0133_2A0B;
 
 /// The superblock, read.
 ///
-/// Every field `LibOrbisPkg@6434772` names, so a caller can see what an image says about itself rather
-/// than only what this crate needed in order to walk it. That distinction is what kept
-/// filesystem *writing* blocked: a reader follows four numbers and never looks at the rest, so
-/// the rest stayed unnamed and looked like a wall. (D042)
+/// Every field `LibOrbisPkg@6434772` names, not only the ones walking the filesystem needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Superblock {
@@ -178,7 +135,7 @@ pub struct Superblock {
     pub inode_blocks: u64,
     /// An unnamed index, `1` in every image examined.
     pub unknown_index: u32,
-    /// The key-derivation seed. **Zero in every image examined.**
+    /// The key-derivation seed. Zero in every image examined.
     pub seed: [u8; superblock::SEED_LEN],
 }
 
@@ -219,10 +176,8 @@ impl Superblock {
 
     /// How long the image should be, from what the superblock says.
     ///
-    /// `data_blocks * block_size`, which is the image length exactly in all three samples -
-    /// 655, 951 and 1152 blocks of 64 KiB. A caller handed an image that disagrees has been
-    /// handed a truncated one, and finding that out here beats finding it out three layers
-    /// down in a decompressor.
+    /// `data_blocks * block_size`, the image length exactly in every sample. An image that
+    /// disagrees is truncated.
     #[must_use]
     pub const fn image_len(&self) -> u64 {
         self.data_blocks.saturating_mul(self.block_size as u64)
@@ -249,9 +204,8 @@ pub mod mode {
     pub const IS_64BIT: u16 = 0x2;
     /// The image is encrypted.
     pub const ENCRYPTED: u16 = 0x4;
-    /// Named by `LibOrbisPkg@6434772` as the flag that is always set, and it is: every image examined
-    /// here carries mode `0xD`, which is this bit plus signed plus encrypted. What it means is
-    /// not established, only that its absence has never been seen.
+    /// Named by `LibOrbisPkg@6434772` as the flag that is always set. Every image examined
+    /// carries mode `0xD`: this bit plus signed plus encrypted. Its meaning is unknown.
     pub const UNKNOWN_ALWAYS_SET: u16 = 0x8;
 }
 
@@ -281,8 +235,8 @@ pub(crate) mod dirent {
 
 /// Somewhere bytes can be read from at an offset.
 ///
-/// The seam the whole nesting rests on. A layer reads through this without knowing whether
-/// what is beneath it is a file, a decryptor, or another filesystem.
+/// A layer reads through this without knowing whether what is beneath it is a file, a
+/// decryptor, or another filesystem.
 pub trait Source {
     /// Read `len` bytes from `offset`.
     ///
@@ -321,20 +275,18 @@ impl Source for Slice<'_> {
 
 /// Reading through a reference, so a layer can be shared rather than moved.
 ///
-/// The nesting needs this: an outer filesystem is parsed from a decryption layer, and the
-/// image inside it is then read from that *same* layer at an offset the filesystem supplied.
-/// Without this the filesystem would have to give the layer back, and every wrapper would own
-/// the one beneath it exclusively for no reason.
+/// An outer filesystem is parsed from a decryption layer, and the image inside it is read from
+/// that same layer at an offset the filesystem supplies.
 impl<S: Source + ?Sized> Source for &S {
     fn read(&self, offset: u64, len: usize) -> Result<Vec<u8>, PfsError> {
         (**self).read(offset, len)
     }
 }
+
 /// A window onto part of another source.
 ///
-/// What makes the nesting expressible: an inode's contents are a byte range of the
-/// filesystem holding it, and the image inside a package is exactly that - one file in an
-/// outer filesystem, which is itself a whole filesystem.
+/// An inode's contents are a byte range of the filesystem holding it, and the image inside a
+/// package is one such file.
 #[derive(Debug)]
 pub struct Region<S: Source> {
     inner: S,
@@ -371,13 +323,9 @@ impl<S: Source> Source for Region<S> {
 
 /// The encryption layer: AES-XTS over fixed-size sectors.
 ///
-/// # Written out rather than taken from a crate
-///
-/// The tweak is the sector index encrypted under one key, then multiplied through
-/// GF(2^128) once per sixteen bytes; the data is decrypted under another. Standard XTS,
-/// except for which sectors are exempt - the first few are stored in the clear, and how many
-/// depends on the filesystem's block size. That exemption is why this is written here rather
-/// than handed to a general implementation: it is a property of the container, not of XTS.
+/// Standard XTS, except that the first few sectors are stored in the clear and how many
+/// depends on the filesystem's block size. That exemption belongs to the container, not to
+/// XTS, so the cipher is written out here.
 pub struct Xts<S: Source> {
     inner: S,
     tweak: aes::Aes128,
@@ -452,8 +400,7 @@ impl<S: Source> Xts<S> {
 /// Multiply the tweak by the generator in GF(2^128).
 ///
 /// A left shift across the whole block, with the carry out of the top reduced by the
-/// polynomial. Written as its own function because it is the one piece of XTS that is easy to
-/// get subtly wrong and produces plausible noise when it is.
+/// polynomial. A mistake here produces plausible noise rather than an error.
 fn next_tweak(tweak: [u8; 16]) -> [u8; 16] {
     let mut out = [0_u8; 16];
     let mut carry = 0_u8;
@@ -524,8 +471,8 @@ impl<S: Source> Source for Xts<S> {
 
 /// The compression layer: fixed-size blocks, each zlib-compressed, addressed through a map.
 ///
-/// A block whose map entry spans exactly the block size is stored uncompressed. That is the
-/// only signal - there is no per-block flag - so the size comparison *is* the format.
+/// A block whose map entry spans exactly the block size is stored uncompressed. There is no
+/// per-block flag.
 #[derive(Debug)]
 pub struct Compressed<S: Source> {
     inner: S,
@@ -674,9 +621,7 @@ impl<S: Source> Filesystem<S> {
     ///
     /// If the superblock cannot be read or describes a filesystem with no blocks.
     pub fn new(source: S) -> Result<Self, PfsError> {
-        // The whole superblock, checked. A source that is not a filesystem otherwise reads as
-        // one with an absurd block size, and the first error a caller sees is about inodes
-        // rather than about having been handed the wrong bytes.
+        // Checking the magic first reports wrong bytes as such, not as an absurd block size.
         let header = source.read(0, superblock::SIZE)?;
         let sb = Superblock::parse(&header)?;
         let block_size = u64::from(sb.block_size);
@@ -744,9 +689,8 @@ impl<S: Source> Filesystem<S> {
 
     /// The layer this filesystem was parsed from.
     ///
-    /// Needed because the nesting reads *past* the filesystem abstraction: the image inside a
-    /// package is a byte range of the layer beneath, located by an inode but not read through
-    /// one.
+    /// The image inside a package is a byte range of the layer beneath, located by an inode
+    /// but not read through one.
     #[must_use]
     pub const fn source(&self) -> &S {
         &self.source
@@ -802,7 +746,7 @@ impl<S: Source> Filesystem<S> {
         out: &mut Vec<Found>,
         depth: usize,
     ) -> Result<(), PfsError> {
-        // A filesystem is data, and data can describe a cycle. Bounded rather than trusted.
+        // Directory data can describe a cycle, so depth is bounded.
         if depth > 64 {
             return Err(PfsError::Malformed("directory nesting is implausibly deep"));
         }
@@ -911,8 +855,8 @@ pub enum PfsError {
     NoSuchInode(usize),
     /// The magic is not a filesystem's.
     ///
-    /// Carries what was found, because the commonest wrong answer is being handed the package
-    /// rather than the image inside it.
+    /// Carries what was found; the commonest cause is being handed the package rather than
+    /// the image inside it.
     NotAFilesystem(u64),
 }
 
@@ -943,6 +887,7 @@ impl std::error::Error for PfsError {}
 mod tests {
     use super::{Filesystem, PfsError, Slice, Source, Xts, next_tweak};
 
+    /// A slice treats its base as offset zero.
     #[test]
     fn a_slice_reads_from_its_base() {
         let bytes: Vec<u8> = (0..64_u8).collect();
@@ -951,6 +896,7 @@ mod tests {
         assert_eq!(source.read(4, 2).expect("reads"), vec![20, 21]);
     }
 
+    /// A read past the end is an error, not a short read.
     #[test]
     fn a_read_past_the_end_is_refused_rather_than_truncated() {
         let bytes = vec![0_u8; 8];
@@ -959,10 +905,9 @@ mod tests {
         assert_eq!(source.read(8, 1), Err(PfsError::OutOfRange));
     }
 
+    /// The XTS tweak shifts left and reduces a top carry by the polynomial.
     #[test]
     fn the_tweak_shifts_left_and_reduces_on_carry() {
-        // The one piece of XTS easy to get subtly wrong. Wrong, it produces plausible noise
-        // rather than an error, so it is checked against hand-computed values.
         let mut tweak = [0_u8; 16];
         tweak[0] = 1;
         assert_eq!(next_tweak(tweak)[0], 2, "an ordinary shift");
@@ -975,6 +920,7 @@ mod tests {
         assert_eq!(reduced[15], 0x00, "and the top bit is gone");
     }
 
+    /// The XTS tweak carries a bit from one byte into the next.
     #[test]
     fn the_tweak_carries_between_adjacent_bytes() {
         let mut tweak = [0_u8; 16];
@@ -984,10 +930,9 @@ mod tests {
         assert_eq!(next[1], 0x01, "the bit moved up a byte");
     }
 
+    /// Sectors below the clear-text threshold pass through undecrypted.
     #[test]
     fn sectors_below_the_threshold_are_left_alone() {
-        // The container's own exemption rather than a property of XTS: the first sectors are
-        // stored in the clear and decrypting them would corrupt the superblock.
         let plain: Vec<u8> = (0..=255_u8).cycle().take(0x2000).collect();
         let source = Slice::new(&plain, 0);
         let xts = Xts::new(source, &[0_u8; 16], &[1_u8; 16], 1).expect("keys");
@@ -1001,6 +946,7 @@ mod tests {
         assert_ne!(second, plain[0x1000..0x1010], "sector 1 is not exempt");
     }
 
+    /// An XTS key that is not sixteen bytes is refused.
     #[test]
     fn a_key_of_the_wrong_length_is_refused() {
         let bytes = vec![0_u8; 0x1000];
@@ -1010,14 +956,10 @@ mod tests {
         );
     }
 
+    /// A superblock with a zero block size is refused before anything divides by it.
     #[test]
     fn a_superblock_claiming_a_zero_block_size_is_refused() {
-        // Everything downstream divides by it.
-        //
-        // The magic has to be right for this to reach the check it is about. Zeroed bytes now
-        // fail earlier and for a better reason, which is what the test below covers - leaving
-        // this one asserting the earlier failure would have quietly stopped testing division
-        // by zero at all.
+        // The magic must be valid for the block-size check to be reached.
         let mut bytes = vec![0_u8; 0x400];
         let at = crate::superblock::MAGIC;
         bytes[at..at + 8].copy_from_slice(&crate::MAGIC.to_le_bytes());
@@ -1027,11 +969,9 @@ mod tests {
         );
     }
 
+    /// Bytes without the filesystem magic are reported as not a filesystem.
     #[test]
     fn bytes_that_are_not_a_filesystem_say_so_rather_than_failing_downstream() {
-        // The commonest wrong answer is being handed the package rather than the image inside
-        // it, and without this the first complaint is about an absurd block size or an inode
-        // table - neither of which points at the actual mistake.
         let bytes = vec![0_u8; 0x400];
         assert_eq!(
             Filesystem::new(Slice::new(&bytes, 0)).map(|_| ()),

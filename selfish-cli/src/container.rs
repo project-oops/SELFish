@@ -39,7 +39,7 @@ pub(crate) fn describe(path: &Path) -> Result {
 /// `selfish audit`: a real container's fixed header rows against the format table.
 ///
 /// What kind of container this is prints before the row count: a container written from this
-/// table matches every row whatever it is, so the kind has to be read first. (D092)
+/// table matches every row whatever it is, so the kind has to be read first.
 pub(crate) fn audit(file: &Path) -> Result {
     let bytes = std::fs::read(file)?;
     let result = match selfish_container::audit(&bytes) {

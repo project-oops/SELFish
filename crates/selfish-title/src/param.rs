@@ -1,28 +1,10 @@
-//! `param.json` - what the current generation uses instead of `PARAM.SFO`.
+//! `param.json` - what Prospero-generation titles carry instead of `PARAM.SFO`.
 //!
-//! JSON, and a large schema of which a handful of fields matter to anything outside the
-//! console's own store. Modelled as **the fields this project has grounds for, plus
-//! everything else kept verbatim** - see below, because that shape is the whole design.
+//! Named accessors cover the fields with a citable meaning; the parsed document underneath is
+//! kept verbatim, so every other key survives a round trip and none is guessed at.
 //!
-//! # Why the rest is kept rather than dropped
-//!
-//! A title's `param.json` carries dozens of keys, most of them store metadata nobody here has
-//! a citable meaning for. Two obvious designs both fail:
-//!
-//! - A struct of known fields **drops** the rest. Read a real file, write it back, and it
-//!   comes out shorter than it went in. Principle 4 says a round trip is a test, and this one
-//!   would fail on every real file.
-//! - Guessing at the unknown keys is the invention principle 5 forbids.
-//!
-//! So: named accessors for the fields with grounds, and the parsed document underneath,
-//! unmodified. A writer emits what it read plus what it changed, and nothing silently
-//! disappears.
-//!
-//! # The title name is not one field
-//!
-//! `localizedParameters` is a map of locale to a block containing `titleName`, with a
-//! `defaultLanguage` naming which one to prefer. Reading the first entry gives a Japanese
-//! title for a title that ships in twelve languages - right shape, wrong answer, no error.
+//! The title name is per locale: `localizedParameters` maps a locale to a block containing
+//! `titleName`, and its `defaultLanguage` names the one to prefer.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -54,8 +36,8 @@ impl Param {
 
     /// Write it back.
     ///
-    /// Two-space indented, which is what the files this was measured against use. The
-    /// key order is preserved from the document as read.
+    /// Two-space indented, as the measured files are. Key order is preserved from the
+    /// document as read.
     ///
     /// # Errors
     ///
@@ -89,12 +71,8 @@ impl Param {
 
     /// The application category, where the file states one.
     ///
-    /// See [`category`] for known category types (`BIG_APP`, `SYSTEM_APP`, etc.)
-    /// and their hardware/arbitration implications.
-    ///
-    /// Accepts a string as well as a number, because dumping tools write both. The console's
-    /// own files use a number; a reader that refuses the string form reports a title as
-    /// having no category rather than reporting the tool as sloppy.
+    /// See [`category`] for the known values. Accepts a string as well as a number: the
+    /// vendor's files use a number, and dumping tools write both.
     #[must_use]
     pub fn category(&self) -> Option<i64> {
         let value = self.document.get("applicationCategoryType")?;
@@ -106,39 +84,28 @@ impl Param {
 
 /// Application category types (`applicationCategoryType` in `param.json`).
 ///
-/// Dictates Direct Memory (DMEM) allocation budget, HDMI video out bus ownership
-/// via `SceSysAvControl`, and process lifecycle / multitasking behavior.
-/// Category is orthogonal to process privilege (`paid` / Authority ID).
+/// The category sets the direct-memory budget, video-out bus ownership and process
+/// lifecycle. It is independent of process privilege (`paid`, the authority id).
 pub mod category {
-    /// Big App / Native Game (`0`):
-    /// - Direct Memory (DMEM): Full budget (~12.5 GB on PS5, ~5.5 GB on PS4).
-    /// - Video Out: Exclusive primary HDMI scanout (`OBS_VIDEO_BUS_MAIN` / bus 0).
-    /// - Lifecycle: Foreground exclusive. Launching another Big App suspends or terminates.
-    /// - Requirements: Dynamic linker enforces `/app0/sce_module/libc.prx`. Gated by
-    ///   `PFAuthClient` entitlement check (requires `pltauth-patch` under kstuff).
+    /// Big app, a native game. Full direct-memory budget (about 12.5 GB on Prospero-generation
+    /// and 5.5 GB on Orbis-generation hardware) and exclusive primary scanout (video bus 0).
+    /// Foreground-exclusive; the dynamic linker requires `/app0/sce_module/libc.prx`, and
+    /// launch is gated by a `PFAuthClient` entitlement check.
     pub const BIG_APP: i64 = 0;
 
-    /// System App (`65536` / `0x10000`):
-    /// - Direct Memory (DMEM): 0 bytes granted by Resource Arbitrator (userland `mmap`/`malloc` only).
-    /// - Video Out: Denied primary HDMI scanout (`sceVideoOutOpen` fails with `0x80290001`).
-    /// - Lifecycle: Background utility / daemon / standalone tool.
-    /// - Requirements: Does not require `libc.prx` or `pltauth-patch`.
+    /// System app. No direct memory is granted (userland `mmap`/`malloc` only), and
+    /// `sceVideoOutOpen` on the primary scanout fails with `0x80290001`. Runs as a background
+    /// utility and needs no `libc.prx`.
     pub const SYSTEM_APP: i64 = 0x10000;
 
-    /// Mini App (`131072` / `0x20000`):
-    /// - Direct Memory (DMEM): Constrained budget (~256 MB - 512 MB).
-    /// - Video Out: Secondary overlay / system compositor layer.
-    /// - Lifecycle: Concurrent; runs alongside a Big App without preempting it.
+    /// Mini app. A constrained direct-memory budget (about 256-512 MB) and a secondary
+    /// compositor layer; runs alongside a big app without preempting it.
     pub const MINI_APP: i64 = 0x20000;
 
-    /// Daemon (`3`):
-    /// - Direct Memory (DMEM): Minimal / system memory pool.
-    /// - Video Out: None (headless background daemon).
+    /// Daemon. A minimal memory pool and no video out.
     pub const DAEMON: i64 = 3;
 
-    /// Media App (`262144` / `0x40000`):
-    /// - Direct Memory (DMEM): Custom media streaming budget.
-    /// - Video Out: Dedicated HDCP / protected video path.
+    /// Media app. Its own media-streaming memory budget and a protected video path.
     pub const MEDIA_APP: i64 = 0x40000;
 }
 
@@ -151,10 +118,7 @@ impl Param {
 
     /// The title name in the default language, falling back to any locale that has one.
     ///
-    /// The fallback is deliberate and it is second: a file can carry locales without naming a
-    /// default, and refusing to name the title at all would be a worse answer than an
-    /// arbitrary correct one. Preferring the default when there is one is what stops the
-    /// arbitrary case from being the normal case.
+    /// The fallback covers a file that carries locales without naming a default.
     #[must_use]
     pub fn title_name(&self) -> Option<&str> {
         let locales = self.localized()?;
@@ -241,8 +205,8 @@ impl Param {
 
     /// Whether this metadata document represents a native Prospero title.
     ///
-    /// True when the title ID follows the current generation prefix (`PPSA` or `NPXS`)
-    /// or explicitly declares native category parameters.
+    /// True when the title id carries a Prospero-generation prefix (`PPSA`, `NPXS`, or this
+    /// collection's `OBSC`) or the category is a system-level one.
     #[must_use]
     pub fn is_prospero_native(&self) -> bool {
         if self.title_id().is_some_and(|id| {
@@ -289,9 +253,8 @@ impl Param {
 
     /// Set the fields a homebrew title needs, leaving everything else alone.
     ///
-    /// The four measured off hardware, and no more. Anything a real title also carries is
-    /// store metadata this project has no citable meaning for, and writing a guessed value
-    /// into it would be worse than leaving it out.
+    /// The four fields measured on the hardware and no more; other store metadata has no
+    /// citable meaning here and is not guessed at.
     pub fn set_basics(&mut self, title_id: &str, title_name: &str, language: &str, category: i64) {
         self.document
             .insert("titleId".to_owned(), Value::String(title_id.to_owned()));
@@ -386,16 +349,16 @@ mod tests {
         }
     }"#;
 
+    /// The default language picks the title name, not the first locale in the file.
     #[test]
     fn the_default_language_decides_the_title_and_not_the_first_locale() {
-        // `ja-JP` comes first in the file. A reader that takes the first entry gets a
-        // Japanese title for an English-default title: right shape, wrong answer, no error.
         let param = Param::parse(REAL_SHAPE.as_bytes()).expect("a document");
         assert_eq!(param.title_name(), Some("A Name"));
         assert_eq!(param.default_language(), Some("en-US"));
         assert_eq!(param.title_name_in("ja-JP"), Some("本当"));
     }
 
+    /// A file with no default language still yields a title name.
     #[test]
     fn a_file_without_a_default_still_names_its_title() {
         let param = Param::parse(br#"{"localizedParameters":{"fr-FR":{"titleName":"Un Nom"}}}"#)
@@ -404,10 +367,9 @@ mod tests {
         assert_eq!(param.default_language(), None);
     }
 
+    /// Keys without an accessor survive a round trip.
     #[test]
     fn keys_this_module_does_not_name_survive_a_round_trip() {
-        // Principle 4. A struct of known fields would drop `somethingUndocumented`, and the
-        // file would come back shorter than it went in on every real title.
         let param = Param::parse(REAL_SHAPE.as_bytes()).expect("a document");
         let written = param.to_bytes().expect("bytes");
         let again = Param::parse(&written).expect("a document");
@@ -415,9 +377,9 @@ mod tests {
         assert!(again.document().contains_key("somethingUndocumented"));
     }
 
+    /// A category written as a string is read, and a non-numeric one is absent.
     #[test]
     fn a_category_written_as_a_string_is_read_rather_than_dropped() {
-        // Real dumping tools write both forms.
         assert_eq!(
             Param::parse(br#"{"applicationCategoryType":0}"#)
                 .unwrap()
@@ -439,6 +401,7 @@ mod tests {
         );
     }
 
+    /// `set_basics` writes the four measured fields and nothing else.
     #[test]
     fn the_four_measured_fields_write_a_document_that_reads_back() {
         let mut param = Param::new();
@@ -456,6 +419,7 @@ mod tests {
         );
     }
 
+    /// `set_basics` on an existing document leaves other keys and locales alone.
     #[test]
     fn setting_the_basics_leaves_other_keys_alone() {
         let mut param = Param::parse(REAL_SHAPE.as_bytes()).expect("a document");
@@ -471,22 +435,23 @@ mod tests {
         );
     }
 
+    /// `languages` lists locale blocks only, never the `defaultLanguage` sibling key.
     #[test]
     fn languages_lists_only_locales_that_name_a_title() {
-        // `defaultLanguage` is a sibling of the locale blocks, not one of them, and listing
-        // it as a language would offer callers a locale that has no block.
         let param = Param::parse(REAL_SHAPE.as_bytes()).expect("a document");
         let mut languages = param.languages();
         languages.sort_unstable();
         assert_eq!(languages, ["en-US", "ja-JP"]);
     }
 
+    /// JSON that is not an object, and text that is not JSON, are refused.
     #[test]
     fn json_that_is_not_an_object_is_refused() {
         assert!(Param::parse(b"[1,2,3]").is_err());
         assert!(Param::parse(b"not json").is_err());
     }
 
+    /// A full Prospero-generation descriptor round-trips and is detected as native.
     #[test]
     fn native_prospero_title_configuration_and_detection() {
         let mut param = Param::new();
@@ -519,6 +484,7 @@ mod tests {
         assert!(parsed.is_prospero_native());
     }
 
+    /// The category constants hold their values and `set_basics` writes them.
     #[test]
     fn category_constants_and_set_basics() {
         assert_eq!(category::BIG_APP, 0);
@@ -535,6 +501,7 @@ mod tests {
         assert_eq!(param.category(), Some(category::SYSTEM_APP));
     }
 
+    /// A subtitle set in one locale reads back there and through a round trip.
     #[test]
     fn title_sub_name_reads_and_sets() {
         let mut param = Param::new();

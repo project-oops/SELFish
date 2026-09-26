@@ -48,10 +48,7 @@ fn main() {
             let major = (packed >> 40) & 0xFF;
             let minor = (packed >> 32) & 0xFF;
             let name = name_at(packed & 0xFFFF_FFFF);
-            // The raw word beside the decode, because a decode that reads cleanly is not
-            // evidence the word is well formed - every field this splits out is a guess about
-            // where the boundaries are, and a loader that stops part-way through the table
-            // will have stopped on something this prints as ordinary. (obscene#D241)
+            // The raw word beside the decode, since the field boundaries are not confirmed.
             println!("   id {id:>3}  module {major}.{minor}  {name:<26} raw {packed:#018x}");
         }
         println!("   import libraries (id, library version, name):");
@@ -62,12 +59,7 @@ fn main() {
             let name = name_at(packed & 0xFFFF_FFFF);
             println!("   id {id:>3}  version {version}  {name:<26} raw {packed:#018x}");
         }
-        // The attribute word beside the identity word.
-        //
-        // Every library gets both, and only the identity word decodes into something a human
-        // recognises - so a wrong attribute is invisible in a listing that shows names and ids
-        // and looks entirely correct. That is exactly the shape of a module a loader maps and
-        // then declines to bind. (obscene#D241)
+        // Every library also has an attribute word, which a listing of names and ids hides.
         let entries = elf.dynamic_entries().unwrap_or_default();
         println!("   library attributes (id, attribute word):");
         for (tag, value) in &entries {

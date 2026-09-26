@@ -1,26 +1,12 @@
-//! The dynamic table a loader actually reads.
+//! The vendor dynamic table: string table, symbol table, relocations and library lists.
 //!
-//! A vendor module carries two dynamic tables. The standard one is present and ignored; the
-//! one that matters lives in `PT_SCE_DYNLIBDATA` and is described by tags whose values are
-//! **offsets into that segment** rather than virtual addresses. Everything else about an
-//! executable is preamble - this is where the string table, the symbol table, the
-//! relocations and the library lists are.
+//! [`Table::Orbis`] gives every table a vendor tag in the `0x6100_00xx` range and its values
+//! are offsets into `PT_SCE_DYNLIBDATA`. [`Table::Prospero`] uses the standard ELF numbers
+//! for the standard tables and vendor tags only for the vendor's own. Reading one with the
+//! other's tags yields plausible but wrong offsets.
 //!
-//! # Two conventions, and which one a module uses is not cosmetic
-//!
-//! [`Table::Orbis`] gives every table a vendor tag in the `0x6100_00xx` range.
-//! [`Table::Prospero`] uses the **ordinary ELF numbers** for the standard tables and keeps
-//! vendor tags only for the four things the standard has no name for. Both appear in the
-//! wild; a loader that assumes one reads garbage from the other, and the garbage is
-//! plausible - an offset is an offset.
-//!
-//! # The library list is not `DT_NEEDED`
-//!
-//! An encoded symbol name carries a library id, and those ids index the **vendor's** import
-//! table rather than `DT_NEEDED`. The two are different lengths with different contents, and
-//! indexing the wrong one produces attributions that fit and mean nothing: a graphics driver
-//! appearing to export socket functions. Worth stating twice because it is the mistake this
-//! module exists to make impossible.
+//! An encoded symbol name's library id indexes the vendor import-library table, not
+//! `DT_NEEDED`; the two lists differ in length and content.
 
 use core::fmt;
 
@@ -76,25 +62,15 @@ pub mod vendor {
     /// The value is an offset like the table tags, and it is zero: the fingerprint occupies
     /// the head of the segment and the string table begins after it. See
     /// [`crate::dynlib::FINGERPRINT_SIZE`].
-    ///
-    /// This said "not emitted by anything here", which was true and was a gap rather than a
-    /// decision - the region it points at is *structural*, and leaving it out moved every
-    /// table in the segment.
     pub const FINGERPRINT: u64 = 0x6100_0007;
     /// The module's own filename, as an offset into the string table.
     ///
-    /// A real executable puts the whole path its build produced here -
-    /// `C:/Users/.../ORBIS_Debug/itemz_loader.elf` - which is a filename in the loosest sense
-    /// and says more about the machine that built it than about the module.
-    ///
-    /// **Required for a shared library**, which is how it was found. A loader that is missing
-    /// it counts what it has and refuses the file:
+    /// Required for a shared library; without it a loader refuses the file, counting one
+    /// module-info tag and zero of these:
     ///
     /// ```text
     /// [rtld] ERROR preprocess_dt_entries:9600: C: orig fn 0  mod info 1
     /// ```
-    ///
-    /// - one module-info tag, and zero of these.
     pub const ORIGINAL_FILENAME: u64 = 0x6100_0009;
     /// The symbol hash table.
     pub const HASH: u64 = 0x6100_0025;
@@ -125,19 +101,10 @@ pub mod vendor {
     /// Size of the whole symbol table.
     pub const SYMTABSZ: u64 = 0x6100_003F;
 
-    /// This module's own name and version, in the legacy convention.
+    /// This module's own name and version, in the Orbis convention.
     ///
-    /// # Two ranges, and the low one is not documented anywhere else
-    ///
-    /// The module and library tables have vendor numbers in **both** conventions, but not the
-    /// same ones: the legacy convention puts them at `0x0D`-`0x19` and the current one at
-    /// `0x43`-`0x49`. A reader written from retail material sees only the high range, and a
-    /// writer targeting loaders emits only the low one - so each side documents half.
-    ///
-    /// This was found by reading a module that carries 352 entries at `0x6100_000F` and
-    /// `0x6100_0015` with a table that only knew the high numbers, and reporting *zero*
-    /// import libraries. Nothing was malformed; the reader simply looked in the wrong place
-    /// and found nothing there, which is what a wrong tag number always looks like.
+    /// The module and library tables have vendor tags in both conventions, at different
+    /// numbers: `0x0D`-`0x19` for Orbis and `0x43`-`0x49` for Prospero.
     pub const MODULE_INFO: u64 = 0x6100_000D;
     /// A module this one needs. Orbis convention.
     pub const NEEDED_MODULE_ORBIS: u64 = 0x6100_000F;
@@ -156,22 +123,17 @@ pub mod vendor {
     pub const MODULE_INFO_PROSPERO: u64 = 0x6100_0043;
     /// A module this one needs, indexed by an import's module id.
     ///
-    /// One reader calls this `SCE_IMPORT_MODULE` and one writer calls it `NEEDED_MODULE`.
-    /// Same tag, two names, and neither is wrong - recorded here rather than resolved,
-    /// because a name is a reading and the number is the fact.
+    /// Also known as `SCE_IMPORT_MODULE`.
     pub const NEEDED_MODULE_PROSPERO: u64 = 0x6100_0045;
     /// Module attributes.
     pub const MODULE_ATTR_PROSPERO: u64 = 0x6100_0047;
     /// The library table an import's library id indexes.
     ///
-    /// **Not `DT_NEEDED`.** Identified by counting: it holds exactly as many entries as
-    /// there are distinct library ids, where `DT_NEEDED` does not.
+    /// Not `DT_NEEDED`: it holds exactly as many entries as there are distinct library ids.
     pub const IMPORT_LIB_PROSPERO: u64 = 0x6100_0049;
     /// A library this module exports.
     ///
-    /// **Not established for the prospero convention.** Retail main executables export
-    /// nothing or one library and no tag for it was identified, so this value is the orbis
-    /// one in both conventions rather than a guess.
+    /// Unconfirmed: no Prospero-convention module examined carries this tag.
     pub const EXPORT_LIB_PROSPERO: u64 = 0x6100_004D;
 }
 
@@ -183,24 +145,18 @@ pub const ENTRY_SIZE: u64 = 0x18;
 
 /// Which tag convention a module uses.
 ///
-/// No `Default`, for the same reason [`selfish_abi::Generation`] has none: a caller that has
-/// not decided has a question to answer rather than a value to omit, and the wrong choice
-/// here is read as plausible offsets rather than as an error.
+/// No `Default`, like [`selfish_abi::Generation`]: the caller chooses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Table {
-    /// Vendor tags for everything. What every loader examined accepts (Orbis / PS4).
+    /// Vendor tags for everything; the Orbis-generation convention every loader accepts.
     Orbis,
-    /// Standard tags for the standard tables, vendor tags for the vendor's own (Prospero / PS5).
-    ///
-    /// Every number in this convention was read out of a retail module rather than chosen.
+    /// Standard tags for the standard tables and vendor tags for the vendor's own; the
+    /// Prospero-generation convention, with numbers read from real modules.
     Prospero,
 }
 
-/// The tag numbers for one convention, resolved together.
-///
-/// A struct rather than a function per tag, because a convention that is *half* applied is
-/// worse than either whole one: it produces a table a loader parses successfully and reads
-/// the wrong fields from.
+/// The tag numbers for one convention, resolved together so a convention is never half
+/// applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(
     missing_docs,
@@ -210,11 +166,11 @@ pub struct Tags {
     pub strtab: u64,
     pub strsz: u64,
     pub symtab: u64,
-    /// Unchanged between conventions: retail modules carry this vendor tag too.
+    /// The same vendor tag in both conventions.
     pub symtabsz: u64,
     pub syment: u64,
     pub hash: u64,
-    /// Unchanged between conventions, as `symtabsz`.
+    /// The same vendor tag in both conventions, as `symtabsz`.
     pub hashsz: u64,
     pub pltgot: u64,
     pub pltrelsz: u64,
@@ -282,21 +238,9 @@ impl Tags {
 
     /// Which convention a module is using, from the tags it actually carries.
     ///
-    /// # The prospero convention is identified by its *identity* tags, not its string table
-    ///
-    /// The first version of this decided on the string table alone, reasoning that it is
-    /// mandatory and that the two conventions number it unmistakably - `5` against
-    /// `0x6100_0035`. Half of that is true. The orbis number is unmistakable; **`5` is also
-    /// plain `DT_STRTAB`**, which every ordinary ELF on earth carries, so an unrelated shared
-    /// object was reported as a prospero-convention vendor module.
-    ///
-    /// The prospero convention's identity tags - module info, needed module, import library -
-    /// are all in the vendor range and cannot be confused with anything standard. They are
-    /// what a prospero-convention module is recognised by. The string table stays as the
-    /// orbis test, where it genuinely is unambiguous.
-    ///
-    /// `None` for a module that carries neither, which is the honest answer for an ordinary
-    /// ELF rather than a coin toss between two conventions it uses neither of.
+    /// Orbis is recognised by its vendor string-table tag. Prospero is recognised by its
+    /// module-info, needed-module or import-library tag, since its string-table tag is plain
+    /// `DT_STRTAB`, which every ordinary ELF carries. `None` for an ordinary ELF.
     #[must_use]
     pub fn detect(entries: &[(u64, u64)]) -> Option<Table> {
         let prospero = Self::of(Table::Prospero);
@@ -347,7 +291,7 @@ pub struct Info {
     pub hash: u64,
     /// The vendor's import-library table, as raw packed values.
     ///
-    /// **Not `needed`.** An import's library id indexes this.
+    /// An import's library id indexes this, not `needed`.
     pub import_libs: Vec<u64>,
     /// The vendor's module table, indexed by an import's module id.
     pub needed_modules: Vec<u64>,
@@ -409,9 +353,8 @@ impl Info {
 
     /// How many symbols the table holds, from whichever field states it.
     ///
-    /// `symtabsz` where present, since it is exact. Otherwise `None` rather than a guess:
-    /// a symbol count inferred from a table's extent is a count that silently changes when
-    /// something else moves.
+    /// `symtabsz` where present, otherwise `None`; a count is never inferred from a table's
+    /// extent.
     #[must_use]
     pub fn symbol_count(&self) -> Option<u64> {
         if self.symtabsz == 0 || self.syment == 0 {
@@ -433,7 +376,7 @@ pub struct Symbol {
     pub info: u8,
     /// Visibility.
     pub other: u8,
-    /// Section index. Zero means undefined - which for these modules means *imported*.
+    /// Section index. Zero means undefined, which for these modules means imported.
     pub section: u16,
     /// Address, or zero for an import.
     pub value: u64,
@@ -444,8 +387,7 @@ pub struct Symbol {
 impl Symbol {
     /// Whether this symbol is defined elsewhere, and therefore imported.
     ///
-    /// Section index zero. That is the whole test, and it is the one that separates the
-    /// thousands of names a module asks for from the handful it provides.
+    /// Section index zero.
     #[must_use]
     pub const fn is_import(&self) -> bool {
         self.section == 0
@@ -466,27 +408,11 @@ impl Symbol {
 
 /// Read the symbol table out of a vendor segment.
 ///
-/// Offsets in the dynamic table are relative to the segment, not to the file, which is the
-/// distinction that makes reading these tables from a file offset produce plausible garbage.
+/// Offsets in the dynamic table are relative to the segment, not to the file.
 ///
-/// # This does **not** agree with [`Info::symbol_count`] when `symtabsz` is absent
-///
-/// `symbol_count` answers `None` there, and says why in its own doc: a count inferred from a
-/// table's extent silently changes when something else moves. **This function makes exactly
-/// that inference** - with no `symtabsz` it walks to the end of the segment, so its length is
-/// bounded by the segment rather than by the table, and anything trailing the symbols is
-/// decoded as more of them.
-///
-/// The two are deliberately not reconciled, because they are on opposite sides of the line
-/// D091 drew. `symbol_count` is a *claim about the file* and refuses to guess; this is a
-/// *reader* and a reader that stops dead on a missing size field reads nothing at all where it
-/// could read almost everything. What was wrong was that neither said so, so a caller comparing
-/// them had no way to know which of the two answers it was holding.
-///
-/// A caller that needs the exact count rather than a best effort should ask `symbol_count`
-/// first and treat `None` as "this module does not state one". Orbistoun's differential found
-/// `symtabsz` present on all 29 modules of its corpus, so the divergence is latent rather than
-/// observed. (D096)
+/// Without `symtabsz` this walks to the end of the segment, decoding anything after the
+/// symbols as more of them, where [`Info::symbol_count`] answers `None`. A caller that needs
+/// the exact count asks `symbol_count` first (D096).
 ///
 /// # Errors
 ///
@@ -498,9 +424,8 @@ pub fn symbols(segment: &[u8], info: &Info) -> Result<Vec<Symbol>, DynamicError>
     }
     let base = usize::try_from(info.symtab).map_err(|_| DynamicError::TableOutOfRange)?;
 
-    // Bounded by whichever is smaller: what the table says it holds, and what is actually
-    // there. A stated size is a claim, and one larger than the segment asks for an allocation
-    // sized by a file.
+    // Bounded by the smaller of the stated size and what is there, so a bad size field
+    // cannot size the allocation.
     let available = segment.len().saturating_sub(base);
     let stated = usize::try_from(info.symtabsz).unwrap_or(0);
     let span = if stated == 0 || stated > available {
@@ -534,15 +459,12 @@ pub fn symbols(segment: &[u8], info: &Info) -> Result<Vec<Symbol>, DynamicError>
 
 /// An import, resolved as far as the module itself can resolve it.
 ///
-/// The names are what the *importing* module claims. A loader still has to find a module of
-/// that name and a symbol of that hash inside it; this is the question, not the answer.
+/// The names are what the importing module claims; a loader still has to find them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Import<'a> {
     /// Position in the dynamic symbol table.
     ///
-    /// Carried because a relocation names its symbol by index and by nothing else, so this
-    /// is the only thing that joins the two tables. Recovering it afterwards means walking
-    /// the symbol table a second time and hoping the filtering matched.
+    /// A relocation names its symbol only by this index, so it joins the two tables.
     pub index: u32,
     /// The hash the loader looks up.
     pub nid: Nid,
@@ -556,16 +478,15 @@ pub struct Import<'a> {
 
 /// The string table, as a slice of the segment holding it.
 ///
-/// Empty rather than an error when the table says nothing, because a module with no strings
-/// is unusual but not malformed.
+/// Empty rather than an error when the table says nothing; a module with no strings is not
+/// malformed.
 #[must_use]
 pub fn strings<'a>(segment: &'a [u8], info: &Info) -> &'a [u8] {
     let base = usize::try_from(info.strtab).unwrap_or(0);
     let size = usize::try_from(info.strsz).unwrap_or(0);
     let rest = segment.get(base..).unwrap_or_default();
     match rest.get(..size) {
-        // A stated size larger than what is there is a claim the file does not back, and the
-        // rest of the segment is the honest answer.
+        // A stated size larger than what is there falls back to the rest of the segment.
         Some(exact) if size > 0 => exact,
         _ => rest,
     }
@@ -573,9 +494,7 @@ pub fn strings<'a>(segment: &'a [u8], info: &Info) -> &'a [u8] {
 
 /// Every symbol this module imports, with its library and module named where they can be.
 ///
-/// Undefined symbols only - a module's own definitions are in the same table and are not
-/// imports. That test is the section index, and skipping it reports a module as importing
-/// everything it exports.
+/// Undefined symbols only; a module's own definitions share the table.
 ///
 /// # Errors
 ///
@@ -590,9 +509,8 @@ pub fn imports<'a>(segment: &'a [u8], info: &Info) -> Result<Vec<Import<'a>>, Dy
         let Ok(name) = string_at(table, symbol.name_offset) else {
             continue;
         };
-        // A name that does not carry ids is a plain undefined symbol rather than a vendor
-        // import - real modules hold both, and treating the difference as an error stops
-        // the walk on the first one.
+        // A name without ids is a plain undefined symbol, not a vendor import; modules
+        // hold both.
         let Some(encoded) = selfish_nid::decode_symbol_name(name) else {
             continue;
         };
@@ -609,9 +527,7 @@ pub fn imports<'a>(segment: &'a [u8], info: &Info) -> Result<Vec<Import<'a>>, Dy
 
 /// Look a packed table entry up by the id it carries.
 ///
-/// **By id, not by position.** The ids are the module's own numbering and nothing promises
-/// they are dense or in order; indexing the vector directly reads the wrong name whenever
-/// they are not, and reads a plausible one, which is worse.
+/// By id, not by position: the ids are neither dense nor ordered.
 fn named<'a>(strings: &'a [u8], table: &[u64], id: u16) -> Option<&'a str> {
     let offset = table.iter().find_map(|packed| {
         let (entry_id, offset) = split_table_entry(*packed);
@@ -622,18 +538,11 @@ fn named<'a>(strings: &'a [u8], table: &[u64], id: u16) -> Option<&'a str> {
 
 /// The name of a dynamic tag, where this crate has one.
 ///
-/// Here rather than in whatever prints it, so the constants and the names a reader sees
-/// cannot drift apart. **A printer with its own table is a table that goes stale**, and a
-/// stale one reports a tag that has been assigned as unknown - which reads as an open
-/// question that was in fact answered.
+/// Kept beside the constants so printers do not carry their own table. `None` for an
+/// unnamed tag, as [`crate::reloc::kind::name`].
 ///
-/// `None` rather than a placeholder, for the same reason [`crate::reloc::kind::name`] returns
-/// one: an unnamed tag is a thing to go and look up, and a plausible label is how it stops
-/// being noticed.
-///
-/// Only the vendor tags and `DT_NEEDED` are named. The standard numbers are shared with the
-/// current convention's table tags - `5` is both `DT_STRTAB` and the current convention's
-/// string-table tag - so naming them here would print one meaning for a number that has two.
+/// Only the vendor tags and `DT_NEEDED` are named; the other standard numbers double as
+/// Prospero-convention table tags.
 #[must_use]
 pub const fn tag_name(tag: u64) -> Option<&'static str> {
     Some(match tag {
@@ -717,8 +626,7 @@ impl std::error::Error for DynamicError {}
 
 /// The two relocation tables, kept apart.
 ///
-/// A named pair rather than a tuple, because the two are applied differently and swapping
-/// them produces an image that relocates cleanly and jumps to the wrong place.
+/// A named pair rather than a tuple, because the two are applied differently.
 #[derive(Debug, Clone, Default)]
 pub struct Relocations {
     /// `DT_RELA` - data relocations.
@@ -729,9 +637,8 @@ pub struct Relocations {
 
 /// Read both relocation tables out of a vendor segment.
 ///
-/// Offsets are relative to the segment, as everywhere else in this table. A range that runs
-/// past the end yields an empty table rather than an error: the sizes come from the same
-/// tags, and a module with a stale one is still worth reading.
+/// Offsets are relative to the segment. A range that runs past the end yields an empty
+/// table rather than an error.
 #[must_use]
 pub fn relocations(segment: &[u8], info: &Info) -> Relocations {
     Relocations {
@@ -762,6 +669,7 @@ mod tests {
         string_at, symbols, vendor,
     };
 
+    /// The conventions number the tables differently and share only `symtabsz` and `hashsz`.
     #[test]
     fn the_two_conventions_disagree_where_it_matters_and_agree_where_it_does_not() {
         let orbis = Tags::of(Table::Orbis);
@@ -772,17 +680,16 @@ mod tests {
         assert_ne!(orbis.symtab, prospero.symtab);
         assert_ne!(orbis.rela, prospero.rela);
 
-        // The vendor's own tables get vendor tags in both - but **not the same ones**.
+        // The vendor's own tables get vendor tags in both, at different numbers.
         assert_ne!(orbis.import_lib, prospero.import_lib);
         assert_ne!(orbis.module_info, prospero.module_info);
         assert_ne!(orbis.needed_module, prospero.needed_module);
 
-        // Two genuinely are shared, and both were read from retail material carrying them
-        // alongside standard tags.
         assert_eq!(orbis.symtabsz, prospero.symtabsz);
         assert_eq!(orbis.hashsz, prospero.hashsz);
     }
 
+    /// A string-table tag alone identifies Orbis, and the standard one identifies nothing.
     #[test]
     fn the_string_table_alone_identifies_only_the_orbis_convention() {
         assert_eq!(
@@ -795,14 +702,12 @@ mod tests {
             None,
             "the standard number means nothing on its own"
         );
-        // No string table at all is not a convention to guess at.
         assert_eq!(Tags::detect(&[(standard::NEEDED, 1)]), None);
     }
 
+    /// A Prospero-convention table is read with standard tags, not vendor ones.
     #[test]
     fn a_prospero_convention_table_is_not_read_with_vendor_tags() {
-        // The failure this exists to prevent. Read with the wrong convention, every table
-        // address comes back zero and the module looks empty rather than misparsed.
         let entries = [
             (standard::STRTAB, 0x1000),
             (standard::SYMTAB, 0x2000),
@@ -817,6 +722,7 @@ mod tests {
         assert_eq!(info.import_libs.len(), 1);
     }
 
+    /// An Orbis-convention table fills the same fields from vendor tags.
     #[test]
     fn an_orbis_table_reads_the_same_fields_from_different_numbers() {
         let entries = [
@@ -831,11 +737,9 @@ mod tests {
         assert_eq!(info.rela, 0x3000);
     }
 
+    /// The vendor import-library list is kept apart from `DT_NEEDED`.
     #[test]
     fn the_import_library_table_is_kept_apart_from_needed() {
-        // The mistake this module exists to make impossible: an import's library id indexes
-        // the vendor table, and indexing DT_NEEDED instead produces attributions that fit
-        // and mean nothing.
         let entries = [
             (vendor::STRTAB, 0x1000),
             (standard::NEEDED, 0x10),
@@ -848,10 +752,11 @@ mod tests {
         assert_ne!(
             info.needed.len(),
             info.import_libs.len(),
-            "the two lists are different, which is the whole point"
+            "the two lists are different"
         );
     }
 
+    /// A packed entry splits into its top-16-bit id and low-32-bit name offset.
     #[test]
     fn a_packed_table_entry_splits_into_an_id_and_a_name_offset() {
         let (id, offset) = split_table_entry(0x0007_0001_0000_1234);
@@ -859,6 +764,7 @@ mod tests {
         assert_eq!(offset, 0x1234);
     }
 
+    /// `symbol_count` comes from `symtabsz` or is `None`.
     #[test]
     fn the_symbol_count_comes_from_a_stated_size_or_nowhere() {
         let stated = Info {
@@ -868,7 +774,6 @@ mod tests {
         };
         assert_eq!(stated.symbol_count(), Some(5));
 
-        // Not stated is not a licence to infer one.
         let unstated = Info {
             syment: 0x18,
             ..Info::default()
@@ -876,15 +781,9 @@ mod tests {
         assert_eq!(unstated.symbol_count(), None);
     }
 
+    /// Without `symtabsz`, `symbols` reads to the segment's end while `symbol_count` is `None`.
     #[test]
     fn without_a_stated_size_the_reader_infers_a_count_the_info_refuses_to() {
-        // The two answer the same question differently, and until orbistoun's differential
-        // asked about it neither said so. `symbol_count` refuses to infer; `symbols` infers,
-        // because it is a reader and a reader that stops dead on a missing size field reads
-        // nothing where it could read almost everything (D091's line, D096's application).
-        //
-        // Pinned so the divergence stays deliberate. If a caller ever needs them to agree, it
-        // is `symbol_count` that says "this module does not state one".
         let segment = vec![0_u8; SYMBOL_SIZE * 4];
         let unstated = Info {
             syment: SYMBOL_SIZE as u64,
@@ -899,6 +798,8 @@ mod tests {
             "the reader does, from the segment's extent",
         );
     }
+
+    /// `string_at` reads terminated strings and refuses out-of-range or unterminated ones.
     #[test]
     fn strings_are_read_only_where_they_are_actually_terminated() {
         let table = b"\0libSceNet\0libkernel\0";
@@ -914,10 +815,8 @@ mod tests {
             Err(DynamicError::UnterminatedString(0))
         );
     }
-    /// Build a vendor segment holding a string table and a symbol table.
-    ///
-    /// Laid out the way a real one is: strings first, symbols after, offsets relative to the
-    /// segment rather than to the file.
+
+    /// Build a vendor segment's string table; callers append symbols after it.
     fn segment(names: &[&str]) -> (Vec<u8>, Vec<u32>) {
         let mut bytes = vec![0_u8];
         let mut offsets = Vec::new();
@@ -942,8 +841,7 @@ mod tests {
     fn info_for(symtab: usize, count: u64) -> Info {
         Info {
             strtab: 0,
-            // Zero, so the strings run to wherever the symbols start. A stated size would
-            // have to be maintained by every test that adds a name.
+            // Zero, so the strings run to wherever the symbols start.
             strsz: 0,
             symtab: symtab as u64,
             symtabsz: count * SYMBOL_SIZE as u64,
@@ -956,6 +854,7 @@ mod tests {
         (u64::from(id) << 48) | u64::from(offset)
     }
 
+    /// Symbols are read at the stated entry size with binding and type decoded.
     #[test]
     fn symbols_are_read_at_the_stated_entry_size() {
         let (mut bytes, offsets) = segment(&["memcpy"]);
@@ -970,10 +869,9 @@ mod tests {
         assert!(!read[0].is_import(), "a defined symbol is not an import");
     }
 
+    /// A stated size larger than the segment is bounded by the segment.
     #[test]
     fn a_stated_size_larger_than_the_segment_does_not_allocate_by_it() {
-        // The size is a claim. Believing one that runs past the end turns a truncated file
-        // into an allocation sized by whatever the field happened to say.
         let (mut bytes, offsets) = segment(&["memcpy"]);
         let symtab = bytes.len();
         push_symbol(&mut bytes, offsets[0], 0);
@@ -987,6 +885,7 @@ mod tests {
         );
     }
 
+    /// A zero symbol entry size is refused.
     #[test]
     fn a_zero_entry_size_is_refused_rather_than_looped_on() {
         let (mut bytes, offsets) = segment(&["memcpy"]);
@@ -1001,12 +900,9 @@ mod tests {
         ));
     }
 
+    /// An import's library is found by id, not by position; libraries may list id zero last.
     #[test]
     fn a_library_is_found_by_its_id_and_not_by_its_position() {
-        // Real material settled this. A vendor module lists its libraries as ids 1, 2, 3, 0,
-        // with **libkernel last and numbered zero**. Indexing by position attributes its
-        // ninety-six kernel imports to whichever library is listed first, and does it
-        // silently, because the answer is a real library name.
         let (mut bytes, offsets) = segment(&["libSceFios2", "libkernel", "wzvqT4UqKX8#A#A"]);
         let symtab = bytes.len();
         push_symbol(&mut bytes, offsets[2], 0);
@@ -1028,10 +924,9 @@ mod tests {
         );
     }
 
+    /// A defined symbol is not reported as an import.
     #[test]
     fn a_defined_symbol_is_not_reported_as_an_import() {
-        // libc.prx carries 2,676 symbols and imports 109 of them. A reader that skips the
-        // section-index test reports a library as importing everything it provides.
         let (mut bytes, offsets) = segment(&["wzvqT4UqKX8#A#A"]);
         let symtab = bytes.len();
         push_symbol(&mut bytes, offsets[0], 1);
@@ -1043,10 +938,9 @@ mod tests {
         );
     }
 
+    /// A plain undefined symbol without ids is skipped, not an error.
     #[test]
     fn an_undefined_symbol_without_ids_is_skipped_and_not_an_error() {
-        // Modules hold plain undefined symbols alongside vendor imports. Failing on the
-        // first one stops the walk partway and reports a short, plausible list.
         let (mut bytes, offsets) = segment(&["memcpy", "wzvqT4UqKX8#A#A"]);
         let symtab = bytes.len();
         push_symbol(&mut bytes, offsets[0], 0);
@@ -1056,10 +950,9 @@ mod tests {
         assert_eq!(read.len(), 1, "the encoded one, and no error for the other");
     }
 
+    /// An import whose library id is unlisted is kept with no library or module name.
     #[test]
     fn an_unnamed_library_leaves_a_hole_rather_than_dropping_the_import() {
-        // A module whose library table does not list an id still imports the symbol, and a
-        // loader has to see it in order to say what it could not resolve.
         let (mut bytes, offsets) = segment(&["wzvqT4UqKX8#B#B"]);
         let symtab = bytes.len();
         push_symbol(&mut bytes, offsets[0], 0);
@@ -1069,16 +962,17 @@ mod tests {
         assert_eq!(read[0].library, None);
         assert_eq!(read[0].module, None);
     }
+
+    /// An ordinary ELF with `DT_STRTAB` belongs to neither convention.
     #[test]
     fn an_ordinary_elf_belongs_to_neither_convention() {
-        // `DT_STRTAB` is 5, and so is the current convention's string-table tag. Deciding on
-        // that alone reported every shared object on the system as a vendor module.
         assert_eq!(
             Tags::detect(&[(standard::STRTAB, 0x100), (standard::NEEDED, 1)]),
             None
         );
     }
 
+    /// Each convention is recognised by a vendor-range tag only it carries.
     #[test]
     fn each_convention_is_recognised_by_something_only_it_can_carry() {
         assert_eq!(

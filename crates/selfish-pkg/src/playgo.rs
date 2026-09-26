@@ -1,57 +1,35 @@
 //! `playgo-chunk.dat` - package entry `0x1001`, written from `data/pkg-format.tsv`.
 //!
-//! # Why this is computed rather than supplied
+//! The structure is cited from `LibOrbisPkg`'s `PlayGo/ChunkDat.cs`, which writes it, and
+//! shadPS4's `playgo_chunk.h`, which declares it. For a single-chunk title every value is fixed
+//! except the package size and the inner image size, which the builder computes (D099). The
+//! inner size is the length the `PFSC` header records, read by [`crate::write::inner_image_size`].
 //!
-//! It was the last entry a caller had to hand over, and the reason given was that its structure
-//! had no derivation here. That was wrong twice. The structure has **two** independent citable
-//! readings that agree field for field - `LibOrbisPkg`'s `PlayGo/ChunkDat.cs`, which writes it,
-//! and shadPS4's `playgo_chunk.h`, which declares it - and every value in it is fixed for a
-//! single-chunk title except two sizes, both of which this crate already computes.
-//!
-//! The one that looked like a wall is the inner size. `ChunkDat.cs` leaves it zero with the
-//! comment *"must update this to inner pfs image size"*, so it was never an unknown field: it is
-//! the length the `PFSC` header inside the outer filesystem records for its contents, which
-//! [`crate::write::inner_image_size`] reads. (D099)
-//!
-//! # The table is the source, and the whole structure comes from it
-//!
-//! [`chunk_dat`] does not carry a single offset of its own. It walks the `playgo`, `playgo_toc`
-//! and `playgo_body` rows of `data/pkg-format.tsv` and writes each one according to its own
-//! `type` column, then fills the three values a row cannot hold - the content id and the two
-//! sizes. A row added to the table changes the output; a row changed there changes it too.
-//! That is the arrangement `selfish-container` and `selfish-title` already use, for the reason
-//! `CLAUDE.md` gives: a constant that exists in two places is one that will eventually disagree
-//! with itself.
+//! [`chunk_dat`] holds no offsets of its own: it writes each `playgo`, `playgo_toc` and
+//! `playgo_body` row by its `type` column, then fills the content id and the two sizes.
 
 /// The package format table, with its provenance header.
 const FORMAT: &str = include_str!("../../../data/pkg-format.tsv");
 
 /// The groups that make up the structure, in the order they are written.
 ///
-/// Order does not matter for correctness - every row carries its own absolute offset - but it
-/// keeps a dump of the buffer readable next to the table.
+/// Every row carries an absolute offset, so the order only keeps a dump readable.
 const GROUPS: [&str; 3] = ["playgo", "playgo_toc", "playgo_body"];
 
 /// How much of the 128-byte content id field is written.
 ///
-/// A content id is 36 characters. The rest of the field stays zero, which is what both sources
-/// do.
+/// A content id is 36 characters; the rest of the field stays zero, as in both sources.
 const CONTENT_ID_LEN: usize = 36;
 
 /// Build entry `0x1001` for a single-chunk title.
 ///
 /// `package_size` is the finished package - `0x80000` plus the outer image. `inner_size` is the
-/// inner PFS image. Both are what `ChunkDat.FromProject` names in the comments beside the zeros
-/// it leaves for them.
-///
-/// A content id longer than the field is truncated rather than refused: the builder validates
-/// the content id and owns that error, so failing again here would report it twice.
+/// inner PFS image. A content id longer than the field is truncated; the builder validates it.
 ///
 /// # Panics
 ///
-/// If `data/pkg-format.tsv` has lost a row this needs, or holds one that no longer parses. That
-/// is a build-time fact - the table is compiled in - and a table that changed shape while this
-/// code did not is not something to recover from with a plausible zero.
+/// If `data/pkg-format.tsv`, which is compiled in, lacks a row this needs or holds one that
+/// does not parse.
 #[must_use]
 pub fn chunk_dat(content_id: &str, package_size: u64, inner_size: u64) -> Vec<u8> {
     let mut out = vec![0_u8; file_size()];
@@ -111,10 +89,8 @@ struct Row<'a> {
 impl Row<'_> {
     /// Write this row's value at this row's offset, if it has both.
     ///
-    /// A row whose `value` column is `-` is one something else fills in - the content id and the
-    /// two sizes - and a row with no offset is the `(size)` marker. Both are skipped rather than
-    /// guessed at, which is the rule the rest of the repository applies to a field nothing
-    /// establishes.
+    /// A `-` value is filled in by [`chunk_dat`], and a row with no offset is the `(size)`
+    /// marker; both are skipped.
     fn write_into(self, out: &mut [u8]) {
         if self.value == "-" {
             return;
@@ -154,9 +130,7 @@ impl Row<'_> {
 
     /// A `bytes` row: an exact sequence, or one byte repeated to fill the field.
     ///
-    /// The fill case is `reserved`, which both sources set to 32 bytes of `0xFF` rather than
-    /// leaving zero. Writing it as `ff` with a size of 32 keeps the table readable; spelling out
-    /// thirty-two identical bytes would not.
+    /// The fill case is `reserved`, written in the table as `ff` with a size of 32.
     ///
     /// # Panics
     ///
@@ -277,19 +251,20 @@ mod tests {
         chunk_dat(CONTENT_ID, PACKAGE_SIZE, INNER_SIZE)
     }
 
+    /// The structure's length comes from the table and is 416 bytes.
     #[test]
     fn the_length_comes_from_the_table_and_is_the_one_both_sources_write() {
         assert_eq!(file_size(), 416);
         assert_eq!(built().len(), 416);
     }
 
+    /// The magic is written as the bytes `plgo`, not as a byte-swapped integer.
     #[test]
     fn the_magic_is_bytes_rather_than_a_number() {
-        // Stored as `70 6c 67 6f` rather than as shadPS4's `0x6F676C70`, because a magic held
-        // as an integer and written back is a magic written backwards. (D002)
         assert_eq!(&built()[0x00..0x04], b"plgo");
     }
 
+    /// The four header counts are one, describing a single-chunk title.
     #[test]
     fn the_four_counts_describe_a_single_chunk_title() {
         let out = built();
@@ -302,13 +277,13 @@ mod tests {
         }
     }
 
+    /// The reserved field is filled with `0xFF`, not left zero.
     #[test]
     fn reserved_is_filled_with_ff_rather_than_left_zero() {
-        // The one field where "left alone" and "written" differ visibly, and both sources
-        // write it.
         assert_eq!(&built()[0x20..0x40], &[0xFF_u8; 32]);
     }
 
+    /// The content id fills the start of its 128-byte field and the rest is zero.
     #[test]
     fn the_content_id_is_written_into_a_field_four_times_its_length() {
         let out = built();
@@ -319,11 +294,10 @@ mod tests {
         );
     }
 
+    /// The sub-table index is in source order, with the last pair pointing back at `0x150`.
     #[test]
     fn the_sub_table_index_is_written_in_source_order_not_address_order() {
-        // The last pair points at 0x150, which sits between the fourth and the fifth. Both
-        // sources write it there and a reader indexes by position, so tidying it would move
-        // `inner_mchunk_attrs` into whatever slot came fourth.
+        // A reader indexes by position, so the out-of-address-order last pair stays last.
         let out = built();
         let pair = |slot: usize| {
             let at = 0xC0 + slot * 8;
@@ -347,6 +321,7 @@ mod tests {
         );
     }
 
+    /// The chunk and scenario labels are present and NUL-terminated.
     #[test]
     fn both_labels_are_present_and_terminated() {
         let out = built();
@@ -356,10 +331,9 @@ mod tests {
         assert_eq!(out[0x19B], 0);
     }
 
+    /// Two builds differing only in their sizes differ only in the two size fields.
     #[test]
     fn the_two_sizes_are_the_only_values_a_caller_changes() {
-        // Everything else is fixed for a single-chunk title, so two builds differing only in
-        // their sizes must differ only in those sixteen bytes.
         let one = chunk_dat(CONTENT_ID, 0x0073_0000, 0x00AA_0000);
         let two = chunk_dat(CONTENT_ID, 0x0099_0000, 0x00BB_0000);
         let differing: Vec<usize> = (0..one.len()).filter(|at| one[*at] != two[*at]).collect();
@@ -371,11 +345,10 @@ mod tests {
         );
     }
 
+    /// The body carries chunk and scenario records, not zeros behind the header's counts.
     #[test]
     fn the_body_carries_records_rather_than_a_header_over_zeros() {
-        // The recorded failure this entry exists to avoid: a console read the counts, found no
-        // records behind them, and `scePlayGoCoreGetRawContentInfo` returned 0x80f00200 after
-        // the header had already passed.
+        // Without records `scePlayGoCoreGetRawContentInfo` returns 0x80f00200.
         let out = built();
         assert_eq!(out[0x100], 0x80, "chunk flag");
         assert_eq!(out[0x102], 3, "req_locus");
@@ -387,6 +360,7 @@ mod tests {
         );
     }
 
+    /// The package and inner sizes land at their table offsets, with zero chunk offsets.
     #[test]
     fn the_package_size_lands_where_the_table_says_and_the_inner_size_after_it() {
         let out = built();

@@ -1,24 +1,11 @@
 //! Relocations: the entries that turn a linked image into a placed one.
 //!
-//! Standard `Elf64_Rela` throughout - the vendor adds nothing to the entry format. What it
-//! does add is *where* the tables live: like every other dynamic table in these modules, the
-//! offsets are relative to the vendor segment rather than to the file.
+//! Entries are standard `Elf64_Rela`; the table offsets are relative to the vendor segment.
+//! `DT_RELA` holds data relocations and `DT_JMPREL` the procedure linkage table, one slot per
+//! imported function. The two are applied differently and are kept apart.
 //!
-//! # Two tables, and the split is the interesting part
-//!
-//! - **`DT_RELA`** holds data relocations - absolute addresses baked into the image that must
-//!   be adjusted for wherever it actually landed.
-//! - **`DT_JMPREL`** holds the procedure linkage table, one slot per imported function.
-//!   **This is where an import becomes a call**: whatever address goes in a slot is what runs.
-//!
-//! Keeping them apart matters because they are applied differently and at different times. A
-//! reader that concatenates them produces a correct-looking list no consumer can act on.
-//!
-//! # What this module does not do
-//!
-//! It does not apply them. Computing `symbol + addend` needs a base address and a policy for
-//! what to do when a symbol is missing - consumer concerns, and the three consumers answer
-//! them differently. This module says what is in the table and what each entry asks for.
+//! Applying relocations needs a base address and a missing-symbol policy, which belong to
+//! the consumer; this module reports what each entry asks for.
 
 use zerocopy::{FromBytes, Immutable, KnownLayout, little_endian};
 
@@ -27,9 +14,8 @@ pub const RELA_SIZE: usize = 24;
 
 /// Relocation types, as the x86-64 ABI numbers them.
 ///
-/// Not every type is listed - only those that turn up in these modules, plus the TLS ones,
-/// which are listed precisely so they can be *recognised and refused* rather than skipped. A
-/// skipped relocation leaves a pointer that looks valid and is not.
+/// Only the types these modules use, plus the TLS types so a consumer can recognise and
+/// refuse them rather than skip them.
 pub mod kind {
     /// Nothing to do.
     pub const NONE: u32 = 0;
@@ -54,8 +40,7 @@ pub mod kind {
 
     /// The ABI's name for a type, where this module knows one.
     ///
-    /// `None` rather than a made-up string: an unrecognised type in one of these tables is a
-    /// thing to go and look up, and a plausible label is how it stops being noticed.
+    /// `None` for a type this module does not list.
     #[must_use]
     pub const fn name(kind: u32) -> Option<&'static str> {
         Some(match kind {
@@ -99,9 +84,7 @@ impl Rela {
 
     /// Index into the dynamic symbol table, from the high half.
     ///
-    /// Meaningless for types that need no symbol, where it is conventionally zero - and zero
-    /// is also a valid index, so [`Self::needs_symbol`] is the test rather than this being
-    /// non-zero.
+    /// Zero is a valid index, so [`Self::needs_symbol`] decides whether it is meaningful.
     #[must_use]
     #[allow(
         clippy::cast_possible_truncation,
@@ -129,9 +112,8 @@ impl Rela {
 
 /// Read a relocation table out of a byte range.
 ///
-/// A trailing partial entry is dropped rather than refused: the length comes from the dynamic
-/// table, and a rounding disagreement there should not make an otherwise-readable image
-/// unreadable.
+/// A trailing partial entry is dropped, so a rounded length in the dynamic table does not
+/// make the image unreadable.
 #[must_use]
 pub fn table(bytes: &[u8]) -> Vec<Rela> {
     bytes
@@ -144,8 +126,7 @@ pub fn table(bytes: &[u8]) -> Vec<Rela> {
 
 /// A count of each relocation type present, most common first.
 ///
-/// A census rather than a judgement. What a consumer *supports* is the consumer's business;
-/// what a file *contains* is this crate's.
+/// What the file contains; what a consumer supports is the consumer's concern.
 #[must_use]
 pub fn census(entries: &[Rela]) -> Vec<(u32, usize)> {
     let mut out: Vec<(u32, usize)> = Vec::new();
@@ -179,11 +160,9 @@ mod tests {
         out
     }
 
+    /// `info` holds the type in the low half and the symbol index in the high half.
     #[test]
     fn info_splits_into_a_symbol_index_and_a_type() {
-        // The halves are the opposite way round from the obvious reading - the *type* is
-        // low - and getting it backwards produces symbol indices in the thousands and types
-        // that are all zero, which reads as an image with nothing to relocate.
         let bytes = entry(0x1000, 42, kind::JUMP_SLOT, 0);
         let read = table(&bytes);
         assert_eq!(read.len(), 1);
@@ -192,6 +171,7 @@ mod tests {
         assert_eq!(read[0].offset.get(), 0x1000);
     }
 
+    /// A `RELATIVE` entry needs no symbol and keeps a negative addend.
     #[test]
     fn a_relative_relocation_needs_no_symbol_and_carries_a_signed_addend() {
         let bytes = entry(0x2000, 0, kind::RELATIVE, -8);
@@ -200,14 +180,14 @@ mod tests {
         assert_eq!(read[0].addend.get(), -8, "signed, and negative ones occur");
     }
 
+    /// A symbol-bound type needs a symbol even at index zero.
     #[test]
     fn symbol_index_zero_is_not_the_test_for_needing_a_symbol() {
-        // Zero is a real index. Deciding by `symbol_index() != 0` drops every relocation
-        // against the first symbol in the table.
         let bytes = entry(0x3000, 0, kind::GLOB_DAT, 0);
         assert!(table(&bytes)[0].needs_symbol());
     }
 
+    /// A trailing partial entry is dropped and the whole ones are kept.
     #[test]
     fn a_trailing_partial_entry_is_dropped_rather_than_refused() {
         let mut bytes = entry(0x1000, 1, kind::ABS64, 0);
@@ -215,6 +195,7 @@ mod tests {
         assert_eq!(table(&bytes).len(), 1);
     }
 
+    /// The TLS types report `is_tls` and `RELATIVE` does not.
     #[test]
     fn tls_types_are_recognised_rather_than_left_to_look_ordinary() {
         for tls in [kind::DTPMOD64, kind::DTPOFF64, kind::TPOFF64] {
@@ -224,12 +205,14 @@ mod tests {
         assert!(!table(&entry(0, 0, kind::RELATIVE, 0))[0].is_tls());
     }
 
+    /// An unlisted type has no name.
     #[test]
     fn an_unknown_type_has_no_name_rather_than_a_plausible_one() {
         assert_eq!(kind::name(kind::JUMP_SLOT), Some("JUMP_SLOT"));
         assert_eq!(kind::name(0xDEAD), None);
     }
 
+    /// The census lists the most common type first.
     #[test]
     fn the_census_is_ordered_by_count() {
         let mut bytes = Vec::new();

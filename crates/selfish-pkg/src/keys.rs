@@ -1,7 +1,5 @@
 //! Recovering the key that unlocks a package's filesystem.
 //!
-//! Four steps stand between a package and a filename, and none of them can be skipped:
-//!
 //! ```text
 //! entry 0x10, bytes 0x400..0x500  --RSA(dk3)-->  dk3
 //! sha256(entry 0x20's table row || dk3)          -> key and iv
@@ -9,19 +7,9 @@
 //! that                   --RSA(fake)-->          the filesystem key
 //! ```
 //!
-//! # Fake packages only, and that is a wall rather than a gap
-//!
-//! The keyset here is the public one every open-source packaging tool uses. It unlocks a
-//! package built *with* it. A retail package's image key is encrypted under a key nobody
-//! outside the vendor has, and no amount of work here changes that - the extractor these
-//! constants came from says as much in its own header.
-//!
-//! # Padding is checked, not assumed
-//!
-//! Both RSA steps produce a PKCS#1 v1.5 block, and the padding is validated before the
-//! payload is taken. A malformed block that is silently unwrapped yields a key-shaped
-//! quantity that decrypts everything to noise - which surfaces hundreds of lines later as an
-//! unreadable filesystem rather than as the wrong key it is.
+//! The keyset is the public fake-package one; it unlocks only packages built with it. Both RSA
+//! steps validate PKCS#1 v1.5 padding before taking the payload, so a wrong key is reported
+//! rather than producing noise.
 
 use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit, block_padding::NoPadding};
 use num_bigint::BigUint;
@@ -40,25 +28,14 @@ const RSA_BLOCK: usize = 0x100;
 
 /// Where the wrapped `dk3` lives inside the entry-keys blob.
 ///
-/// # This was an open question and is not one any more
-///
-/// D044 recorded `0x400` as a measured range with the note that the key index "does not agree"
-/// with it and that nothing established how one mapped onto the other. That was true of a
-/// reader. It stopped being true the moment this crate could *write* the blob (D054), and the
-/// comment outlived the uncertainty by several hundred lines of the same file.
-///
-/// The old model was "eight RSA-2048 blocks, and `0x400` is block four". The blob is not that.
-/// It is a digest, seven check digests, then seven wrapped keys:
-///
 /// ```text
 /// 0x000  SHA-256 of the padded content id
 /// 0x020  7 x 32   a digest per key, so a holder can check one without revealing it
 /// 0x100  7 x 256  the wrapped keys
 /// ```
 ///
-/// So key index `n` is at `0x100 + n * 256`, the index maps **directly**, and index 3 lands on
-/// `0x400` - the measured range, arrived at from the other direction. Derived from
-/// [`dk3_block_at`] rather than written out, so the reader and the writer cannot drift apart.
+/// Key index `n` is at `0x100 + n * 256`, so index 3 is at `0x400`. Derived from
+/// [`dk3_block_at`] so the reader and the writer share one number (D054).
 const DK3_RANGE: core::ops::Range<usize> = dk3_block_at()..dk3_block_at() + RSA_BLOCK;
 
 /// Bit of an entry's first flags word marking it encrypted.
@@ -83,12 +60,9 @@ pub fn rif_secret_key() -> Option<[u8; 16]> {
 
 /// Sign a PKCS#1 block with the debug RIF keyset.
 ///
-/// One modular exponentiation, which is the whole of RSA signing. The padding is the caller's
-/// because the scheme belongs to what is being signed, not to the key.
-///
-/// **Confirmed against real material**: with this keyset and a DigestInfo-prefixed PKCS#1 v1.5
-/// block, the output is byte-identical to the stored signature of every licence in every
-/// package examined. (D047)
+/// The caller supplies the padded block, since the scheme belongs to what is signed. With a
+/// DigestInfo-prefixed PKCS#1 v1.5 block the output matches the stored signature of every
+/// licence examined (D047).
 #[must_use]
 pub fn sign_debug_rif(block: &[u8]) -> Option<Vec<u8>> {
     let pair = KeyPair::load("debugrif")?;
@@ -124,9 +98,7 @@ impl KeyPair {
         let plain = BigUint::from_bytes_be(block)
             .modpow(&self.exponent, &self.modulus)
             .to_bytes_be();
-        // `to_bytes_be` drops leading zeros, and PKCS#1 v1.5 begins with one. Restored to a
-        // fixed width so the marker bytes are where the format says rather than wherever the
-        // value happened to land.
+        // `to_bytes_be` drops leading zeros, and PKCS#1 v1.5 begins with one; restore the width.
         let mut padded = vec![0_u8; RSA_BLOCK.saturating_sub(plain.len())];
         padded.extend_from_slice(&plain);
         strip_pkcs1(&padded)
@@ -135,9 +107,7 @@ impl KeyPair {
 
 /// Strip PKCS#1 v1.5 padding: `00 02 <nonzero...> 00 <payload>`.
 ///
-/// Returns `None` for anything else. The alternative - taking whatever follows and hoping -
-/// produces a key-shaped quantity that decrypts everything to noise, and the failure then
-/// appears hundreds of lines away as a corrupt filesystem.
+/// Returns `None` for anything else, so a wrong key fails here rather than as noise later.
 fn strip_pkcs1(block: &[u8]) -> Option<Vec<u8>> {
     if block.first() != Some(&0x00) || block.get(1) != Some(&0x02) {
         return None;
@@ -149,16 +119,8 @@ fn strip_pkcs1(block: &[u8]) -> Option<Vec<u8>> {
 
 /// Find the assignment for a key, and return everything after the `=`.
 ///
-/// # Why this is not `split_once(name)`
-///
-/// It was, and that made the keyset file's **prose** part of its parser. Adding a table to the
-/// header that named each key - `| rif_secret_key_hex | decrypts ... |` - put that string a
-/// hundred lines above its own assignment, so the reader matched the comment, took the next
-/// quoted text out of it, and handed back a key of the wrong length. Every licence test failed,
-/// and nothing about the change looked like code.
-///
-/// A key is only a key where it is assigned: at the start of a line, followed by `=`. Comments
-/// may now say any name they like. (D068)
+/// A name matches only at the start of a line followed by `=`, so the file's comments may
+/// mention any key name without being read as its value.
 fn assignment(name: &str) -> Option<&'static str> {
     KEYS_TOML.lines().find_map(|line| {
         let rest = line.strip_prefix(name)?.trim_start();
@@ -172,16 +134,11 @@ fn read_value(name: &str) -> Option<String> {
     Some(body.chars().filter(char::is_ascii_hexdigit).collect())
 }
 
-/// One single-line hex value from the keyset, as bytes.
-///
-/// `read_value` finds the text; this is the step that turns it into bytes. Shared because more
-/// than one key in that file is a fixed-width byte string rather than a bignum.
-// `chunks_exact(2)` rather than clippy's suggested `as_chunks::<2>().0`: `as_chunks` is stable
-// since 1.88 and this workspace declares `rust-version = "1.85"`, so taking the suggestion
-// trades one denied lint for another - `incompatible_msrv` - and quietly raises the floor.
-// Revisit if the floor moves.
-// `unknown_lints` because the lint below only exists from clippy 1.98; without it an older
-// toolchain rejects the attribute itself, which is how this first went wrong.
+/// One single-line hex value from the keyset, as bytes, for keys that are fixed-width byte
+/// strings rather than bignums.
+// `chunks_exact(2)` rather than `as_chunks`, which is stable only from 1.88 while the workspace
+// declares `rust-version = "1.85"`. `unknown_lints` because the lint below exists only from
+// clippy 1.98.
 #[allow(unknown_lints)]
 #[allow(clippy::chunks_exact_to_as_chunks)]
 pub(crate) fn hex_value(name: &str) -> Option<Vec<u8>> {
@@ -197,9 +154,7 @@ pub(crate) fn hex_value(name: &str) -> Option<Vec<u8>> {
 }
 
 fn read_key(name: &str) -> Option<BigUint> {
-    // The multi-line values start on the assignment line and run to the closing fence, so the
-    // rest of the file from that point is the right span to search. Same reasoning as
-    // `assignment`: a name in a comment is not an assignment.
+    // A multi-line value runs from its assignment at a line start to the closing fence.
     let at = KEYS_TOML.find(&format!("\n{name}"))?;
     let after = KEYS_TOML.get(at..)?;
     let body = after.split_once("\"\"\"")?.1.split_once("\"\"\"")?.0;
@@ -215,8 +170,7 @@ fn read_key(name: &str) -> Option<BigUint> {
 /// # Errors
 ///
 /// If either key entry is absent or truncated, if a padding check fails, or if the keyset
-/// could not be read. A padding failure most often means the package is retail rather than
-/// fake, which is not a bug to fix.
+/// could not be read. A padding failure most often means the package is retail.
 pub fn filesystem_key(package: &crate::Package<'_>) -> Result<Vec<u8>, PackageError> {
     let dk3_pair = KeyPair::load("dk3").ok_or(PackageError::KeysUnreadable)?;
     let fake_pair = KeyPair::load("fake").ok_or(PackageError::KeysUnreadable)?;
@@ -238,9 +192,7 @@ pub fn filesystem_key(package: &crate::Package<'_>) -> Result<Vec<u8>, PackageEr
         .unwrap_block(wrapped_dk3)
         .ok_or(PackageError::NotAFakePackage)?;
 
-    // The image key entry's own **table row** is hashed, not its data. Two different
-    // thirty-two-byte quantities associated with one entry, and using the wrong one produces
-    // a key that is exactly as plausible and entirely wrong.
+    // The image key entry's table row is hashed, not its data.
     let row = package
         .entry_row(image_key)
         .ok_or(PackageError::EntryTruncated(entry_id::IMAGE_KEY))?;
@@ -270,20 +222,10 @@ pub fn filesystem_key(package: &crate::Package<'_>) -> Result<Vec<u8>, PackageEr
 
 /// Decrypt an entry that declares itself encrypted.
 ///
-/// # The derivation is the one the image key already uses
-///
-/// An entry's **table row** is hashed with the unwrapped key material, and the digest splits
-/// into an IV and an AES-128 key. That is exactly what [`filesystem_key`] does for the image
-/// key, and the reason `entry_row` exists separately from `entry_bytes`: two different
-/// thirty-two-byte quantities belong to one entry, and using the wrong one produces a key that
-/// is exactly as plausible and entirely wrong.
-///
-/// # What this establishes and what it does not
-///
-/// Entries under the index the image key declares are decrypted from the key blob, which needs
-/// no passcode and works on any package. Anything else falls through to
-/// [`decrypt_entry_with_passcode`] with the community default, which is right for a package
-/// built with it and wrong - visibly, as noise - for one that was not.
+/// The entry's table row is hashed with the key material and the digest splits into an IV and
+/// an AES-128 key, as in [`filesystem_key`]. Entries under [`IMAGE_KEY_INDEX`] are decrypted
+/// from the key blob, which needs no passcode. Other indices, or a blob that fails to unwrap,
+/// fall through to [`decrypt_entry_with_passcode`] with [`FAKE_PASSCODE`].
 ///
 /// # Errors
 ///
@@ -295,22 +237,9 @@ pub fn decrypt_entry(
     if entry.flags1 & FLAG_ENCRYPTED == 0 {
         return Err(PackageError::NotEncrypted(entry.id));
     }
-    // Two routes reach an encrypted entry and they are not equivalent.
-    //
-    // The **key blob** carries one unwrapped block, and the image key declares its index - so
-    // that route works for entries under that index, in any package, with no passcode. It
-    // reaches nothing else.
-    //
-    // The **computed** route derives keying material from the content id, the passcode and the
-    // index, so it reaches every index - but only if the passcode is the one the package was
-    // built with. Of three packages examined, two use the community default and one does not.
-    //
-    // Blob first because it needs no guess, then computed. Where both reach the same entry
-    // they produce identical bytes, which is checked by `examples/decrypt`. (D044)
-    // Blob first because it needs no guess, then computed. The fall-through is on *failure*
-    // rather than only on a different index: a package whose key blob this crate cannot unwrap
-    // is not necessarily one whose entries it cannot read, and refusing on the first route
-    // would have hidden that.
+    // The blob route needs no passcode guess, so it goes first. The computed route reaches
+    // every index but only with the passcode the package was built with. Where both reach an
+    // entry they agree, which `examples/decrypt` checks.
     let index = key_index(entry.flags2);
     if index != IMAGE_KEY_INDEX {
         return decrypt_entry_with_passcode(package, entry, FAKE_PASSCODE);
@@ -367,10 +296,8 @@ pub const CONTENT_ID_LEN: usize = 36;
 pub const PASSCODE_LEN: usize = 32;
 /// The passcode a fake package is built with.
 ///
-/// Thirty-two ASCII zeros. Community tooling uses this because a fake package has no real
-/// entitlement behind it, and it is confirmed here rather than assumed: with it, the licence
-/// entry decrypts to `RIF` in every package examined, and the result is byte-identical to what
-/// the entirely separate key route produces for the same entry. (D044)
+/// Thirty-two ASCII zeros, the community default. With it the licence entry decrypts to `RIF`
+/// in the packages examined, matching the key-blob route byte for byte.
 pub const FAKE_PASSCODE: &[u8; PASSCODE_LEN] = b"00000000000000000000000000000000";
 
 /// The key index the filesystem key uses.
@@ -381,22 +308,12 @@ pub const FILESYSTEM_KEY_INDEX: u32 = 1;
 
 /// The key the filesystem inside a package is signed and encrypted with - `EKPFS`.
 ///
-/// # Nothing here is recovered from anything
+/// A hash of the content id and the passcode, both chosen by the builder. From it
+/// [`selfish_pfs::outer::sign_key`] and [`selfish_pfs::outer::encryption_keys`] derive what the
+/// filesystem layer needs. A fake package passes [`FAKE_PASSCODE`].
 ///
-/// This is worth stating because the surrounding work spent a long time on keys that genuinely
-/// cannot be obtained. This one is not like those. It is a hash of the content id and the
-/// passcode, both of which a builder chooses, so it is *computed* rather than found. From it,
-/// [`selfish_pfs::outer::sign_key`] and [`selfish_pfs::outer::encryption_keys`] derive
-/// everything the filesystem layer needs.
-///
-/// A caller building a fake package passes [`FAKE_PASSCODE`].
-///
-/// # The same key, reached from the other end
-///
-/// [`filesystem_key`] recovers this from a package that already exists, by decrypting the image
-/// key entry with the fake keyset. This computes it for a package that does not exist yet. For
-/// any fake package the two must agree, which makes the pair an oracle rather than two
-/// functions that happen to share a name - see the test beside them.
+/// [`filesystem_key`] recovers the same key from an existing package; for any fake package the
+/// two agree.
 #[must_use]
 pub fn derive_filesystem_key(content_id: &[u8], passcode: &[u8]) -> [u8; 32] {
     compute_keys(content_id, passcode, FILESYSTEM_KEY_INDEX)
@@ -417,8 +334,7 @@ pub fn compute_keys(content_id: &[u8], passcode: &[u8], index: u32) -> [u8; 32] 
         slot.copy_from_slice(&digest);
     }
 
-    // Padded to forty-eight with NULs, which is longer than the id itself - the padding is
-    // part of what is hashed, so trimming it produces a different key.
+    // Padded to forty-eight with NULs; the padding is part of what is hashed.
     let mut padded = [0_u8; 48];
     let take = content_id.len().min(padded.len());
     if let (Some(into), Some(from)) = (padded.get_mut(..take), content_id.get(..take)) {
@@ -446,9 +362,8 @@ pub fn compute_keys(content_id: &[u8], passcode: &[u8], index: u32) -> [u8; 32] 
 
 /// Decrypt an entry using keying material computed from the content id and passcode.
 ///
-/// The general route, and the one that reaches every key index. [`decrypt_entry`] is the
-/// special case this crate had first: it works for the index the image key declares because
-/// the key blob happens to carry that block, and reaches nothing else.
+/// The general route, which reaches every key index; the key-blob route in [`decrypt_entry`]
+/// reaches only [`IMAGE_KEY_INDEX`].
 ///
 /// # Errors
 ///
@@ -463,7 +378,7 @@ pub fn decrypt_entry_with_passcode(
     }
     let material = compute_keys(package.content_id(), passcode, key_index(entry.flags2));
 
-    // The entry's **table row**, as everywhere else in this derivation.
+    // The entry's table row, as everywhere else in this derivation.
     let row = package
         .entry_row(entry)
         .ok_or(PackageError::EntryTruncated(entry.id))?;
@@ -488,9 +403,8 @@ pub fn decrypt_entry_with_passcode(
 
 /// Encrypt an entry body the way a package stores it.
 ///
-/// The inverse of [`decrypt_entry_with_passcode`], and it takes the entry's table **row**
-/// rather than the entry itself because a writer computes the row before it has anything to
-/// look up - the row is the input to the derivation, not a consequence of it.
+/// The inverse of [`decrypt_entry_with_passcode`]. It takes the entry's table row, which a
+/// writer has before any package exists to look it up in.
 ///
 /// # Errors
 ///
@@ -521,13 +435,8 @@ pub fn encrypt_body(
 
 /// Try every block of the key entry against one encrypted entry.
 ///
-/// A search, not a derivation. It exists because an entry can declare a key index this crate
-/// cannot yet map onto the key blob, and the honest way to close that is to try each block and
-/// look at what comes out - a block that yields a recognisable structure is the answer, and one
-/// that yields noise says only that it was the wrong block.
-///
-/// Returns every attempt so a caller can judge them, rather than picking a winner here. Nothing
-/// in this crate decides a key is right because its output looked plausible.
+/// A search, not a derivation. Returns every attempt for the caller to judge; this crate never
+/// decides a key is right because its output looks plausible.
 #[must_use]
 pub fn decrypt_entry_with_each_key(
     package: &crate::Package<'_>,
@@ -594,8 +503,7 @@ pub fn pkg_public_modulus(index: usize) -> Option<Vec<u8>> {
 
 /// Left-pad a value to a full RSA block.
 ///
-/// `to_bytes_be` drops leading zeros, and a modulus that happens to start with one would
-/// otherwise shift every byte of the block that is built from it.
+/// `to_bytes_be` drops leading zeros, which would shift every byte of the block.
 fn to_block(value: &BigUint) -> Option<Vec<u8>> {
     let raw = value.to_bytes_be();
     let at = RSA_BLOCK.checked_sub(raw.len())?;
@@ -612,12 +520,9 @@ fn to_block(value: &BigUint) -> Option<Vec<u8>> {
 /// 0x100  7 x  the key for index i, wrapped under public key i
 /// ```
 ///
-/// Index 3's wrapped block therefore lands at `0x400`, which is exactly the range
-/// [`filesystem_key`] reads from a real package. The reading side was written first, from
-/// measurement, and the two agree without either having been adjusted to suit the other.
-///
-/// **Index 0 wraps the passcode itself**, not the key derived from it. That is not an oddity
-/// to tidy away: it is how a console recovers a passcode it was never told.
+/// Index 3's wrapped block lands at `0x400`, the range [`filesystem_key`] reads. Index 0 wraps
+/// the passcode itself rather than a derived key; that is how the hardware recovers the
+/// passcode.
 ///
 /// # Errors
 ///
@@ -664,12 +569,9 @@ pub fn entry_keys_blob(content_id: &[u8], passcode: &[u8]) -> Result<Vec<u8>, Pa
 
 /// Build the image-key blob a package carries at `0x20`, before the entry is encrypted.
 ///
-/// The filesystem key, wrapped under the fake keyset. This is what a console unwraps in order
-/// to reach the filesystem at all, and **a package carrying zeros here cannot be opened** -
-/// which is what this crate emitted for as long as it took the blob as an input.
-///
-/// The result is the entry's *plaintext*. The entry is stored AES-encrypted under key index 3,
-/// which the builder applies as it does to any other encrypted entry.
+/// The filesystem key, wrapped under the fake keyset; the hardware unwraps it to reach the
+/// filesystem. The result is the entry's plaintext; the builder encrypts it under key index 3
+/// like any other encrypted entry.
 ///
 /// # Errors
 ///
@@ -683,8 +585,7 @@ pub fn image_key_blob(content_id: &[u8], passcode: &[u8]) -> Result<Vec<u8>, Pac
 
 /// Where index 3's wrapped block sits inside the entry-keys blob.
 ///
-/// Two separately-derived numbers meet here: this is `WRAPPED_AT + 3 * RSA_BLOCK`, and it is
-/// also the range the reader measured from real packages long before any of this was written.
+/// `WRAPPED_AT + 3 * RSA_BLOCK`, which is also the offset measured in real packages.
 #[must_use]
 pub const fn dk3_block_at() -> usize {
     WRAPPED_AT + 3 * RSA_BLOCK
@@ -701,6 +602,7 @@ pub const fn dk3_block_at() -> usize {
 mod tests {
     use super::{KeyPair, RSA_BLOCK, strip_pkcs1};
 
+    /// The fake and dk3 keypairs load from the data file, and an unknown name does not.
     #[test]
     fn both_keypairs_load_from_the_data_file() {
         assert!(KeyPair::load("fake").is_some(), "the fake keypair");
@@ -708,10 +610,9 @@ mod tests {
         assert!(KeyPair::load("nonexistent").is_none());
     }
 
+    /// Both keypairs parse to 2048-bit moduli and full-size exponents.
     #[test]
     fn the_moduli_are_the_size_the_format_requires() {
-        // A key that parsed but came out the wrong size would still exponentiate, and every
-        // block it produced would be wrong in a way nothing downstream could attribute.
         let fake = KeyPair::load("fake").expect("fake");
         let dk3 = KeyPair::load("dk3").expect("dk3");
         assert_eq!(fake.modulus.bits(), 2048, "fake modulus");
@@ -720,6 +621,7 @@ mod tests {
         assert!(dk3.exponent.bits() > 2000, "dk3 exponent");
     }
 
+    /// Well-formed PKCS#1 v1.5 padding is stripped to the payload after the separator.
     #[test]
     fn padding_is_stripped_only_when_it_is_actually_there() {
         let mut block = vec![0_u8; RSA_BLOCK];
@@ -732,10 +634,9 @@ mod tests {
         assert_eq!(strip_pkcs1(&block).map(|p| p.len()), Some(RSA_BLOCK - 21));
     }
 
+    /// A block with wrong markers or no separator is refused rather than unwrapped.
     #[test]
     fn a_block_without_the_marker_is_refused_rather_than_guessed_at() {
-        // The important half. An unwrapped-but-malformed block yields a key-shaped quantity
-        // that decrypts everything to noise, and the failure appears far from its cause.
         let mut wrong_first = vec![0_u8; RSA_BLOCK];
         wrong_first[0] = 0x01;
         wrong_first[1] = 0x02;

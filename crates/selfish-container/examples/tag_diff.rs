@@ -35,8 +35,7 @@ fn report(path: &str) {
     println!("== {path}");
     println!("   dynlib blob: {blob_len} bytes, {} tags", entries.len());
     if let Some((blob, info)) = &tables {
-        // The head of the blob, because whatever sits before the string table is a region
-        // no tag we write accounts for.
+        // The head of the blob, before the string table, which no tag describes.
         let head = &blob[..blob.len().min(0x20)];
         print!("   head:");
         for (n, byte) in head.iter().enumerate() {
@@ -46,8 +45,8 @@ fn report(path: &str) {
             print!(" {byte:02x}");
         }
         println!();
-        // Where each table claims to be. "inside" means the value works as an offset into
-        // the blob; a value far past the end is an address and must be rebased instead.
+        // Where each table claims to be. A value inside the blob is an offset; one far past
+        // the end is an address to rebase.
         let verdict = |name: &str, at: u64, size: u64| {
             let end = at.saturating_add(size);
             let inside = blob_len as u64 >= end && size > 0;
@@ -72,8 +71,7 @@ fn report(path: &str) {
             info.needed.len()
         );
     }
-    // Only the vendor tags outside the table run, plus anything standard - the run itself is
-    // already summarised above and repeating 30 offsets buries the interesting rows.
+    // The vendor table tags are summarised above; `ALL_TAGS` prints them too.
     println!("   tags the summary does not cover:");
     for (tag, value) in &entries {
         let vendor_table_run =

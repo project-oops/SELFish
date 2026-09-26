@@ -1,35 +1,14 @@
 //! Building the vendor dynamic segment - the writing side of [`crate::dynamic`].
 //!
-//! A linker produces an ordinary dynamic ELF. What a console loader wants is different in
-//! three ways, and none of them can be expressed to the linker:
+//! The linker's tables are rebuilt and appended: the vendor segment holds them, imports are
+//! renamed `<hash>#<library>#<module>` and typed as functions, and the dynamic table carries
+//! vendor tags. [`crate::dynamic`] reads the result back, and tests round-trip the two.
 //!
-//! 1. The tables live in a `PT_SCE_DYNLIBDATA` segment, addressed by **offsets into that
-//!    segment** rather than by virtual address.
-//! 2. Every imported symbol is named `<hash>#<library>#<module>` rather than by its plain
-//!    name, and is typed as a function.
-//! 3. The dynamic table carries vendor tags the linker knows nothing about, including three
-//!    per imported library.
+//! Which library resolves a name is the caller's manifest, passed as a closure.
 //!
-//! So the tables are rebuilt from the linked ones and appended. This module does the
-//! rebuilding; [`crate::dynamic`] reads the result back, and a round trip between them is the
-//! test principle 4 asks for.
-//!
-//! # What is a caller's business
-//!
-//! Which library resolves a given name. That is a manifest, not a fact about the format, and
-//! it arrives as a closure. Everything else here is the format.
-//!
-//! # Ordering is load-bearing, twice
-//!
-//! **The string table is declared first.** A loader walks the tags in order and resolves a
-//! name offset the moment it meets one; four of the tags below carry a name offset. Emitted
-//! before the string table is declared, they dereference a base the loader does not have yet -
-//! a fault inside the loader, before a guest instruction runs, with nothing in its log.
-//!
-//! **The tables are laid out end to end.** A reference module places them adjacently, which is
-//! how the tag meanings were established in the first place: `JMPREL + PLTRELSZ == RELA`, and
-//! `RELA + RELASZ == HASH`. Emitting the same adjacency keeps that arithmetic true of output
-//! as well as of input, so the same check that identified the tags also checks the writer.
+//! The string table is declared first, because a loader resolves each name offset as it meets
+//! it. The tables are laid out end to end as in a reference module, so
+//! `JMPREL + PLTRELSZ == RELA` and `RELA + RELASZ == HASH` hold for the output.
 
 use selfish_abi::Generation;
 use selfish_bytes::{read_le, write_le};
@@ -41,45 +20,16 @@ use crate::section::SYMBOL_SIZE;
 
 /// `st_info` type for a function.
 ///
-/// # Why every import is typed
-///
-/// A linker leaves an undefined reference as `STT_NOTYPE`: it knows the name is wanted and
-/// nothing else, and on an ordinary system that is enough because the dynamic linker matches
-/// on the name alone.
-///
-/// A console loader does not. It matches on the hash **and the symbol type**, against a table
-/// where every platform function is registered as a function - so an import typed `NOTYPE`
-/// matches nothing. It does not fail: it binds to a stub that returns zero. The module loads,
-/// runs, and gets a plausible zero back from every call it makes.
+/// A linker leaves an import as `STT_NOTYPE`. The loader matches on hash and symbol type, and
+/// binds a `NOTYPE` import to a stub that returns zero.
 pub const FUNCTION: u8 = 2;
 
 /// `st_info` binding for an import the loader is expected to bind.
 ///
-/// # Why every import is re-bound, and what weak costs
-///
-/// A probe declares its platform functions weak, so a symbol the platform does not have is
-/// null rather than a link error. That is a **compile-time** need and it is a good one. What
-/// it leaves behind is a dynamic symbol table where every import is `STB_WEAK`, undefined -
-/// and to a loader that means precisely "if resolving this costs anything, do not bother".
-///
-/// A loader is entitled to take that at its word, and one does. Measured: a module whose 203
-/// imports were all `WEAK FUNC` had them bound **only from the two libraries already resident
-/// in the process** - `libkernel` and `libSceLibcInternal`, where resolution is free. Every
-/// other declared library was mapped into the address space, with an address range and a
-/// fingerprint in the system log, and not one of its symbols was bound. Fourteen imports
-/// stayed null whose symbols the same process could find by name moments later.
-///
-/// A title that launches has no weak imports at all: 126 `GLOBAL FUNC` and 13 `GLOBAL OBJECT`.
-///
-/// So the binding is rewritten here for the same reason the type is (see [`FUNCTION`]): the
-/// name is what a reader looks at and it is not what the loader decides on. The weak binding
-/// stays where it is needed, in the C, and does not travel into the module. (obscene#D248)
-///
-/// A consequence, because it caught a consumer: a module built here cannot carry a weak
-/// undefined import at all. A resolved import is forced `GLOBAL` here; an unresolved one is a
-/// build error (`BuildError::Unclaimed`). So a deliberately-absent symbol used as a weak-symbol
-/// feature-detection control reads present once packaged, not absent - that control is
-/// payload-only by construction. (D101)
+/// A loader binds a `STB_WEAK` undefined import only from libraries already resident in the
+/// process, so every import is rewritten `GLOBAL`, as a launching title carries them. A
+/// module built here therefore has no weak undefined imports: a resolved one is `GLOBAL` and
+/// an unresolved one is [`BuildError::Unclaimed`] (D101).
 pub const GLOBAL: u8 = 1;
 
 /// Version numbers a module and its libraries declare.
@@ -90,33 +40,15 @@ pub mod version {
     pub const MODULE_MINOR: u8 = 1;
     /// The version every platform library is registered with.
     ///
-    /// **Not cosmetic.** A loader builds its lookup key from the version *this module
-    /// declares* and matches it against the version the library was registered with, so
-    /// declaring zero against a library registered as one does not match - and every symbol
-    /// from it silently fails to resolve. The module loads, runs, and finds none of its
-    /// imports.
+    /// A loader matches the version a module declares against the one the library was
+    /// registered with; a mismatch resolves nothing from that library.
     pub const LIBRARY: u16 = 1;
     /// The library attribute meaning "export everything automatically".
     pub const AUTO_EXPORT: u64 = 0x1;
-    /// The attribute word an **import** library carries, as a real launching title writes it.
+    /// The attribute word an import library carries, as a launching title writes it.
     ///
-    /// Measured, not reasoned: every one of the twenty-two `DT_SCE_IMPORT_LIB_ATTR` entries in
-    /// a title that launches on retail hardware carries `0x9`. This crate wrote
-    /// [`AUTO_EXPORT`] here instead, reusing the export attribute for the import side because
-    /// the two words are the same shape and one constant covered both without complaint.
-    ///
-    /// **What it cost.** A module built that way loads, runs, and binds imports only from
-    /// libraries the process already had - `libkernel` and `libSceLibcInternal`, which are
-    /// resident before the module is looked at. Every other declared library was mapped into
-    /// the address space, with an address range and a fingerprint in the system log, and not
-    /// one of its symbols bound. Twenty-four checks skipped saying the loader had not resolved
-    /// the symbol, which was true and read as a statement about the platform.
-    ///
-    /// **Bit 3 is deliberately not named.** Its meaning is not established - only that a real
-    /// title sets it on every import library and that a module without it does not get its
-    /// imports bound. Naming it `AUTO_LOAD` would be inventing a fact to make the constant
-    /// read nicely, which is the failure D008 exists to prevent. It is called what it is: the
-    /// attribute an import library carries.
+    /// With [`AUTO_EXPORT`] here instead, a loader binds imports only from libraries already
+    /// resident. Bit 3's meaning is not established, so it is not given a name.
     pub const IMPORT_LIBRARY: u64 = 0x9;
     /// What `DT_SCE_PLTREL` states: the linkage relocations are `Elf64_Rela`.
     pub const RELA_FORM: u64 = 7;
@@ -124,12 +56,9 @@ pub mod version {
 
 /// Bytes reserved at the head of the vendor segment for the module's fingerprint.
 ///
-/// A real executable puts sixteen bytes of build identifier here and pads to `0x18`, then
-/// starts its string table. `DT_SCE_FINGERPRINT` carries this region's offset, which is zero.
-///
-/// **Written as zeroes**, like every other digest and signature area in this project. A
-/// fingerprint identifies a build; it authenticates nothing, and inventing a plausible-looking
-/// one would be a value in a field nothing here can justify. See principles 5 and 6.
+/// Sixteen bytes of build identifier padded to `0x18`, then the string table.
+/// `DT_SCE_FINGERPRINT` carries this region's offset, which is zero. Written as zeroes, like
+/// every digest and signature area here; nothing is invented to fill it.
 pub const FINGERPRINT_SIZE: u64 = 0x18;
 
 /// Pack an id and a name offset, the way the identity tags do.
@@ -150,13 +79,8 @@ const LIBRARY_VERSIONS: &str = include_str!("../../../data/library-versions.tsv"
 /// The module version to declare for one library, at one generation.
 ///
 /// [`version::MODULE_MAJOR`]`.`[`version::MODULE_MINOR`] unless `data/library-versions.tsv`
-/// carries a row saying otherwise, and today it carries exactly one.
-///
-/// **This is not a constant, and the reason is worth reading before making it one again.** A
-/// loader matches the version a module declares against the version the library was
-/// registered with, and a mismatch resolves nothing from that library - silently. The one
-/// library with a row here is the display library, so the symptom is a module that runs
-/// perfectly and draws a black window.
+/// carries a row saying otherwise. A loader matches the declared version against the
+/// registered one, and a mismatch resolves nothing from that library.
 #[must_use]
 pub fn module_version(library: &str, generation: Generation) -> (u8, u8) {
     let wanted = match generation {
@@ -194,14 +118,9 @@ pub const fn attribute(id: u16, attr: u64) -> u64 {
 
 /// What a manifest says about one imported symbol.
 ///
-/// The identifier is the caller's to decide, not this crate's. Most imports are named and
-/// hashed - `Nid::with_suffix(name, suffix)` - but some arrive *already* as an identifier,
-/// because firmware modules export around a million of them whose names nobody outside the
-/// vendor holds. An import is perfectly resolvable without a name; the name only ever existed
-/// to compute the identifier.
-///
-/// Handing back a [`Nid`] rather than letting this crate hash a string is what makes both
-/// cases the same case, and it is why `build` takes no hash suffix.
+/// The caller decides the identifier: most imports are hashed from a name with
+/// `Nid::with_suffix`, and some are known only as an identifier. Taking a [`Nid`] covers both,
+/// which is why `build` takes no hash suffix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Resolution {
     /// The identifier a loader will match on.
@@ -221,9 +140,7 @@ pub struct Library {
     pub id: u16,
     /// The id of the module the library lives in.
     ///
-    /// **Not the same number as `id`.** `libScePosix` is a library inside the `libkernel`
-    /// module, and a writer that reuses one id for both produces symbols naming a module that
-    /// does not exist.
+    /// Not necessarily `id`: `libScePosix` is a library inside the `libkernel` module.
     pub module_id: u16,
 }
 
@@ -257,9 +174,8 @@ pub struct Linked<'a> {
     pub rela: &'a [u8],
     /// Address of `.got.plt`, or `.got` when the linker did not split them, or zero.
     ///
-    /// **An address, not an offset** - the only value here that is. A loader writes a resolved
-    /// import into a slot measured from this base, so a wrong one puts every answer at the
-    /// wrong place.
+    /// An address, not an offset: a loader writes resolved imports into slots measured from
+    /// this base.
     pub pltgot: u64,
 }
 
@@ -291,12 +207,8 @@ pub struct Segment {
 /// Build the vendor segment from a linked module's tables.
 ///
 /// `resolve` turns an undefined symbol's name into the [`Resolution`] a manifest holds for it.
-/// Returning `None` means nobody claims it, and that is an error rather than a default: id
-/// zero is a valid-looking answer that resolves to nothing.
-///
-/// **No hash suffix is passed in**, because the caller has already decided the identifier -
-/// see [`Resolution`] for why that is the right place for the decision rather than a
-/// convenience this crate should take over.
+/// `None` means nobody claims it, which is an error rather than a default id. The caller has
+/// already decided the identifier; see [`Resolution`].
 ///
 /// # Errors
 ///
@@ -313,16 +225,8 @@ pub fn build(
 
     let hash = build_hash(&symbols, &strtab)?;
 
-    // End to end, in the order a reference module uses. See the module docs: the adjacency
-    // is what makes the tag arithmetic check out.
-    //
-    // The string table is **not** the first thing in the segment. A real executable reserves
-    // `FINGERPRINT_SIZE` bytes ahead of it - sixteen bytes of build identifier and eight of
-    // padding - and declares `DT_SCE_FINGERPRINT` with a value of zero, which is that region's
-    // offset. Its string table then begins at `0x18`, and its own leading NUL sits there.
-    //
-    // Left out, the whole segment shifts down by `0x18` and every table lands where the
-    // loader's layout calculation does not expect it. (D077)
+    // End to end, in the order a reference module uses, after the fingerprint region; the
+    // loader's layout calculation expects the string table at `FINGERPRINT_SIZE`.
     let fingerprint_len = usize::try_from(FINGERPRINT_SIZE).unwrap_or(0x18);
     let mut bytes = vec![0_u8; fingerprint_len];
     let strtab_span = Span {
@@ -352,20 +256,12 @@ pub fn build(
 impl Segment {
     /// Every dynamic entry describing this segment, in the order they must be emitted.
     ///
-    /// `base` is zero when tag values are offsets into the segment and the segment's address
-    /// when they are virtual addresses - which is the difference between the two conventions,
-    /// and the reason one expression serves both.
+    /// `base` is zero when tag values are offsets into the segment (Orbis) and the segment's
+    /// address when they are virtual addresses (Prospero). `generation` picks each library's
+    /// declared version; see [`module_version`].
     ///
-    /// `generation` decides the version each library is declared at - almost always the
-    /// default, and see [`module_version`] for the one case where it is not and what that
-    /// costs.
-    ///
-    /// `init` is the module's initialiser address, if it defines one. Absent rather than zero
-    /// when it does not: one loader calls the address unconditionally, so a zero there
-    /// executes the ELF header as instructions.
-    ///
-    /// `kind` decides whether an export library is declared at all, and that is not a
-    /// stylistic choice - see the export block below.
+    /// `init` is the initialiser address, omitted rather than zero when there is none, since a
+    /// loader calls it unconditionally. `kind` decides whether an export library is declared.
     #[must_use]
     pub fn entries(
         &self,
@@ -378,13 +274,8 @@ impl Segment {
         let tags = Tags::of(table);
         let at = |offset: u64| offset.saturating_add(base);
 
-        // The string table first. Four tags below carry a name offset, and a loader resolves
-        // one the moment it meets it.
-        //
-        // The fingerprint comes with it because it is what the string table's offset is
-        // measured past - see [`FINGERPRINT_SIZE`]. Its value is the region's offset, which is
-        // the start of the segment, so it is zero under the legacy convention and the
-        // segment's own address under the current one.
+        // The string table first, since later tags carry name offsets. The fingerprint's value
+        // is the segment start: zero under Orbis, the segment's address under Prospero.
         let mut entries = vec![
             (vendor::FINGERPRINT, at(0)),
             (tags.strtab, at(self.strtab.at)),
@@ -399,15 +290,9 @@ impl Segment {
             (tags.hashsz, self.hash.size),
         ]);
 
-        // The *form* is always declared; the table only when it holds something.
-        //
-        // The form is a statement about the format rather than about a table - "if there are
-        // linkage relocations, they are `Elf64_Rela`" - and a loader that does not find it
-        // concludes the module uses some other form and gives up.
-        //
-        // Declaring an empty table is the opposite mistake. It gives `JMPREL` and `RELA` the
-        // same offset and a size of zero, and a loader handed that read relocations out of
-        // the string table: entries whose "type" was four bytes of an encoded symbol name.
+        // The form is always declared, since a loader without it gives up. A table is declared
+        // only when non-empty; an empty one shares its offset with the next and a loader then
+        // reads relocations out of the wrong table.
         entries.push((tags.pltrel, version::RELA_FORM));
         if !self.jmprel.is_empty() {
             entries.extend([
@@ -428,13 +313,8 @@ impl Segment {
 
         // Identity, last, because every value below packs a string-table offset.
         entries.extend([
-            // The module's own name, which is the closest thing to a filename this knows.
-            //
-            // A real executable puts a whole build path here. Nothing in this repository has
-            // one to put - a module is built from sources, not from a file with a name the
-            // format cares about - so what goes in is the name the module already declares
-            // for itself, which is true and is not invented. A loader needs the tag to be
-            // present and its offset to resolve; it does not need the value to be a path.
+            // The module's own name. A loader needs the tag present and its offset to
+            // resolve, not a path.
             (
                 vendor::ORIGINAL_FILENAME,
                 u64::from(self.module_name_offset),
@@ -451,23 +331,10 @@ impl Segment {
             (tags.module_attr, 0),
         ]);
 
-        // A main executable declares no export library, and that frees library id zero.
-        //
-        // # Why this is a correctness rule and not tidiness
-        //
-        // Export and import libraries share **one** id space. A shared library takes id zero
-        // for the library it exports and numbers its imports from one, which is the ordinary
-        // arrangement and is what this wrote unconditionally. An executable exports nothing,
-        // so its first import library **is** id zero.
-        //
-        // Emitting the export tag on an executable therefore does two things, and the second
-        // is the damaging one: it declares a library nothing imports, and it pushes every
-        // import library up by one, so the table a loader indexes has no entry at zero. The
-        // loader allocates that table densely from zero - `allocate_per_file_info_compact` is
-        // the frame it refuses in - and a hole at the front is not a gap it tolerates.
-        //
-        // Settled by a launching homebrew executable: ten import libraries at ids 0 through 9,
-        // nine needed modules at ids 1 through 9, and no export tag of either kind. (D074)
+        // Export and import libraries share one id space. A shared library exports id zero
+        // and imports from one; an executable exports nothing and its first import is id
+        // zero. The loader allocates that table densely from zero and refuses a hole at the
+        // front (`allocate_per_file_info_compact`).
         if !kind.is_executable() {
             entries.extend([
                 (
@@ -478,10 +345,8 @@ impl Segment {
             ]);
         }
 
-        // Four entries per library. The ordinary `DT_NEEDED` names the module by **filename**
-        // and the vendor tags name it by its bare name - `libkernel.prx` against `libkernel`.
-        // A loader keying its implementation table on the filename finds nothing under the
-        // bare one, so both strings are in the table and both are used.
+        // Four entries per library. `DT_NEEDED` names the filename (`libkernel.prx`) and the
+        // vendor tags the bare name (`libkernel`).
         for (library, name_offset, file_offset) in &self.libraries {
             entries.push((standard::NEEDED, u64::from(*file_offset)));
             let (major, minor) = module_version(&library.name, generation);
@@ -511,8 +376,7 @@ type Named = Vec<(Library, u32, u32)>;
 
 /// Start the string table with the names the identity tags refer to.
 ///
-/// They go in before any symbol name so their offsets stay small and the head of the table
-/// stays readable - which is the state it is usually read in.
+/// They go in before any symbol name so they sit at the readable head of the table.
 fn start_strings(
     module_name: &str,
     libraries: &[Library],
@@ -588,9 +452,7 @@ fn rebuild_symbols(
 
 /// Build the symbol hash table.
 ///
-/// Bucket count is one per symbol - not the densest choice, and density is irrelevant for a
-/// few hundred entries. Never zero, because a zero bucket count is a division by zero in
-/// whatever walks it.
+/// One bucket per symbol, and never zero, since a reader divides by the bucket count.
 fn build_hash(symbols: &[u8], strings: &[u8]) -> Result<Vec<u8>, BuildError> {
     let count = symbols.len().checked_div(SYMBOL_SIZE).unwrap_or(0);
     let buckets = count.max(1);
@@ -627,8 +489,7 @@ fn build_hash(symbols: &[u8], strings: &[u8]) -> Result<Vec<u8>, BuildError> {
 
 /// The hash function from the ELF specification.
 ///
-/// Not a choice - the format fixes it, and this is the one place in the repository where a
-/// "reasonable" alternative would produce a table that looks right and finds nothing.
+/// The format fixes it; any other hash builds a table that finds nothing.
 #[must_use]
 pub fn elf_hash(name: &[u8]) -> u32 {
     let mut hash: u32 = 0;
@@ -645,8 +506,6 @@ pub fn elf_hash(name: &[u8]) -> u32 {
 
 /// Append a table, aligned, and say where it landed.
 fn append(segment: &mut Vec<u8>, table: &[u8]) -> Span {
-    // `next_multiple_of` rather than the modulus dance: a wrong offset here points a loader
-    // at the middle of a table.
     let at = segment.len().next_multiple_of(8);
     segment.resize(at, 0);
     segment.extend_from_slice(table);
@@ -658,18 +517,15 @@ fn append(segment: &mut Vec<u8>, table: &[u8]) -> Span {
 
 /// Append a NUL-terminated string and return where it starts.
 fn push(table: &mut Vec<u8>, value: &str) -> Result<u32, BuildError> {
-    // `st_name` and the identity values both address the table with 32 bits. Truncating would
-    // name a *different* string, which resolves to the wrong library rather than failing.
+    // `st_name` and the identity values address the table with 32 bits; truncating would
+    // name a different string.
     let offset = u32::try_from(table.len()).map_err(|_| BuildError::TooLarge)?;
     table.extend_from_slice(value.as_bytes());
     table.push(0);
     Ok(offset)
 }
 
-/// Set a symbol's type, keeping its binding.
-///
-/// The binding is left alone deliberately: weak is what makes an unresolved import a null
-/// address rather than a link failure, and that is load-bearing.
+/// Set a symbol's type, keeping its binding. The binding is set by [`set_binding`].
 fn set_type(entry: &mut [u8], symbol_type: u8) -> Result<(), BuildError> {
     let info = entry.get_mut(4).ok_or(BuildError::MalformedSymbolTable)?;
     *info = (*info & 0xF0) | (symbol_type & 0x0F);
@@ -685,22 +541,10 @@ fn set_binding(entry: &mut [u8], binding: u8) -> Result<(), BuildError> {
 
 /// A name from the string table this builder was handed.
 ///
-/// **Strict, and deliberately stricter than the reader.** `dynamic::string_at` reads a module
-/// somebody else wrote and can only report what it finds; this reads a name that is about to
-/// be *written back*, and there the two ways of being permissive are both worse than an error:
-///
-/// - a lossy conversion replaces a byte with `U+FFFD` and writes a **different symbol name**,
-///   three bytes where one was, into the table a loader resolves against;
-/// - an out-of-range offset read as an empty name makes an undefined symbol look defined
-///   (`build` tests `!plain.is_empty()`), so it never reaches `resolve`, is never reported
-///   `Unclaimed`, and is written back as a nameless local. The module builds, loads, and jumps
-///   to a slot nothing filled in. That is the failure `Unclaimed` exists to make impossible,
-///   arriving through the one path that skipped it.
-///
-/// The second is the reachable one: `Linked::names` is supplied by the caller, this crate has
-/// two string tables to confuse (`.strtab` and `.dynstr`), and passing the wrong one puts every
-/// offset out of range. Silently emitting a module of nameless symbols is the worst available
-/// answer to that mistake. (D091)
+/// Strict, because the name is written back. A lossy conversion would write a different
+/// symbol name, and an out-of-range offset read as empty would make an undefined symbol look
+/// defined and bypass [`BuildError::Unclaimed`]. Passing `.strtab` where `.dynstr` is wanted
+/// puts every offset out of range (D091).
 ///
 /// # Errors
 ///
@@ -722,24 +566,12 @@ fn string_at(table: &[u8], at: u32) -> Result<String, BuildError> {
 
 /// Fit a built segment into a linked module, in place.
 ///
-/// This is the surgery a linker cannot do: append the tables, point the declared vendor header
-/// at them, overwrite the standard dynamic table with the vendor one, and remove the section
-/// headers.
+/// Appends the tables, points the declared vendor header at them, replaces the standard
+/// dynamic table with the vendor one, and removes the section header table. `init` is the
+/// initialiser address, or `None`.
 ///
-/// `init` is the module's initialiser address, looked up by the caller. Absent rather than
-/// zero when there is none.
-///
-/// # The section headers go, and that is not tidying
-///
-/// The linked file carries `.rela.dyn` and `.rela.plt` as sections, and the appended segment
-/// carries copies described by the vendor tags. **Two descriptions of the same relocations,
-/// reachable two ways.** That is one too many: two separate loaders were observed reading
-/// relocations from somewhere neither tag points at, logging entries whose "type" was four
-/// bytes of ASCII out of a string table. A loader that mis-reads a relocation does not fail to
-/// apply it - it applies it, writing a bad value at a bad address inside the loaded image.
-///
-/// Nothing is deleted. Only the header table that indexes it; the bytes stay where they are,
-/// still described by the program headers, which is all a loader reads.
+/// The section headers go so the relocations are described only once, by the vendor tags; a
+/// loader can otherwise read them from the wrong place. The section bytes stay in the file.
 ///
 /// # Errors
 ///
@@ -752,9 +584,8 @@ pub fn install(
     generation: Generation,
     init: Option<u64>,
 ) -> Result<Installed, BuildError> {
-    // Appended past everything else, aligned so the segment starts somewhere a loader is
-    // comfortable with: orbis unmapped vendor segments use 16-byte alignment, while
-    // prospero-generation mapped PT_LOAD segments require page alignment (0x4000).
+    // An unmapped Orbis vendor segment is 16-byte aligned; a mapped Prospero `PT_LOAD` needs
+    // the allocation granularity.
     let align = match table {
         Table::Orbis => 16,
         Table::Prospero => usize::try_from(crate::layout::ALLOCATION_GRANULARITY).unwrap_or(0x4000),
@@ -783,9 +614,7 @@ pub fn install(
             .position(|header| header.p_type.get() == crate::segment::SCE_DYNLIBDATA)
             .ok_or(BuildError::NoVendorHeader)?;
 
-        // Where the appended tables live in the address space, or zero when they do not.
-        //
-        // The two conventions differ here as much as they differ in tag numbers, and the two
+        // Where the appended tables live in the address space, or zero when unmapped.
         let base = match table {
             Table::Orbis => 0,
             Table::Prospero => {
@@ -807,9 +636,7 @@ pub fn install(
                 max_va.max(segment_offset.saturating_sub(first_load_bias))
             }
         };
-        // What the module says it is, rather than what the caller believes - the export
-        // decision below turns on it and the file is the only thing that cannot be out of
-        // date about it.
+        // The export decision uses the type the file states, not what the caller believes.
         (
             dynamic.offset.get(),
             dynamic.filesz.get(),
@@ -827,32 +654,10 @@ pub fn install(
         .and_then(|slots| slots.checked_mul(16))
         .ok_or(BuildError::TooLarge)? as u64;
 
-    // The dynamic table goes at the **tail of the vendor segment**, not in the image.
-    //
-    // # How the console addresses it, which is not how an ordinary system does
-    //
-    // On an ordinary system `PT_DYNAMIC` is a window onto a mapped `PT_LOAD` and the loader
-    // reads it at its virtual address. A console executable does the opposite: its
-    // `PT_DYNAMIC` carries **no address at all** and lies inside `PT_SCE_DYNLIBDATA`, which is
-    // itself never mapped. The tables and the table of contents describing them are one
-    // region, read out of the file together.
-    //
-    // The arithmetic in a real executable is exact rather than suggestive. Its vendor segment
-    // runs `0x8c130 + 0x3760`, its dynamic table `0x8f450 + 0x440`, and both end at `0x8f890`
-    // - the dynamic table is the last `0x440` bytes of the vendor segment, immediately after
-    // the hash table, with nothing between them.
-    //
-    // That is also why the loader's frame is named the way it is. `preprocess_dt_entries` is
-    // reached from `calcurate_sce_dynlibdata_layout`: walking the dynamic entries **is** how
-    // the vendor blob's layout gets computed, because they live in it. With the table left
-    // behind in a `PT_LOAD`, the loader walks the region it expects and finds no vendor tag
-    // anywhere, then reports the first one it needed:
-    //
-    //     [rtld] ERROR preprocess_dt_entries:9589: does not have DT_SCE_SYMTABSZ or
-    //            DT_SCE_HASHSZ tabs.
-    //
-    // which names two tags that were present and correct all along, a hundred kilobytes away
-    // from where they were being looked for. (D076)
+    // The dynamic table is the tail of the vendor segment, right after the hash table, and
+    // `PT_DYNAMIC` lies inside it. The loader computes the vendor segment's layout by walking
+    // these entries; a table left in a `PT_LOAD` is reported as missing
+    // `DT_SCE_SYMTABSZ or DT_SCE_HASHSZ`.
     clear_dynamic(module, dynamic_at, dynamic_size)?;
     let dynamic_offset = module.len() as u64;
     let grown = module
@@ -875,8 +680,7 @@ pub fn install(
         dynamic_index,
         dynamic_offset,
         dynamic_bytes,
-        // Unmapped under the legacy convention, and part of the image under the current one,
-        // for the same reason the vendor segment itself is.
+        // Unmapped under Orbis, part of the image under Prospero, like the vendor segment.
         if base == 0 {
             0
         } else {
@@ -914,8 +718,7 @@ pub struct Installed {
 /// Overwrite the dynamic table in place, terminated, with the remainder cleared.
 fn write_dynamic(bytes: &mut [u8], offset: u64, entries: &[(u64, u64)]) -> Result<(), BuildError> {
     let mut at = usize::try_from(offset).map_err(|_| BuildError::TooLarge)?;
-    // A terminator follows the entries. Leaving the linker's standard entries after it would
-    // have a loader read tags this module does not describe.
+    // A terminator follows the entries.
     for (tag, value) in entries.iter().chain([&(0, 0)]) {
         write_le(bytes, at, *tag).ok_or(BuildError::NotAModule)?;
         write_le(bytes, at.saturating_add(8), *value).ok_or(BuildError::NotAModule)?;
@@ -926,14 +729,9 @@ fn write_dynamic(bytes: &mut [u8], offset: u64, entries: &[(u64, u64)]) -> Resul
 
 /// Erase the table the linker left behind, where its own `PT_DYNAMIC` pointed.
 ///
-/// The vendor table is written elsewhere now - see [`install`] - so what the linker produced
-/// would otherwise stay in a mapped segment, describing sections that no longer have headers.
-/// That is the same "two descriptions of one thing" that [`strip_sections`] exists to prevent,
-/// and the cheaper half to remove.
-///
-/// Walks to the linker's own terminator rather than clearing the whole reservation. A linker
-/// script that gives `.dynamic` the rest of its segment declares a `p_filesz` covering live
-/// data, and zeroing all of that removes the module's `.got` along with its dynamic table.
+/// The vendor table is written elsewhere by [`install`], so this one would be a second
+/// description. Clears up to the linker's own terminator only, because `p_filesz` can cover
+/// live data such as `.got`.
 fn clear_dynamic(bytes: &mut [u8], offset: u64, limit: u64) -> Result<(), BuildError> {
     let start = usize::try_from(offset).map_err(|_| BuildError::TooLarge)?;
     let limit = usize::try_from(limit).map_err(|_| BuildError::TooLarge)?;
@@ -954,9 +752,8 @@ fn clear_dynamic(bytes: &mut [u8], offset: u64, limit: u64) -> Result<(), BuildE
 
 /// Point `PT_DYNAMIC` at the table [`install`] wrote, and size it to exactly that.
 ///
-/// Both halves matter. A real executable's `PT_DYNAMIC` is `0x440` bytes for sixty-seven tags
-/// and a terminator - exact, not a reservation - and carries no address, because the table it
-/// describes is in the file and never placed.
+/// Sized exactly, not as a reservation, and with no address under Orbis because the table is
+/// never placed.
 fn place_dynamic(
     bytes: &mut [u8],
     index: usize,
@@ -970,9 +767,8 @@ fn place_dynamic(
         .and_then(|base| index.checked_mul(56).and_then(|by| base.checked_add(by)))
         .ok_or(BuildError::NoDynamicSegment)?;
 
-    // `p_memsz` equals `p_filesz` even with no address, unlike a vendor data segment: the
-    // loader never maps `PT_DYNAMIC`, and a real executable states `0x440` in both fields with
-    // an address of zero. A zero here would say the module has no dynamic table.
+    // `p_memsz` equals `p_filesz` even with no address, unlike a vendor data segment; a zero
+    // would say the module has no dynamic table.
     let flags = if vaddr != 0 { 0x6 } else { 0x4 };
     write_program_header(
         bytes,
@@ -1002,8 +798,7 @@ fn write_program_header(
 
 /// Remove the section header table. See [`install`] for why.
 fn strip_sections(bytes: &mut [u8]) -> Result<(), BuildError> {
-    // All four fields, not just the offset: a zeroed offset with a live count is a worse shape
-    // than either a table or none, and a reader that trusts the count walks from zero.
+    // All four fields: a reader that trusts a live count walks from a zeroed offset.
     write_le(bytes, 0x28, 0_u64).ok_or(BuildError::NotAModule)?;
     for at in [0x3A, 0x3C, 0x3E] {
         write_le(bytes, at, 0_u16).ok_or(BuildError::NotAModule)?;
@@ -1025,11 +820,10 @@ fn repurpose_header(
         .and_then(|base| index.checked_mul(56).and_then(|by| base.checked_add(by)))
         .ok_or(BuildError::NoVendorHeader)?;
 
-    // With an address the tables are an ordinary read-only mapped segment, the shape every
-    // current-generation executable has. Without one they are a vendor data segment read out
-    // of the file and never placed, so its memory size is zero: a segment with no address and
-    // a non-zero memory size asks to be placed at the null page, and the hardware's `rtld`
-    // refuses the file as an illegal segment header.
+    // With an address the tables are a read-only mapped segment, as in a Prospero-generation
+    // executable. Without one they are an unplaced vendor data segment with a zero memory
+    // size: `rtld` refuses an unmapped segment with a non-zero `p_memsz` as an illegal
+    // segment header.
     let (kind, fields) = if vaddr != 0 {
         (
             (crate::segment::LOAD, 0x6),
@@ -1059,15 +853,12 @@ pub enum BuildError {
     MalformedSymbolTable,
     /// Undefined symbols that no library claims.
     ///
-    /// Named rather than counted, because the answer is always "add these to the manifest"
-    /// and a count does not say which.
+    /// Named rather than counted, so the caller knows what to add to the manifest.
     Unclaimed(Vec<String>),
     /// A symbol name could not be read from the string table it points into.
     ///
-    /// Carries the offset. Out of range, unterminated, or not UTF-8 - all three mean a name
-    /// this builder would have to invent, and inventing one writes a module that names a
-    /// symbol nobody asked for. The usual cause is the wrong string table: `.strtab` where
-    /// `.dynstr` was wanted puts every offset somewhere meaningless. (D091)
+    /// Carries the offset of a name that is out of range, unterminated, or not UTF-8. The
+    /// usual cause is passing `.strtab` where `.dynstr` is wanted.
     SymbolName(u32),
     /// A table grew past what a 32-bit offset can address.
     TooLarge,
@@ -1077,14 +868,13 @@ pub enum BuildError {
     NoDynamicSegment,
     /// The module declares no vendor segment header to repurpose.
     ///
-    /// The linker script declares one pointing at a placeholder byte, precisely so there is a
-    /// header to point at the tables afterwards. A linker drops a `PHDRS` entry with no
-    /// section assigned to it, and a header that is absent cannot be repurposed later.
+    /// The linker script declares one over a placeholder byte, since a linker drops a `PHDRS`
+    /// entry with no section assigned to it.
     NoVendorHeader,
     /// The reserved dynamic table is too small for the entries this module needs.
     ///
-    /// Reported rather than written over whatever follows, so an under-sized reservation is a
-    /// build failure and not a mystery. Every imported library costs four tags.
+    /// Reported rather than written over whatever follows. Every imported library costs four
+    /// tags.
     DynamicTooSmall {
         /// Bytes the entries need.
         needed: u64,
@@ -1136,661 +926,5 @@ impl std::error::Error for BuildError {}
     clippy::arithmetic_side_effects,
     reason = "a panic in a test is the test failing"
 )]
-mod tests {
-    use super::{BuildError, Library, Linked, Resolution, build, elf_hash, module_version};
-    use crate::dynamic::{self, Table, standard};
-    use selfish_abi::Generation;
-
-    /// A symbol table with one null entry and then the named ones.
-    fn linked_symbols(names: &[(&str, u16)]) -> (Vec<u8>, Vec<u8>) {
-        let mut strings = vec![0_u8];
-        let mut symbols = vec![0_u8; 24];
-        for (name, section) in names {
-            let at = u32::try_from(strings.len()).unwrap();
-            strings.extend_from_slice(name.as_bytes());
-            strings.push(0);
-
-            symbols.extend_from_slice(&at.to_le_bytes());
-            symbols.push(0x10); // global binding, NOTYPE - what a linker leaves
-            symbols.push(0);
-            symbols.extend_from_slice(&section.to_le_bytes());
-            symbols.extend_from_slice(&0_u64.to_le_bytes());
-            symbols.extend_from_slice(&0_u64.to_le_bytes());
-        }
-        (symbols, strings)
-    }
-
-    /// Claim every symbol for library zero, hashing its name.
-    ///
-    /// Always `Some`: these tests are about what a claimed symbol becomes, and the unclaimed
-    /// case has its own test.
-    #[allow(
-        clippy::unnecessary_wraps,
-        reason = "it is the shape `build` takes, and matching it is the point"
-    )]
-    fn resolve_all(name: &str) -> Option<Resolution> {
-        Some(Resolution {
-            nid: selfish_nid::Nid::of(name),
-            library: 0,
-            module: 0,
-        })
-    }
-
-    fn libraries() -> Vec<Library> {
-        vec![Library {
-            name: "libkernel".to_owned(),
-            id: 0,
-            module_id: 0,
-        }]
-    }
-
-    #[test]
-    fn what_is_written_reads_back_through_the_reader() {
-        // Principle 4, and the reason the two sides are one crate.
-        let (symbols, names) = linked_symbols(&[("sceKernelLoadStartModule", 0), ("local", 1)]);
-        let segment = build(
-            Linked {
-                symbols: &symbols,
-                names: &names,
-                jmprel: &[],
-                rela: &[],
-                pltgot: 0x1000,
-            },
-            "probe",
-            &libraries(),
-            &resolve_all,
-        )
-        .expect("a segment");
-
-        let entries = segment.entries(
-            Table::Orbis,
-            Generation::Orbis,
-            0,
-            None,
-            crate::ObjectType::SharedLibrary,
-        );
-        let info = dynamic::Info::from_entries(&entries);
-        assert_eq!(info.table, Some(Table::Orbis));
-
-        let imports = dynamic::imports(&segment.bytes, &info).expect("imports");
-        assert_eq!(imports.len(), 1, "one undefined symbol, so one import");
-        assert_eq!(imports[0].library, Some("libkernel"));
-        assert_eq!(imports[0].module, Some("libkernel"));
-        assert_eq!(
-            imports[0].nid,
-            selfish_nid::Nid::of("sceKernelLoadStartModule")
-        );
-    }
-
-    #[test]
-    fn a_defined_symbol_keeps_its_plain_name() {
-        // Nothing looks it up by hash, and encoding it would lose the only name it has.
-        let (symbols, names) = linked_symbols(&[("local", 1)]);
-        let segment = build(
-            Linked {
-                symbols: &symbols,
-                names: &names,
-                jmprel: &[],
-                rela: &[],
-                pltgot: 0,
-            },
-            "probe",
-            &libraries(),
-            &resolve_all,
-        )
-        .expect("a segment");
-
-        assert_eq!(segment.encoded, 0);
-        let text = String::from_utf8_lossy(&segment.bytes);
-        assert!(text.contains("local"), "the plain name survives");
-    }
-
-    #[test]
-    fn an_unclaimed_import_is_an_error_and_is_named() {
-        // Giving it library zero would be a valid-looking answer that resolves to nothing.
-        let (symbols, names) = linked_symbols(&[("sceSomethingUnknown", 0)]);
-        let error = build(
-            Linked {
-                symbols: &symbols,
-                names: &names,
-                jmprel: &[],
-                rela: &[],
-                pltgot: 0,
-            },
-            "probe",
-            &libraries(),
-            &|_| None,
-        )
-        .unwrap_err();
-        assert_eq!(
-            error,
-            BuildError::Unclaimed(vec!["sceSomethingUnknown".to_owned()])
-        );
-    }
-
-    #[test]
-    fn an_import_is_typed_as_a_function() {
-        // A linker leaves it NOTYPE. A console loader matches on hash *and type*, and an
-        // untyped import binds to a stub that returns zero - so every call succeeds and
-        // every answer is a plausible nothing.
-        let (symbols, names) = linked_symbols(&[("sceKernelLoadStartModule", 0)]);
-        let segment = build(
-            Linked {
-                symbols: &symbols,
-                names: &names,
-                jmprel: &[],
-                rela: &[],
-                pltgot: 0,
-            },
-            "probe",
-            &libraries(),
-            &resolve_all,
-        )
-        .expect("a segment");
-
-        let entries = segment.entries(
-            Table::Orbis,
-            Generation::Orbis,
-            0,
-            None,
-            crate::ObjectType::SharedLibrary,
-        );
-        let info = dynamic::Info::from_entries(&entries);
-        let read = dynamic::symbols(&segment.bytes, &info).expect("symbols");
-        // Skipping index zero deliberately: the reserved null entry has section zero too, so
-        // "is an import" alone finds it first and reports the null symbol's type.
-        let import = read
-            .iter()
-            .find(|symbol| symbol.is_import() && symbol.name_offset != 0)
-            .expect("an import");
-        assert_eq!(import.kind(), super::FUNCTION);
-        assert_eq!(import.binding(), 1, "and the binding is untouched");
-    }
-
-    #[test]
-    fn the_string_table_is_declared_before_anything_that_names_a_string() {
-        // A loader resolves a name offset the moment it meets one. Emitted first, these
-        // dereference a base it does not have - a fault inside the loader, with nothing in
-        // its log, before a guest instruction runs.
-        let (symbols, names) = linked_symbols(&[("local", 1)]);
-        let segment = build(
-            Linked {
-                symbols: &symbols,
-                names: &names,
-                jmprel: &[],
-                rela: &[],
-                pltgot: 0,
-            },
-            "probe",
-            &libraries(),
-            &resolve_all,
-        )
-        .expect("a segment");
-
-        let entries = segment.entries(
-            Table::Orbis,
-            Generation::Orbis,
-            0,
-            None,
-            crate::ObjectType::SharedLibrary,
-        );
-        let tags = dynamic::Tags::of(Table::Orbis);
-        let strtab = entries.iter().position(|(tag, _)| *tag == tags.strtab);
-        let module_info = entries.iter().position(|(tag, _)| *tag == tags.module_info);
-        // The fingerprint precedes it and names nothing; nothing else may.
-        assert_eq!(
-            entries.first().map(|(tag, _)| *tag),
-            Some(dynamic::vendor::FINGERPRINT),
-            "only the fingerprint comes before the string table"
-        );
-        assert_eq!(strtab, Some(1), "and the string table is next");
-        assert!(module_info > strtab, "and every name comes after it");
-    }
-
-    #[test]
-    fn an_empty_relocation_table_is_not_declared_but_its_form_always_is() {
-        // Declaring an empty table gives JMPREL and RELA the same offset and a size of zero,
-        // and one loader handed that read relocations out of the string table. The *form* is
-        // a statement about the format rather than about a table, and a loader that does not
-        // find it concludes the module uses some other form.
-        let (symbols, names) = linked_symbols(&[("local", 1)]);
-        let segment = build(
-            Linked {
-                symbols: &symbols,
-                names: &names,
-                jmprel: &[],
-                rela: &[],
-                pltgot: 0,
-            },
-            "probe",
-            &libraries(),
-            &resolve_all,
-        )
-        .expect("a segment");
-
-        let entries = segment.entries(
-            Table::Orbis,
-            Generation::Orbis,
-            0,
-            None,
-            crate::ObjectType::SharedLibrary,
-        );
-        let tags = dynamic::Tags::of(Table::Orbis);
-        assert!(entries.iter().any(|(tag, _)| *tag == tags.pltrel));
-        assert!(!entries.iter().any(|(tag, _)| *tag == tags.jmprel));
-        assert!(!entries.iter().any(|(tag, _)| *tag == tags.rela));
-    }
-
-    #[test]
-    fn every_library_costs_four_tags() {
-        // The number the linker script's reservation is sized by.
-        let (symbols, names) = linked_symbols(&[("local", 1)]);
-        let two = vec![
-            Library {
-                name: "libkernel".to_owned(),
-                id: 0,
-                module_id: 0,
-            },
-            Library {
-                name: "libSceFios2".to_owned(),
-                id: 1,
-                module_id: 1,
-            },
-        ];
-        let linked = Linked {
-            symbols: &symbols,
-            names: &names,
-            jmprel: &[],
-            rela: &[],
-            pltgot: 0,
-        };
-        let one = build(linked, "probe", &libraries(), &resolve_all)
-            .expect("a segment")
-            .entries(
-                Table::Orbis,
-                Generation::Orbis,
-                0,
-                None,
-                crate::ObjectType::SharedLibrary,
-            )
-            .len();
-        let both = build(linked, "probe", &two, &resolve_all)
-            .expect("a segment")
-            .entries(
-                Table::Orbis,
-                Generation::Orbis,
-                0,
-                None,
-                crate::ObjectType::SharedLibrary,
-            )
-            .len();
-        assert_eq!(both - one, crate::layout::TAGS_PER_LIBRARY);
-    }
-
-    #[test]
-    fn the_two_conventions_produce_different_tags_for_the_same_segment() {
-        // The bug this repository was founded on, in miniature: one segment, two tag sets,
-        // and a builder that picked the wrong one produced a file a loader rejected.
-        let (symbols, names) = linked_symbols(&[("local", 1)]);
-        let segment = build(
-            Linked {
-                symbols: &symbols,
-                names: &names,
-                jmprel: &[],
-                rela: &[],
-                pltgot: 0,
-            },
-            "probe",
-            &libraries(),
-            &resolve_all,
-        )
-        .expect("a segment");
-
-        let orbis = segment.entries(
-            Table::Orbis,
-            Generation::Orbis,
-            0,
-            None,
-            crate::ObjectType::SharedLibrary,
-        );
-        let prospero = segment.entries(
-            Table::Prospero,
-            Generation::Prospero,
-            0x1000,
-            None,
-            crate::ObjectType::SharedLibrary,
-        );
-        // The string table, because the fingerprint that now precedes it has one tag number
-        // under both conventions - it is the *tables* that are renumbered.
-        let find = |entries: &[(u64, u64)], table| {
-            let wanted = dynamic::Tags::of(table).strtab;
-            entries
-                .iter()
-                .find(|(tag, _)| *tag == wanted)
-                .copied()
-                .expect("a string table")
-        };
-        let (orbis_tag, orbis_value) = find(&orbis, Table::Orbis);
-        let (prospero_tag, prospero_value) = find(&prospero, Table::Prospero);
-        assert_ne!(orbis_tag, prospero_tag, "different tag numbers");
-        assert_eq!(
-            prospero_value - orbis_value,
-            0x1000,
-            "and the prospero convention's values are addresses"
-        );
-    }
-
-    #[test]
-    fn the_initialiser_is_absent_rather_than_zero_when_there_is_none() {
-        // One loader calls the address without checking the tag was present. A zero there
-        // executes the ELF header as instructions.
-        let (symbols, names) = linked_symbols(&[("local", 1)]);
-        let segment = build(
-            Linked {
-                symbols: &symbols,
-                names: &names,
-                jmprel: &[],
-                rela: &[],
-                pltgot: 0,
-            },
-            "probe",
-            &libraries(),
-            &resolve_all,
-        )
-        .expect("a segment");
-
-        let without = segment.entries(
-            Table::Orbis,
-            Generation::Orbis,
-            0,
-            None,
-            crate::ObjectType::SharedLibrary,
-        );
-        let with = segment.entries(
-            Table::Orbis,
-            Generation::Orbis,
-            0,
-            Some(0x2000),
-            crate::ObjectType::SharedLibrary,
-        );
-        assert_eq!(with.len(), without.len() + 1);
-        assert!(!without.iter().any(|(tag, _)| *tag == standard::INIT));
-    }
-
-    #[test]
-    fn an_executable_declares_no_export_library_and_a_shared_library_does() {
-        // Export and import libraries share one id space, so an export tag on an executable
-        // costs library id zero - and the import table a loader indexes densely from zero
-        // then has a hole at the front. See the export block in `entries`. (D074)
-        let (symbols, names) = linked_symbols(&[("local", 1)]);
-        let segment = build(
-            Linked {
-                symbols: &symbols,
-                names: &names,
-                jmprel: &[],
-                rela: &[],
-                pltgot: 0,
-            },
-            "probe",
-            &libraries(),
-            &resolve_all,
-        )
-        .expect("a segment");
-
-        let exports = |kind| {
-            segment
-                .entries(Table::Orbis, Generation::Orbis, 0, None, kind)
-                .iter()
-                .any(|(tag, _)| {
-                    *tag == dynamic::vendor::EXPORT_LIB_ORBIS
-                        || *tag == dynamic::vendor::EXPORT_LIB_ATTR
-                })
-        };
-        assert!(
-            !exports(crate::ObjectType::Executable),
-            "an executable exports nothing"
-        );
-        assert!(
-            !exports(crate::ObjectType::FixedExecutable),
-            "and neither does a fixed one"
-        );
-        assert!(
-            exports(crate::ObjectType::SharedLibrary),
-            "a shared library is the whole reason the tag exists"
-        );
-    }
-
-    #[test]
-    fn a_library_is_named_twice_because_two_tags_spell_it_differently() {
-        // `libkernel` for the vendor tags, `libkernel.prx` for DT_NEEDED. A loader keying its
-        // implementation table on the filename finds nothing under the bare name.
-        let (symbols, names) = linked_symbols(&[("local", 1)]);
-        let segment = build(
-            Linked {
-                symbols: &symbols,
-                names: &names,
-                jmprel: &[],
-                rela: &[],
-                pltgot: 0,
-            },
-            "probe",
-            &libraries(),
-            &resolve_all,
-        )
-        .expect("a segment");
-
-        let text = String::from_utf8_lossy(&segment.bytes);
-        assert!(text.contains("libkernel\0"), "the bare name");
-        assert!(text.contains("libkernel.prx\0"), "and the filename");
-    }
-
-    #[test]
-    fn the_hash_is_the_one_the_specification_fixes() {
-        // A "reasonable" alternative produces a table that looks right and finds nothing.
-        assert_eq!(elf_hash(b""), 0);
-        assert_eq!(elf_hash(b"printf"), 0x0779_05A6);
-    }
-    #[test]
-    fn the_display_library_declares_a_different_version_on_the_previous_generation() {
-        // The one row in `data/library-versions.tsv`, and the reason it is a table rather
-        // than a constant. A loader matches the declared version against the registered one
-        // and a mismatch resolves *nothing* from that library - silently. This library is the
-        // one that decides whether anything appears on screen, so the symptom is a module
-        // that runs perfectly and draws a black window.
-        assert_eq!(module_version("libSceVideoOut", Generation::Orbis), (0, 0));
-        assert_eq!(
-            module_version("libSceVideoOut", Generation::Prospero),
-            (1, 1)
-        );
-        assert_eq!(module_version("libkernel", Generation::Orbis), (1, 1));
-    }
-
-    #[test]
-    fn the_generation_reaches_the_library_entries() {
-        // Threading it this far is the point: a version read correctly and then not used is
-        // the same black window.
-        let (symbols, names) = linked_symbols(&[("local", 1)]);
-        let video = vec![Library {
-            name: "libSceVideoOut".to_owned(),
-            id: 0,
-            module_id: 0,
-        }];
-        let segment = build(
-            Linked {
-                symbols: &symbols,
-                names: &names,
-                jmprel: &[],
-                rela: &[],
-                pltgot: 0,
-            },
-            "probe",
-            &video,
-            &resolve_all,
-        )
-        .expect("a segment");
-
-        let tags = dynamic::Tags::of(Table::Orbis);
-        let version_of = |generation| {
-            segment
-                .entries(
-                    Table::Orbis,
-                    generation,
-                    0,
-                    None,
-                    crate::ObjectType::SharedLibrary,
-                )
-                .into_iter()
-                .find(|(tag, _)| *tag == tags.needed_module)
-                .map(|(_, value)| (value >> 32) & 0xFFFF)
-                .expect("a needed-module entry")
-        };
-        assert_eq!(version_of(Generation::Orbis), 0x0000, "0.0");
-        assert_eq!(version_of(Generation::Prospero), 0x0101, "1.1");
-    }
-
-    /// An import library's attribute word is not the export one, and 0x1 is the bug.
-    ///
-    /// These two words are the same shape and were written by the same constant, which is how
-    /// one value ended up standing for both. A module built with `0x1` on its import libraries
-    /// loads and runs and binds nothing it had to load a library for - a failure that reads as
-    /// the platform lacking the symbols, because from inside the module that is what it looks
-    /// like.
-    ///
-    /// Pinned against the literal rather than against the constant: asserting
-    /// `IMPORT_LIBRARY == IMPORT_LIBRARY` would pass no matter what the constant became, and
-    /// the value is a measurement off a real title rather than a choice this crate is free to
-    /// revise.
-    #[test]
-    fn an_import_librarys_attribute_is_not_the_export_attribute() {
-        assert_eq!(
-            super::version::IMPORT_LIBRARY,
-            0x9,
-            "as a launching title writes it"
-        );
-        assert_ne!(
-            super::version::IMPORT_LIBRARY,
-            super::version::AUTO_EXPORT,
-            "one constant for both is the defect this test exists to catch"
-        );
-    }
-
-    /// An import is re-bound GLOBAL, whatever the compiler marked it.
-    ///
-    /// A probe declares its platform functions weak so an absent one is null rather than a
-    /// link error, and that binding used to travel straight into the module. A loader reads
-    /// `STB_WEAK` undefined as "do not go to any trouble" and does exactly that: imports bound
-    /// only from libraries already resident, and every library it would have had to load was
-    /// mapped and left unbound.
-    ///
-    /// Pinned on the encoded byte rather than on the constants, because the whole defect was
-    /// that the field nobody looked at held something nobody chose.
-    #[test]
-    fn an_import_is_rebound_global_even_when_the_compiler_marked_it_weak() {
-        // st_info: binding in the high nibble, type in the low one. WEAK FUNC is 0x22.
-        let mut entry = [0_u8; 24];
-        entry[4] = 0x22;
-        super::set_type(&mut entry, super::FUNCTION).expect("type");
-        super::set_binding(&mut entry, super::GLOBAL).expect("binding");
-        assert_eq!(
-            entry[4], 0x12,
-            "GLOBAL FUNC, as a launching title writes it"
-        );
-    }
-
-    /// The same fixture, but a name is raw bytes and its offset can be forced out of range.
-    ///
-    /// `linked_symbols` takes `&str`, which is exactly the shape that cannot express either
-    /// case below - so the two defects were unreachable from the existing harness rather than
-    /// untested by choice.
-    fn linked_raw(names: &[(&[u8], u16, Option<u32>)]) -> (Vec<u8>, Vec<u8>) {
-        let mut strings = vec![0_u8];
-        let mut symbols = vec![0_u8; 24];
-        for (name, section, forced) in names {
-            let at = forced.unwrap_or_else(|| u32::try_from(strings.len()).unwrap());
-            if forced.is_none() {
-                strings.extend_from_slice(name);
-                strings.push(0);
-            }
-            symbols.extend_from_slice(&at.to_le_bytes());
-            symbols.push(0x10); // global binding, NOTYPE - what a linker leaves
-            symbols.push(0);
-            symbols.extend_from_slice(&section.to_le_bytes());
-            symbols.extend_from_slice(&0_u64.to_le_bytes());
-            symbols.extend_from_slice(&0_u64.to_le_bytes());
-        }
-        (symbols, strings)
-    }
-
-    fn build_raw(names: &[(&[u8], u16, Option<u32>)]) -> Result<super::Segment, BuildError> {
-        let (symbols, strings) = linked_raw(names);
-        build(
-            Linked {
-                symbols: &symbols,
-                names: &strings,
-                jmprel: &[],
-                rela: &[],
-                pltgot: 0x1000,
-            },
-            "probe",
-            &libraries(),
-            &resolve_all,
-        )
-    }
-
-    #[test]
-    fn a_symbol_name_that_is_not_utf8_is_refused_rather_than_rewritten() {
-        // It used to be read lossily and written back. Measured before the fix: the name
-        // `6c 6f ff 63` came out of the rebuilt string table as `6c 6f ef bf bd 63` - a
-        // different symbol, two bytes longer, in the table a loader resolves against. A
-        // writer has no business being lossy; refusing is the only answer that cannot be
-        // wrong. (D091)
-        let refused = build_raw(&[(&[0x6c, 0x6f, 0xff, 0x63], 1, None)]);
-        assert!(
-            matches!(refused, Err(BuildError::SymbolName(_))),
-            "expected a refusal, got {refused:?}"
-        );
-    }
-
-    #[test]
-    fn a_name_offset_past_the_end_is_refused_rather_than_read_as_no_name() {
-        // The worse of the two, because it defeats `Unclaimed`. An out-of-range offset read
-        // as `""` made `rebuild_symbols` test `!plain.is_empty()` and conclude the symbol was
-        // *defined* - so an undefined symbol never reached `resolve`, was never reported
-        // unclaimed, and was written back as a nameless local. Measured before the fix:
-        // `build` returned `Ok` with `encoded == 0`. The module would load and jump to a slot
-        // nothing filled in, which is precisely what `Unclaimed` exists to prevent.
-        //
-        // Reachable, not theoretical: `Linked::names` comes from the caller and this crate
-        // has two string tables to confuse. Handing it `.strtab` where `.dynstr` was wanted
-        // puts every offset out of range at once.
-        let refused = build_raw(&[(b"whatever", 0, Some(9999))]);
-        assert!(
-            matches!(refused, Err(BuildError::SymbolName(_))),
-            "expected a refusal, got {:?}",
-            refused.map(|segment| segment.encoded)
-        );
-    }
-
-    #[test]
-    fn an_unterminated_name_is_refused_rather_than_swallowing_the_rest_of_the_table() {
-        // The third way the old reader could invent a name: no terminator, so it returned
-        // everything from the offset to the end of the table as one symbol name.
-        let (symbols, _) = linked_raw(&[(b"tail", 1, Some(1))]);
-        let refused = build(
-            Linked {
-                symbols: &symbols,
-                names: b"\0unterminated",
-                jmprel: &[],
-                rela: &[],
-                pltgot: 0x1000,
-            },
-            "probe",
-            &libraries(),
-            &resolve_all,
-        );
-        assert!(
-            matches!(refused, Err(BuildError::SymbolName(_))),
-            "expected a refusal, got {refused:?}"
-        );
-    }
-}
+#[path = "dynlib_tests.rs"]
+mod tests;

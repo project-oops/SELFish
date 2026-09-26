@@ -1,26 +1,15 @@
 //! The AGC shader container that `sceAgcCreateShader` is handed.
 //!
 //! A fixed header, followed by the sub-tables its pointer fields reach. The layout comes from
-//! `data/agc-shader-format.tsv`, which five open-source emulators agree on and one
-//! pins with a `static_assert`; obSCEne's hardware sweep is the oracle a real container passed.
-//! (selfish D103)
+//! `data/agc-shader-format.tsv`, which five open-source emulators agree on and one pins with a
+//! `static_assert`.
 //!
-//! # Format here, contents from the caller
+//! This crate owns the header and sub-table placement; register contents are read from the
+//! shader's bytecode by whatever produced it and handed in (D103).
 //!
-//! This crate owns the container *format* - the header, and where the sub-tables sit and how the
-//! pointer fields reach them. It does not own the sub-table *contents*: which registers a shader
-//! programs and its resource usage are read out of the shader's own RDNA2 bytecode by whatever
-//! produced it, and are handed in. That line is the admission test - laying out a container is
-//! knowledge about a format; parsing bytecode to find a shader's registers is what a compiler
-//! knows. (D103)
-//!
-//! # The pointers are self-relative
-//!
-//! A pointer field does not hold an absolute address in a built container. It holds an offset
-//! relative to the field's own location, and `sceAgcCreateShader` rewrites it in place to
-//! `field_address + offset` (craziiEmu `RelocatePointerField`). So [`Container::build`] sets each
-//! pointer field to `sub_table_offset - field_offset`, and [`relocate`] does what a console does,
-//! which is how the round-trip test reads the sub-tables back.
+//! A pointer field holds an offset relative to its own location, which `sceAgcCreateShader`
+//! rewrites in place to `field_address + offset` (craziiEmu `RelocatePointerField`).
+//! [`relocate`] performs the same rewrite.
 
 use selfish_bytes::{read_le, write_le, write_slice};
 
@@ -29,7 +18,7 @@ const FORMAT: &str = include_str!("../../../data/agc-shader-format.tsv");
 
 /// A single GPU register entry: an address and the value written to it.
 ///
-/// The program-address registers a console patches from the code pointer; the rest are the
+/// The hardware patches the program-address registers from the code pointer; the rest are the
 /// shader's own. This crate places them and does not interpret them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShaderRegister {
@@ -65,8 +54,8 @@ pub struct Container {
 impl Container {
     /// A compute shader container from its bytecode size and SH registers.
     ///
-    /// The registers are the shader's, read from its bytecode by the caller; the program-address
-    /// pair (compute program lo/hi) a console patches from the code pointer at create time.
+    /// The registers are the shader's, read from its bytecode by the caller; the hardware patches
+    /// the program-address pair (compute program lo/hi) from the code pointer at create time.
     #[must_use]
     pub fn compute(shader_size: u32, target: u32, sh_registers: Vec<ShaderRegister>) -> Self {
         Self::for_stage(STAGE_COMPUTE, shader_size, target, sh_registers)
@@ -106,9 +95,8 @@ impl Container {
     ///
     /// The named constructors ([`compute`](Self::compute), [`pixel`](Self::pixel),
     /// [`vertex`](Self::vertex), [`geometry`](Self::geometry), [`export`](Self::export),
-    /// [`hull`](Self::hull)) cover the stage values confirmed on hardware. This is the general
-    /// primitive for any stage: a caller passes the stage byte directly, and the container is laid
-    /// out around it. The registers are the shader's, supplied by the caller.
+    /// [`hull`](Self::hull)) cover the stage values confirmed on hardware; this takes the stage
+    /// byte directly.
     #[must_use]
     pub fn for_stage(
         stage: u8,
@@ -126,20 +114,17 @@ impl Container {
     }
 
     /// Lay the container out: the header, then the register sub-tables, with each pointer field
-    /// set to the self-relative offset a console relocates.
+    /// set to the self-relative offset the hardware relocates.
     ///
     /// # Panics
     ///
-    /// If `data/agc-shader-format.tsv` has lost a row this needs. The table is compiled in, so a
-    /// missing row is a table that changed shape while this code did not - not something to paper
-    /// over with a plausible offset in a structure a console reads.
+    /// If the compiled-in `data/agc-shader-format.tsv` lacks a row this needs.
     #[must_use]
     pub fn build(&self) -> Vec<u8> {
         let header_size = size_of_group("header");
         let mut out = vec![0_u8; header_size];
 
-        // Fixed identity, then the caller's scalars. The header is sized from the same table as
-        // the offsets, so every field fits.
+        // The header is sized from the same table as the offsets, so every field fits.
         write_slice(&mut out, offset_of("header", "file_header"), &magic());
         write_le(&mut out, offset_of("header", "version"), version());
         write_le(
@@ -175,8 +160,7 @@ impl Container {
             as_u8(self.sh_registers.len()),
         );
 
-        // Each register array becomes a sub-table after the header, reached by a self-relative
-        // pointer. An empty array leaves its field zero, which is a null pointer to a console.
+        // An empty array leaves its field zero, a null pointer.
         append_registers(
             &mut out,
             offset_of("header", "cx_registers"),
@@ -194,8 +178,8 @@ impl Container {
 
 /// Place a register array at the end of `out` and point `field` at it, self-relative.
 ///
-/// Does nothing for an empty array: the pointer field stays zero, which is the null a console
-/// reads as "no sub-table".
+/// Does nothing for an empty array: the pointer field stays zero, which the hardware reads as
+/// no sub-table.
 fn append_registers(out: &mut Vec<u8>, field: usize, registers: &[ShaderRegister]) {
     if registers.is_empty() {
         return;
@@ -213,7 +197,6 @@ fn append_registers(out: &mut Vec<u8>, field: usize, registers: &[ShaderRegister
 /// Resolve one pointer field the way `sceAgcCreateShader` does: `field += field_address`.
 ///
 /// Returns the absolute offset of the sub-table within `container`, or `None` for a null field.
-/// This is what the round-trip test uses to read a built container back.
 #[must_use]
 pub fn relocate(container: &[u8], field: usize) -> Option<usize> {
     let relative = read_le::<u64>(container, field)?;
@@ -266,7 +249,7 @@ pub const STAGE_HULL: u8 = 7;
 ///
 /// # Panics
 ///
-/// If the compiled-in table has lost the row - see [`Container::build`].
+/// If the compiled-in table lacks the row.
 #[must_use]
 pub fn magic() -> Vec<u8> {
     bytes_of("header", "file_header")
@@ -276,7 +259,7 @@ pub fn magic() -> Vec<u8> {
 ///
 /// # Panics
 ///
-/// If the compiled-in table has lost the row - see [`Container::build`].
+/// If the compiled-in table lacks the row.
 #[must_use]
 pub fn version() -> u32 {
     u32::try_from(number_of("header", "version"))
@@ -287,7 +270,7 @@ pub fn version() -> u32 {
 ///
 /// # Panics
 ///
-/// If the row is absent - a compiled-in table that changed shape (see [`Container::build`]).
+/// If the compiled-in table lacks the row.
 #[must_use]
 pub fn offset_of(group: &str, field: &str) -> usize {
     let row = row_of(group, field)
@@ -382,9 +365,8 @@ mod tests {
         relocate, version,
     };
 
-    /// The compute program-address registers, from craziiEmu: lo at 0x20C, hi at 0x20D. Their
-    /// values are placeholders a console patches from the code pointer; here they exercise the
-    /// register sub-table.
+    /// The compute program-address registers, from craziiEmu: lo at 0x20C, hi at 0x20D, with
+    /// placeholder values the hardware patches from the code pointer.
     fn compute_regs() -> Vec<ShaderRegister> {
         vec![
             ShaderRegister {
@@ -398,6 +380,7 @@ mod tests {
         ]
     }
 
+    /// The header carries the magic `1234` and version `0x18` the readers validate.
     #[test]
     fn the_magic_and_version_are_what_five_readers_validate() {
         assert_eq!(magic(), vec![0x31, 0x32, 0x33, 0x34], "'1234' = 0x34333231");
@@ -410,20 +393,20 @@ mod tests {
         );
     }
 
+    /// The table's header offsets match the ones an emulator pins with a `static_assert`.
     #[test]
     fn the_offsets_are_the_pinned_ones() {
-        // prosper's static_assert: user_data 0x08, code 0x10, specials 0x28, type 0x5a,
-        // num_sh_registers 0x5c.
+        // `prosper`'s `static_assert`.
         assert_eq!(offset_of("header", "user_data"), 0x08);
         assert_eq!(offset_of("header", "code"), 0x10);
         assert_eq!(offset_of("header", "specials"), 0x28);
         assert_eq!(offset_of("header", "type"), 0x5a);
         assert_eq!(offset_of("header", "num_sh_registers"), 0x5c);
-        // and the field the disassembly draft got wrong.
         assert_eq!(offset_of("header", "shader_size"), 0x44);
         assert_eq!(offset_of("header", "target"), 0x4c);
     }
 
+    /// The scalar metadata lands at the table's offsets.
     #[test]
     fn the_scalar_metadata_lands_where_the_table_says() {
         let built = Container::compute(0x400, 0x0E, compute_regs()).build();
@@ -435,9 +418,9 @@ mod tests {
         assert_eq!(built[0x5b], 0, "num_cx_registers");
     }
 
+    /// Every stage's container differs from compute only in the `type` byte.
     #[test]
     fn all_eight_stages_differ_from_compute_only_in_the_type_byte() {
-        // The container format is stage-agnostic - only `type` at 0x5a changes.
         let regs = compute_regs();
         let compute = Container::compute(256, 0x0E, regs.clone()).build();
         let pixel = Container::pixel(256, 0x0E, regs.clone()).build();
@@ -479,19 +462,16 @@ mod tests {
         }
     }
 
+    /// `for_stage` writes the stage byte it is handed unchanged.
     #[test]
     fn for_stage_writes_any_type_value_it_is_given() {
-        // The general primitive: a caller with a confirmed stage value builds it directly, with
-        // no constant this crate has to stand behind. `4` is craziiEmu's GS, used here only to
-        // show the byte is written through unchanged.
         let built = Container::for_stage(4, 256, 0x0E, compute_regs()).build();
         assert_eq!(built[0x5a], 4, "for_stage writes the type it is handed");
     }
 
+    /// Registers survive a build and relocate round trip through their self-relative pointer.
     #[test]
     fn a_self_relative_pointer_relocates_to_its_sub_table_and_reads_back() {
-        // The whole round trip: build sets sh_registers to a self-relative offset; `relocate`
-        // does what a console does; the registers read back byte for byte. (principle 4)
         let regs = compute_regs();
         let built = Container::compute(256, 0x0E, regs.clone()).build();
 
@@ -509,20 +489,18 @@ mod tests {
         );
     }
 
+    /// An empty register array leaves its pointer field null.
     #[test]
     fn an_empty_register_array_leaves_a_null_pointer() {
-        // cx_registers is empty for this compute shader, so its field must be zero - the null a
-        // console reads as "no sub-table", not a self-relative offset to nothing.
         let built = Container::compute(256, 0x0E, compute_regs()).build();
         let cx = offset_of("header", "cx_registers");
         assert_eq!(&built[cx..cx + 8], &[0_u8; 8], "cx_registers is null");
         assert!(relocate(&built, cx).is_none());
     }
 
+    /// The first sub-table starts at or after `header_size`.
     #[test]
     fn the_header_region_is_clear_of_the_sub_tables() {
-        // header_size is the header region, and the first sub-table starts at or after it - so a
-        // pointer never lands inside the header it points out of.
         let built = Container::compute(256, 0x0E, compute_regs()).build();
         let header_size = u32::from_le_bytes(built[0x40..0x44].try_into().unwrap()) as usize;
         let base = relocate(&built, offset_of("header", "sh_registers")).unwrap();
