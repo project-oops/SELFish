@@ -12,7 +12,7 @@ share one container format and differ in its four-byte magic. It is a type with 
 (D002). *`selfish-abi`, `data/self-format.tsv`.*
 
 **The container magic** - `4F 15 3D 1D` or `54 14 F5 EE`. A current-generation app eboot
-carries the first and a title's bundled modules the second (`obscene#D293`); what makes a title
+carries the first and a title's bundled modules the second (`obscene#D298`); what makes a title
 native is `param.json` and native registration, not the magic.
 
 ## Executables
