@@ -44,6 +44,9 @@ pub(crate) fn describe(path: &Path, round_trip: bool) -> Result {
     } else {
         say!("category   <absent>");
     }
+    if let Some(badge) = param.content_badge_type() {
+        say!("badge      {badge}");
+    }
     Ok(())
 }
 

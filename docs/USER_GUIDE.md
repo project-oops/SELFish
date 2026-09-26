@@ -61,20 +61,23 @@ Prospero -> Eboot  (prospero)
 ### `--format title`
 
 A title directory at `<output>/<TITLE_ID>/`: the `eboot.bin`, and `sce_sys/` with
-`param.json`, `icon0.png`, `pic0.png`, `logo.png`, `keystone`, `pfs-version.dat` and
-`nptitle.dat`. That is the shape `sceAppInstUtilAppInstallTitleDir` installs; nothing here
-installs it (D082).
+`param.json`, `icon0.png`, `pic0.png`, `pic0.dds`, `pic1.dds`, `logo.png`, `keystone`,
+`pfs-version.dat` and `nptitle.dat` (plus optional `snd0.at9`). That is the shape
+`sceAppInstUtilAppInstallTitleDir` installs; nothing here installs it (D082).
 
 | Option | Sets | Default |
 |---|---|---|
 | `--title-id` | the id: four capital letters then five digits | `OBSC00001`, announced |
 | `--title` | the name on the home screen | the title id |
 | `--category` | `big-app`, `system-app`, `mini-app`, `daemon` or `media-app` | `system-app` |
+| `--badge` | `contentBadgeType` in `param.json` (1=Games, 2=Media) | paired with category (0→1, 65536→2) |
 | `--content-id` | `contentId` in `param.json` | `UP0000-<title id>_00-0000000000000000`, announced |
 | `--title-version` | the version and master version, `NN.NN` | none written |
 | `--subtitle` | `titleSubName` | `OOPS Native Title` |
 | `--deeplink` | a URI the tile launches instead of its own executable | none |
 | `--icon`, `--pic0`, `--logo` | the tile (512x512), background (1920x1080 or 3840x2160) and logo PNGs | selfish's own artwork |
+| `--pic0-dds`, `--pic1-dds` | selection background and launch transition background (3840x2160 BC7 DX10 DDS) | default 4K BC7 textures |
+| `--snd0` | background audio (looped 48 kHz ATRAC9 RIFF, ≤ 2,097,152 bytes) | none |
 
 A malformed title id installs and is then never indexed, so it is refused. `--category` decides
 the memory budget and display ownership: a title that draws must not be `system-app`, which gets

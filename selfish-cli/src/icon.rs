@@ -244,6 +244,211 @@ fn to_rgba(source: &[u8], colour: png::ColorType, what: &str) -> Result<Vec<u8>,
     Ok(rgba)
 }
 
+/// Total header length of a DX10 DDS file (`b"DDS "` + 124-byte `DDS_HEADER` + 20-byte `DDS_HEADER_DXT10`).
+pub(crate) const DDS_HEADER_SIZE: usize = 148;
+
+/// Width of the 4K background texture.
+pub(crate) const DDS_WIDTH: u32 = 3840;
+
+/// Height of the 4K background texture.
+pub(crate) const DDS_HEIGHT: u32 = 2160;
+
+/// Total payload data size for a 3840x2160 BC7 surface: 518,400 * 16 = 8,294,400 bytes.
+pub(crate) const DDS_BC7_DATA_SIZE: u32 = 8_294_400;
+
+/// Total file size for a single-surface 3840x2160 BC7 DX10 DDS.
+pub(crate) const DDS_BC7_TOTAL_SIZE: usize = DDS_HEADER_SIZE + (DDS_BC7_DATA_SIZE as usize);
+
+/// DXGI format value for `DXGI_FORMAT_BC7_UNORM`.
+pub(crate) const DXGI_FORMAT_BC7_UNORM: u32 = 98;
+
+/// D3D10 resource dimension for 2D textures.
+pub(crate) const D3D10_RESOURCE_DIMENSION_TEXTURE2D: u32 = 3;
+
+/// Solid opaque black in BC7 Mode 6:
+/// mode 6 (bit 6 = 1), R=0, G=0, B=0, A=127, P-bits=1, indices=0.
+const BC7_BLACK_BLOCK: [u8; 16] = [
+    0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfe, 0xff, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// Make a supplied DDS into the home-screen background the hardware expects:
+/// single-surface 3840x2160 `DXGI_FORMAT_BC7_UNORM` DX10 DDS.
+///
+/// # Errors
+///
+/// If the bytes are not a valid DX10 DDS file matching the required dimensions and format.
+pub(crate) fn normalise_dds(bytes: &[u8], what: &str) -> Result<Vec<u8>, String> {
+    if bytes.len() < DDS_HEADER_SIZE {
+        return Err(format!(
+            "{what} is {} bytes; a DX10 DDS file must be at least {DDS_HEADER_SIZE} bytes",
+            bytes.len()
+        ));
+    }
+    let Some(magic) = bytes.get(..4) else {
+        return Err(format!("{what} header could not be read"));
+    };
+    if magic != b"DDS " {
+        return Err(format!("{what} is not a DDS file (missing 'DDS ' magic)"));
+    }
+    let dw_size = read_u32(bytes, 4, what)?;
+    if dw_size != 124 {
+        return Err(format!(
+            "{what} has DDS header size {dw_size}, expected 124"
+        ));
+    }
+    let height = read_u32(bytes, 12, what)?;
+    let width = read_u32(bytes, 16, what)?;
+    if width != DDS_WIDTH || height != DDS_HEIGHT {
+        return Err(format!(
+            "{what} is {width}x{height}; the hardware requires {DDS_WIDTH}x{DDS_HEIGHT}"
+        ));
+    }
+    let mipmap_count = read_u32(bytes, 28, what)?;
+    if mipmap_count > 1 {
+        return Err(format!(
+            "{what} has {mipmap_count} mipmaps; must be a single-surface texture"
+        ));
+    }
+    let pf_flags = read_u32(bytes, 80, what)?;
+    let Some(fourcc) = bytes.get(84..88) else {
+        return Err(format!("{what} pixel format FourCC could not be read"));
+    };
+    if (pf_flags & 0x4 == 0) || fourcc != b"DX10" {
+        return Err(format!("{what} pixel format is not DX10"));
+    }
+    let dxgi_format = read_u32(bytes, 128, what)?;
+    if dxgi_format != DXGI_FORMAT_BC7_UNORM {
+        return Err(format!(
+            "{what} DXGI format is {dxgi_format}; must be DXGI_FORMAT_BC7_UNORM ({DXGI_FORMAT_BC7_UNORM})"
+        ));
+    }
+    let resource_dim = read_u32(bytes, 132, what)?;
+    if resource_dim != D3D10_RESOURCE_DIMENSION_TEXTURE2D {
+        return Err(format!(
+            "{what} resource dimension is {resource_dim}; must be 3 (Texture2D)"
+        ));
+    }
+    let array_size = read_u32(bytes, 140, what)?;
+    if array_size != 1 {
+        return Err(format!(
+            "{what} array size is {array_size}; must be 1 (single-surface)"
+        ));
+    }
+    if bytes.len() != DDS_BC7_TOTAL_SIZE {
+        return Err(format!(
+            "{what} is {} bytes; expected {DDS_BC7_TOTAL_SIZE} bytes for 3840x2160 BC7",
+            bytes.len()
+        ));
+    }
+    Ok(bytes.to_vec())
+}
+
+fn read_u32(bytes: &[u8], offset: usize, what: &str) -> Result<u32, String> {
+    let end = offset.saturating_add(4);
+    let slice = bytes
+        .get(offset..end)
+        .ok_or_else(|| format!("{what} was too short to read u32 at offset {offset}"))?;
+    let array: [u8; 4] = slice
+        .try_into()
+        .map_err(|_| format!("{what} slice conversion failed"))?;
+    Ok(u32::from_le_bytes(array))
+}
+
+/// The default 4K background DDS (`pic0.dds` / `pic1.dds`):
+/// 3840x2160 single-surface BC7 DX10 DDS (solid black, opaque).
+#[must_use]
+pub(crate) fn default_dds() -> Vec<u8> {
+    let mut out = vec![0_u8; DDS_BC7_TOTAL_SIZE];
+    if let Some(header) = out.get_mut(..DDS_HEADER_SIZE) {
+        if let Some(magic) = header.get_mut(0..4) {
+            magic.copy_from_slice(b"DDS ");
+        }
+        if let Some(s) = header.get_mut(4..8) {
+            s.copy_from_slice(&124_u32.to_le_bytes());
+        }
+        if let Some(f) = header.get_mut(8..12) {
+            f.copy_from_slice(&0x0008_1007_u32.to_le_bytes());
+        }
+        if let Some(h) = header.get_mut(12..16) {
+            h.copy_from_slice(&DDS_HEIGHT.to_le_bytes());
+        }
+        if let Some(w) = header.get_mut(16..20) {
+            w.copy_from_slice(&DDS_WIDTH.to_le_bytes());
+        }
+        if let Some(p) = header.get_mut(20..24) {
+            p.copy_from_slice(&DDS_BC7_DATA_SIZE.to_le_bytes());
+        }
+        if let Some(m) = header.get_mut(28..32) {
+            m.copy_from_slice(&1_u32.to_le_bytes());
+        }
+        if let Some(pfs) = header.get_mut(76..80) {
+            pfs.copy_from_slice(&32_u32.to_le_bytes());
+        }
+        if let Some(pff) = header.get_mut(80..84) {
+            pff.copy_from_slice(&4_u32.to_le_bytes());
+        }
+        if let Some(fourcc) = header.get_mut(84..88) {
+            fourcc.copy_from_slice(b"DX10");
+        }
+        if let Some(caps) = header.get_mut(108..112) {
+            caps.copy_from_slice(&0x1000_u32.to_le_bytes());
+        }
+        if let Some(dxgi) = header.get_mut(128..132) {
+            dxgi.copy_from_slice(&DXGI_FORMAT_BC7_UNORM.to_le_bytes());
+        }
+        if let Some(res) = header.get_mut(132..136) {
+            res.copy_from_slice(&D3D10_RESOURCE_DIMENSION_TEXTURE2D.to_le_bytes());
+        }
+        if let Some(arr) = header.get_mut(140..144) {
+            arr.copy_from_slice(&1_u32.to_le_bytes());
+        }
+        if let Some(alpha) = header.get_mut(144..148) {
+            alpha.copy_from_slice(&1_u32.to_le_bytes());
+        }
+    }
+
+    if let Some(data) = out.get_mut(DDS_HEADER_SIZE..) {
+        for chunk in data.as_chunks_mut::<16>().0 {
+            chunk.copy_from_slice(&BC7_BLACK_BLOCK);
+        }
+    }
+    out
+}
+
+/// Maximum allowed size for `snd0.at9`: exactly 2,097,152 bytes (2 MiB).
+pub(crate) const MAX_SND0_SIZE: usize = 2_097_152;
+
+/// Validate a supplied ATRAC9 audio file (`snd0.at9`).
+///
+/// Must be a RIFF WAVE file and must not exceed 2,097,152 bytes.
+///
+/// # Errors
+///
+/// If the file exceeds the size ceiling or does not have a RIFF WAVE container.
+pub(crate) fn normalise_snd0(bytes: &[u8], what: &str) -> Result<Vec<u8>, String> {
+    if bytes.len() > MAX_SND0_SIZE {
+        return Err(format!(
+            "{what} is {} bytes; snd0.at9 must not exceed the {MAX_SND0_SIZE} byte ceiling",
+            bytes.len()
+        ));
+    }
+    if bytes.len() < 12 {
+        return Err(format!("{what} is too small to be a RIFF WAVE file"));
+    }
+    let Some(riff) = bytes.get(..4) else {
+        return Err(format!("{what} header could not be read"));
+    };
+    let Some(wave) = bytes.get(8..12) else {
+        return Err(format!("{what} header could not be read"));
+    };
+    if riff != b"RIFF" || wave != b"WAVE" {
+        return Err(format!(
+            "{what} is not a RIFF WAVE file (expected RIFF....WAVE header)"
+        ));
+    }
+    Ok(bytes.to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use super::LOGO;
@@ -344,5 +549,60 @@ mod tests {
             .expect_err("512x512 background must be refused");
         assert!(err.contains("512x512"));
         assert!(err.contains("1920x1080 or 3840x2160"));
+    }
+
+    /// The default DDS is a valid 3840x2160 single-surface BC7 DX10 DDS.
+    #[test]
+    fn the_default_dds_normalises_as_valid_4k_bc7() {
+        let dds = super::default_dds();
+        assert_eq!(dds.len(), super::DDS_BC7_TOTAL_SIZE);
+        assert_eq!(dds.get(..4), Some(&b"DDS "[..]));
+        let norm = super::normalise_dds(&dds, "default.dds").expect("valid DDS");
+        assert_eq!(norm.len(), super::DDS_BC7_TOTAL_SIZE);
+    }
+
+    /// A DDS with non-4K resolution or non-BC7 format is refused.
+    #[test]
+    fn bad_dds_is_refused() {
+        let mut dds = super::default_dds();
+        // Corrupt magic
+        if let Some(magic) = dds.get_mut(0..4) {
+            magic.copy_from_slice(b"NOPE");
+        }
+        let err = super::normalise_dds(&dds, "bad_magic.dds").expect_err("bad magic");
+        assert!(err.contains("missing 'DDS ' magic"));
+
+        // Wrong resolution
+        let mut dds2 = super::default_dds();
+        if let Some(w) = dds2.get_mut(16..20) {
+            w.copy_from_slice(&1920_u32.to_le_bytes());
+        }
+        let err2 = super::normalise_dds(&dds2, "bad_res.dds").expect_err("bad resolution");
+        assert!(err2.contains("1920x2160"));
+        assert!(err2.contains("3840x2160"));
+    }
+
+    /// An audio file within 2 MiB ceiling and with RIFF WAVE header passes; exceeding ceiling or wrong magic fails.
+    #[test]
+    fn snd0_ceiling_and_header_validation() {
+        let mut valid = vec![0_u8; 1024];
+        if let Some(riff) = valid.get_mut(0..4) {
+            riff.copy_from_slice(b"RIFF");
+        }
+        if let Some(wave) = valid.get_mut(8..12) {
+            wave.copy_from_slice(b"WAVE");
+        }
+        let norm = super::normalise_snd0(&valid, "snd0.at9").expect("valid snd0");
+        assert_eq!(norm.len(), 1024);
+
+        // Exceeding ceiling (2 MiB = 2,097,152)
+        let too_large = vec![0_u8; super::MAX_SND0_SIZE + 1];
+        let err = super::normalise_snd0(&too_large, "oversized.at9").expect_err("too large");
+        assert!(err.contains("2097152"));
+
+        // Bad header
+        let bad_hdr = vec![0_u8; 100];
+        let err2 = super::normalise_snd0(&bad_hdr, "bad_hdr.at9").expect_err("bad header");
+        assert!(err2.contains("not a RIFF WAVE file"));
     }
 }

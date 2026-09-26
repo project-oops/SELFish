@@ -31,6 +31,14 @@ pub(crate) struct TitleMeta<'a> {
     pub(crate) deeplink: Option<&'a str>,
     /// A PNG for the background (`pic0.png`); `None` uses the default.
     pub(crate) pic0: Option<&'a Path>,
+    /// A 4K BC7 DDS for selection background (`pic0.dds`); `None` uses the default.
+    pub(crate) pic0_dds: Option<&'a Path>,
+    /// A 4K BC7 DDS for launch transition background (`pic1.dds`); `None` uses the default.
+    pub(crate) pic1_dds: Option<&'a Path>,
+    /// An ATRAC9 audio file for home-screen background music (`snd0.at9`).
+    pub(crate) snd0: Option<&'a Path>,
+    /// Explicit content badge type for param.json.
+    pub(crate) badge: Option<i64>,
     /// A transparent PNG for the title logo (`logo.png`); `None` uses the default.
     pub(crate) logo: Option<&'a Path>,
     /// The subtitle; `None` uses the default.
@@ -121,6 +129,10 @@ pub(crate) fn run(cli: &Cli) -> Result {
             icon: cli.icon.as_deref(),
             deeplink: cli.deeplink.as_deref(),
             pic0: cli.pic0.as_deref(),
+            pic0_dds: cli.pic0_dds.as_deref(),
+            pic1_dds: cli.pic1_dds.as_deref(),
+            snd0: cli.snd0.as_deref(),
+            badge: cli.badge,
             logo: cli.logo.as_deref(),
             subtitle: cli.subtitle.as_deref(),
         },
@@ -148,6 +160,13 @@ fn refuse_options_the_format_ignores(cli: &Cli, format: Format) -> Result {
         (cli.title_version.is_some(), "--title-version"),
         (cli.icon.is_some(), "--icon"),
         (cli.deeplink.is_some(), "--deeplink"),
+        (cli.pic0.is_some(), "--pic0"),
+        (cli.pic0_dds.is_some(), "--pic0-dds"),
+        (cli.pic1_dds.is_some(), "--pic1-dds"),
+        (cli.snd0.is_some(), "--snd0"),
+        (cli.badge.is_some(), "--badge"),
+        (cli.logo.is_some(), "--logo"),
+        (cli.subtitle.is_some(), "--subtitle"),
     ];
     if let Some((_, name)) = metadata_only.iter().find(|(set, _)| *set)
         && !carries_metadata
@@ -198,6 +217,7 @@ fn check_title_id(title_id: &str) -> Result {
 fn stamped_elf(build: &Build<'_>, output: &Path, kind: selfish_elf::ObjectType) -> Result {
     let mut bytes = std::fs::read(build.input)?;
     let elf = selfish_elf::Elf::parse(&bytes)?;
+    elf.check_segment_congruence()?;
     say!(
         "  elf     {} program header(s), entry {:#x}",
         elf.program_headers().len(),
@@ -226,6 +246,8 @@ fn stamped_elf(build: &Build<'_>, output: &Path, kind: selfish_elf::ObjectType) 
 fn eboot(build: &Build<'_>, output: &Path) -> Result {
     let generation = build.generation;
     let mut bytes = std::fs::read(build.input)?;
+    let elf = selfish_elf::Elf::parse(&bytes)?;
+    elf.check_segment_congruence()?;
     let changes =
         selfish_elf::identity::stamp(&mut bytes, selfish_elf::ObjectType::Executable, generation)?;
     say!("  stamp   {} field(s)", changes.len());

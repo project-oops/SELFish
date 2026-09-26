@@ -14,5 +14,5 @@ pub mod param;
 pub mod sfo;
 mod table;
 
-pub use param::{Param, category};
+pub use param::{Param, badge, badge_for_category, category};
 pub use sfo::Sfo;

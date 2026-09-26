@@ -509,4 +509,35 @@ mod tests {
             "sub-table {base:#x} is at/after header_size {header_size:#x}"
         );
     }
+
+    /// Sub-table schemas and direct resource enum types are readable from the table.
+    #[test]
+    fn sub_table_schemas_and_direct_resource_types_are_present_in_table() {
+        assert_eq!(
+            offset_of("shader_user_data", "direct_resource_offset"),
+            0x00
+        );
+        assert_eq!(offset_of("shader_user_data", "eud_size_dw"), 0x28);
+        assert_eq!(super::size_of_group("shader_user_data"), 0x38);
+
+        assert_eq!(offset_of("shader_sharp", "packed"), 0x00);
+        assert_eq!(super::size_of_group("shader_sharp"), 0x02);
+
+        assert_eq!(offset_of("shader_special_regs", "ge_cntl"), 0x00);
+        assert_eq!(offset_of("shader_special_regs", "draw_modifier"), 0x18);
+        assert_eq!(super::size_of_group("shader_special_regs"), 0x28);
+
+        assert_eq!(offset_of("shader_semantic", "packed"), 0x00);
+        assert_eq!(super::size_of_group("shader_semantic"), 0x04);
+
+        assert_eq!(
+            super::number_of("direct_resource_type", "shader_resource_table"),
+            1
+        );
+        assert_eq!(
+            super::number_of("direct_resource_type", "ptr_vertex_buffer_table"),
+            8
+        );
+        assert_eq!(super::number_of("direct_resource_type", "no_slot"), 0xffff);
+    }
 }

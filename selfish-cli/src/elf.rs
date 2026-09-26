@@ -75,6 +75,14 @@ pub(crate) fn describe(path: &Path) -> Result {
             phdr.align.get()
         );
     }
+    say!(
+        "congruence {}",
+        if let Err(e) = elf.check_segment_congruence() {
+            format!("NOT CONGRUENT ({e}) - loader refusal 0x80aa001a predicted")
+        } else {
+            "congruent (p_offset == p_vaddr mod 0x4000 for PT_LOAD and SCE_RELRO)".to_owned()
+        }
+    );
     describe_dynamic(&elf)
 }
 

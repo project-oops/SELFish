@@ -39,6 +39,7 @@ pub(crate) fn title_dir(
     }
     write_param(&sce_sys, title, meta)?;
     write_artwork(&sce_sys, meta)?;
+    write_sound(&sce_sys, meta)?;
     write_generated_system_files(&sce_sys, title.id)
 }
 
@@ -61,6 +62,14 @@ fn write_param(sce_sys: &Path, title: &Title<'_>, meta: &TitleMeta<'_>) -> Resul
     let sub = meta.subtitle.unwrap_or(DEFAULT_SUBTITLE);
     param.set_title_sub_name(DEFAULT_LANGUAGE, sub);
     say!("subtitle: {sub}");
+
+    let badge = meta
+        .badge
+        .or_else(|| selfish_title::badge_for_category(category));
+    if let Some(badge) = badge {
+        param.set_content_badge_type(badge);
+        say!("badge: {badge}");
+    }
 
     if let Some(ver) = meta.version {
         param.set_version(ver);
@@ -85,7 +94,7 @@ type Normalise = fn(&[u8], &str) -> std::result::Result<Vec<u8>, String>;
 /// The default a title gets when nothing is supplied.
 type Generate = fn() -> std::result::Result<Vec<u8>, String>;
 
-/// `icon0.png`, `pic0.png` and `logo.png`, each supplied and normalised or generated.
+/// `icon0.png`, `pic0.png`, `logo.png`, `pic0.dds` and `pic1.dds`.
 ///
 /// A supplied image is normalised rather than copied: one the hardware does not want is
 /// accepted and then drawn wrongly, not refused. (D073)
@@ -129,6 +138,37 @@ fn write_artwork(sce_sys: &Path, meta: &TitleMeta<'_>) -> Result {
             std::fs::write(&path, default()?)?;
             say!("{} (generated)", path.display());
         }
+    }
+
+    let dds_art: [(&str, Option<&Path>); 2] =
+        [("pic0.dds", meta.pic0_dds), ("pic1.dds", meta.pic1_dds)];
+    for (name, supplied) in dds_art {
+        let path = sce_sys.join(name);
+        if let Some(from) = supplied {
+            let raw = std::fs::read(from)?;
+            let converted = crate::icon::normalise_dds(&raw, &from.display().to_string())?;
+            std::fs::write(&path, &converted)?;
+            say!("{} (from {})", path.display(), from.display());
+        } else {
+            std::fs::write(&path, crate::icon::default_dds())?;
+            say!("{} (generated)", path.display());
+        }
+    }
+    Ok(())
+}
+
+/// Validate and write `sce_sys/snd0.at9` if supplied or present in root.
+fn write_sound(sce_sys: &Path, meta: &TitleMeta<'_>) -> Result {
+    let path = sce_sys.join("snd0.at9");
+    if let Some(snd0_path) = meta.snd0 {
+        let raw = std::fs::read(snd0_path)?;
+        let converted = crate::icon::normalise_snd0(&raw, &snd0_path.display().to_string())?;
+        std::fs::write(&path, &converted)?;
+        say!("{} (from {})", path.display(), snd0_path.display());
+    } else if path.exists() {
+        let raw = std::fs::read(&path)?;
+        let _ = crate::icon::normalise_snd0(&raw, &path.display().to_string())?;
+        say!("{} (validated)", path.display());
     }
     Ok(())
 }
@@ -186,4 +226,109 @@ fn copy_tree(from: &Path, to: &Path) -> Result<usize> {
         }
     }
     Ok(count)
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a panic in a test is the test failing"
+)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::{Title, title_dir};
+    use crate::pipeline::TitleMeta;
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let dir = std::env::temp_dir().join(format!(
+            "selfish-test-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[test]
+    fn title_dir_emits_dds_files_and_paired_badge() {
+        let dir = temp_test_dir("title-dds");
+        let title = Title {
+            id: "TEST00001",
+            name: "Test Game",
+            category: 0,
+            privilege: selfish_container::Privilege::App,
+        };
+        let meta = TitleMeta {
+            content_id: Some("UP0000-TEST00001_00-0000000000000000"),
+            version: Some("01.00"),
+            icon: None,
+            deeplink: None,
+            pic0: None,
+            pic0_dds: None,
+            pic1_dds: None,
+            snd0: None,
+            badge: None,
+            logo: None,
+            subtitle: None,
+        };
+
+        title_dir(&dir, &title, None, &meta).expect("title_dir succeeds");
+
+        let sce_sys = dir.join("TEST00001").join("sce_sys");
+        assert!(sce_sys.join("pic0.dds").exists());
+        assert!(sce_sys.join("pic1.dds").exists());
+        assert_eq!(
+            std::fs::metadata(sce_sys.join("pic0.dds")).unwrap().len(),
+            crate::icon::DDS_BC7_TOTAL_SIZE as u64
+        );
+        assert_eq!(
+            std::fs::metadata(sce_sys.join("pic1.dds")).unwrap().len(),
+            crate::icon::DDS_BC7_TOTAL_SIZE as u64
+        );
+
+        // Verify param.json category 0 paired with badge 1 (Games)
+        let param_bytes = std::fs::read(sce_sys.join("param.json")).unwrap();
+        let param = selfish_title::Param::parse(&param_bytes).unwrap();
+        assert_eq!(param.category(), Some(0));
+        assert_eq!(param.content_badge_type(), Some(1));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn title_dir_media_badge_pairing() {
+        let dir = temp_test_dir("title-media");
+        let title = Title {
+            id: "TEST00002",
+            name: "Test Media",
+            category: 65536,
+            privilege: selfish_container::Privilege::App,
+        };
+        let meta = TitleMeta {
+            content_id: None,
+            version: None,
+            icon: None,
+            deeplink: None,
+            pic0: None,
+            pic0_dds: None,
+            pic1_dds: None,
+            snd0: None,
+            badge: None,
+            logo: None,
+            subtitle: None,
+        };
+
+        title_dir(&dir, &title, None, &meta).expect("title_dir succeeds");
+
+        let sce_sys = dir.join("TEST00002").join("sce_sys");
+        let param_bytes = std::fs::read(sce_sys.join("param.json")).unwrap();
+        let param = selfish_title::Param::parse(&param_bytes).unwrap();
+        assert_eq!(param.category(), Some(65536));
+        assert_eq!(param.content_badge_type(), Some(2));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

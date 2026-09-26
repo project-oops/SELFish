@@ -80,6 +80,48 @@ impl Param {
             .as_i64()
             .or_else(|| value.as_str()?.trim().parse().ok())
     }
+
+    /// The content badge type, where the file states one.
+    ///
+    /// See [`badge`] for the known values. Accepts a string as well as a number.
+    #[must_use]
+    pub fn content_badge_type(&self) -> Option<i64> {
+        let value = self.document.get("contentBadgeType")?;
+        value
+            .as_i64()
+            .or_else(|| value.as_str()?.trim().parse().ok())
+    }
+
+    /// Set the content badge type.
+    pub fn set_content_badge_type(&mut self, badge: i64) {
+        self.document
+            .insert("contentBadgeType".to_owned(), Value::Number(badge.into()));
+    }
+}
+
+/// Content badge types (`contentBadgeType` in `param.json`).
+///
+/// Paired with `applicationCategoryType` to place the title on the home screen:
+/// category 0 / badge 1 selects Games, category 65536 (0x10000) / badge 2 selects Media.
+pub mod badge {
+    /// Game title badge on the home screen.
+    pub const GAME: i64 = 1;
+
+    /// Media title badge on the home screen.
+    pub const MEDIA: i64 = 2;
+}
+
+/// The default content badge type paired with an application category.
+///
+/// Category 0 (`category::BIG_APP`, Games) pairs with badge 1 (`badge::GAME`).
+/// Category 65536 (`category::SYSTEM_APP`, Media) pairs with badge 2 (`badge::MEDIA`).
+#[must_use]
+pub const fn badge_for_category(category: i64) -> Option<i64> {
+    match category {
+        category::BIG_APP => Some(badge::GAME),
+        category::SYSTEM_APP => Some(badge::MEDIA),
+        _ => None,
+    }
 }
 
 /// Application category types (`applicationCategoryType` in `param.json`).
@@ -290,6 +332,9 @@ impl Param {
         deeplink: Option<&str>,
     ) {
         self.set_basics(title_id, title_name, language, category);
+        if let Some(badge) = badge_for_category(category) {
+            self.set_content_badge_type(badge);
+        }
         if let Some(cid) = content_id {
             self.set_content_id(cid);
         }
@@ -335,7 +380,7 @@ impl Default for Param {
     reason = "a panic in a test is the test failing"
 )]
 mod tests {
-    use super::{Param, category};
+    use super::{Param, badge, badge_for_category, category};
 
     const REAL_SHAPE: &str = r#"{
         "titleId": "PPSA01650",
@@ -525,5 +570,32 @@ mod tests {
             again.title_sub_name(),
             Some("Freestanding OpenGL 1.3 demonstration")
         );
+    }
+
+    /// Category and badge pairs: 0/1 for Games, 65536/2 for Media.
+    #[test]
+    fn category_and_badge_pairs_and_content_badge_type() {
+        assert_eq!(badge::GAME, 1);
+        assert_eq!(badge::MEDIA, 2);
+
+        assert_eq!(badge_for_category(category::BIG_APP), Some(badge::GAME));
+        assert_eq!(badge_for_category(0), Some(1));
+        assert_eq!(badge_for_category(category::SYSTEM_APP), Some(badge::MEDIA));
+        assert_eq!(badge_for_category(65536), Some(2));
+        assert_eq!(badge_for_category(category::MINI_APP), None);
+
+        let mut param = Param::new();
+        param.set_prospero("TEST00001", "Game Title", "en-US", 0, None, None);
+        assert_eq!(param.category(), Some(0));
+        assert_eq!(param.content_badge_type(), Some(1));
+
+        let mut media_param = Param::new();
+        media_param.set_prospero("TEST00002", "Media Title", "en-US", 65536, None, None);
+        assert_eq!(media_param.category(), Some(65536));
+        assert_eq!(media_param.content_badge_type(), Some(2));
+
+        let bytes = media_param.to_bytes().expect("bytes");
+        let parsed = Param::parse(&bytes).expect("document");
+        assert_eq!(parsed.content_badge_type(), Some(2));
     }
 }

@@ -8,6 +8,7 @@
 #            KytyPS5@0b4e78c      src/graphics/shader/shader.h           C++   reader (struct Shader, identical layout, plus the sub-table structs)
 #            Kyty                 source/emulator/include/Emulator/Graphics/Shader.h:974  C++  reader (struct Shader - the upstream prosper cites)
 #            SharpEMU             src/SharpEmu.Libs/Agc/AgcExports.cs    C#    reader (same magic and validation, num_sh_registers at 0x5C)
+#            AnyPS5               core/libs/SceShaders.hpp               C++   reader (ShaderUserData, ShaderSpecialRegs, ShaderSemantic, DirectResource)
 #
 # The five readers share one layout, and prosper pins it with
 # `static_assert(offsetof(AgcShader, user_data)==0x08 && code==0x10 && specials==0x28 &&
@@ -66,3 +67,41 @@ header	(size)	-	0x60	size	-	the header rounded up to an 8-byte boundary; sub-tab
 shader_register	offset	0x00	4	u32le	-	a GPU register address (e.g. compute program lo/hi at 0x20C/0x20D)
 shader_register	value	0x04	4	u32le	-	the value written to that register; the program-address ones are patched by the console from the code pointer
 shader_register	(size)	-	0x08	size	-	one ShaderRegister is eight bytes
+shader_user_data	direct_resource_offset	0x00	8	ptr	-	self-relative offset to the direct resource table, or 0
+shader_user_data	sharp_resource_offset_0	0x08	8	ptr	-	self-relative offset to sharp resource table 0, or 0
+shader_user_data	sharp_resource_offset_1	0x10	8	ptr	-	self-relative offset to sharp resource table 1, or 0
+shader_user_data	sharp_resource_offset_2	0x18	8	ptr	-	self-relative offset to sharp resource table 2, or 0
+shader_user_data	sharp_resource_offset_3	0x20	8	ptr	-	self-relative offset to sharp resource table 3, or 0
+shader_user_data	eud_size_dw	0x28	2	u16le	-	extended user data size in dwords
+shader_user_data	srt_size_dw	0x2a	2	u16le	-	shader resource table size in dwords
+shader_user_data	direct_resource_count	0x2c	2	u16le	-	count of direct resource entries
+shader_user_data	sharp_resource_count_0	0x2e	2	u16le	-	count of sharp resource entries for set 0
+shader_user_data	sharp_resource_count_1	0x30	2	u16le	-	count of sharp resource entries for set 1
+shader_user_data	sharp_resource_count_2	0x32	2	u16le	-	count of sharp resource entries for set 2
+shader_user_data	sharp_resource_count_3	0x34	2	u16le	-	count of sharp resource entries for set 3
+shader_user_data	(size)	-	0x38	size	-	one ShaderUserData block rounded to an 8-byte boundary
+shader_sharp	packed	0x00	2	u16le	-	bitfield: offset_dw:15 (bits 0..14), size:1 (bit 15)
+shader_sharp	(size)	-	0x02	size	-	one ShaderSharp entry is two bytes
+shader_special_regs	ge_cntl	0x00	8	struct	-	ShaderRegister for GE_CNTL
+shader_special_regs	vgt_shader_stages_en	0x08	8	struct	-	ShaderRegister for VGT_SHADER_STAGES_EN
+shader_special_regs	dispatch_modifier	0x10	4	u32le	-	dispatch modifier flags
+shader_special_regs	user_data_range_start	0x14	2	u16le	-	user data range start register
+shader_special_regs	user_data_range_end	0x16	2	u16le	-	user data range end register
+shader_special_regs	draw_modifier	0x18	8	u64le	-	draw modifier bitfields
+shader_special_regs	vgt_gs_out_prim_type	0x20	4	u32le	-	VGT GS output primitive type
+shader_special_regs	ge_user_vgpr_en	0x24	4	u32le	-	GE user VGPR enable register
+shader_special_regs	(size)	-	0x28	size	-	one ShaderSpecialRegs block is 40 bytes
+shader_semantic	packed	0x00	4	u32le	-	bitfield: semantic:8, hardware_mapping:8, size_in_elements:4, is_f16:2, flat:1, linear:1, custom:1, static_vb_index:1, static_attribute:1, reserved:1, default_value:2, default_value_hi:2
+shader_semantic	(size)	-	0x04	size	-	one ShaderSemantic entry is four bytes
+direct_resource_type	gds_counter_range	0	-	enum	0	GdsCounterRange
+direct_resource_type	shader_resource_table	1	-	enum	1	ShaderResourceTable (SRT pointer)
+direct_resource_type	sub_ptr_fetch_shader	2	-	enum	2	SubPtrFetchShader
+direct_resource_type	ptr_so_buffer_table	3	-	enum	3	PtrSoBufferTable
+direct_resource_type	ptr_internal_global_table	4	-	enum	4	PtrInternalGlobalTable
+direct_resource_type	ptr_extended_user_data	5	-	enum	5	PtrExtendedUserData
+direct_resource_type	gs_flags	6	-	enum	6	GsFlags
+direct_resource_type	gds_memory_range	7	-	enum	7	GdsMemoryRange
+direct_resource_type	ptr_vertex_buffer_table	8	-	enum	8	PtrVertexBufferTable (VBT pointer)
+direct_resource_type	stereo_x_offset	9	-	enum	9	StereoXOffset
+direct_resource_type	ptr_vertex_attrib_desc_table	10	-	enum	10	PtrVertexAttribDescTable
+direct_resource_type	no_slot	0xffff	-	enum	0xffff	indicates no direct resource slot assigned

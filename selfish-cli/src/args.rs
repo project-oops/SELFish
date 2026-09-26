@@ -100,6 +100,25 @@ pub(crate) struct Cli {
     #[arg(long, value_name = "FILE", requires = "input")]
     pub(crate) pic0: Option<PathBuf>,
 
+    /// A 3840x2160 single-surface BC7 DX10 DDS for the home-screen selection background.
+    /// `--format title` and `--format pkg` only.
+    #[arg(long = "pic0-dds", value_name = "FILE", requires = "input")]
+    pub(crate) pic0_dds: Option<PathBuf>,
+
+    /// A 3840x2160 single-surface BC7 DX10 DDS for the launch transition background.
+    /// `--format title` and `--format pkg` only.
+    #[arg(long = "pic1-dds", value_name = "FILE", requires = "input")]
+    pub(crate) pic1_dds: Option<PathBuf>,
+
+    /// A looped 48 kHz ATRAC9 RIFF audio file (<= 2,097,152 bytes) for home-screen background music.
+    /// `--format title` and `--format pkg` only.
+    #[arg(long = "snd0", value_name = "FILE", requires = "input")]
+    pub(crate) snd0: Option<PathBuf>,
+
+    /// Explicit content badge type for param.json (1=Games, 2=Media). `--format title` and `--format pkg` only.
+    #[arg(long = "badge", value_name = "NUM", requires = "input")]
+    pub(crate) badge: Option<i64>,
+
     /// A transparent RGBA PNG for the title logo. `--format title` only.
     ///
     /// Drawn on the lower left above the action buttons. Without one, a default badge is used.

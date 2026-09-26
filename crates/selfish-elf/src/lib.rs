@@ -504,6 +504,34 @@ impl<'a> Elf<'a> {
             self.header.shstrndx.get(),
         )
     }
+    /// Validates that all loadable (`PT_LOAD`) and `PT_SCE_RELRO` segments satisfy the page
+    /// congruence requirement: `p_offset % ALLOCATION_GRANULARITY == p_vaddr % ALLOCATION_GRANULARITY`.
+    ///
+    /// The vendor loader requires file offset and virtual address to be congruent modulo the
+    /// 16 KiB page size (`0x4000`). A non-congruent segment causes loader refusal `0x80aa001a`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ElfError::NonCongruentSegment`] on the first segment where `p_offset` and
+    /// `p_vaddr` differ modulo `0x4000`.
+    pub fn check_segment_congruence(&self) -> Result<(), ElfError> {
+        for phdr in &self.program_headers {
+            let p_type = phdr.p_type.get();
+            if p_type == segment::LOAD || p_type == segment::SCE_RELRO {
+                let offset = phdr.offset.get();
+                let vaddr = phdr.vaddr.get();
+                if offset % layout::ALLOCATION_GRANULARITY != vaddr % layout::ALLOCATION_GRANULARITY
+                {
+                    return Err(ElfError::NonCongruentSegment {
+                        p_type,
+                        offset,
+                        vaddr,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Why a file could not be parsed.
@@ -546,6 +574,19 @@ pub enum ElfError {
     ///
     /// Raised by [`identity::stamp`], not by parsing, which describes any object type.
     UnexpectedObjectType(u16),
+    /// A loadable (`PT_LOAD`) or RELRO (`PT_SCE_RELRO`) segment violates the page congruence
+    /// requirement: `p_offset % ALLOCATION_GRANULARITY == p_vaddr % ALLOCATION_GRANULARITY`.
+    ///
+    /// The vendor loader requires file offset and virtual address to be congruent modulo the
+    /// 16 KiB page size (`0x4000`). A non-congruent segment causes loader refusal `0x80aa001a`.
+    NonCongruentSegment {
+        /// The segment's `p_type`.
+        p_type: u32,
+        /// File offset.
+        offset: u64,
+        /// Virtual address.
+        vaddr: u64,
+    },
 }
 
 impl fmt::Display for ElfError {
@@ -587,6 +628,17 @@ impl fmt::Display for ElfError {
             }
             Self::UnexpectedObjectType(raw) => {
                 write!(f, "e_type {raw:#06x} is not one this can stamp")
+            }
+            Self::NonCongruentSegment {
+                p_type,
+                offset,
+                vaddr,
+            } => {
+                write!(
+                    f,
+                    "segment {p_type:#x} offset {offset:#x} and vaddr {vaddr:#x} are not congruent mod {:#x} (loader refusal 0x80aa001a)",
+                    layout::ALLOCATION_GRANULARITY
+                )
             }
         }
     }
@@ -753,6 +805,60 @@ mod tests {
         assert_eq!(
             Elf::parse(&bytes).unwrap_err(),
             ElfError::ProgramHeadersOutOfBounds
+        );
+    }
+
+    /// Congruent `PT_LOAD` and `SCE_RELRO` segments pass the 16 KiB page congruence check.
+    #[test]
+    fn congruent_segments_pass_congruence_check() {
+        let mut bytes = sample(ObjectType::EXECUTABLE, 2);
+        let phoff = 64_usize;
+        // Case 1: offset 0x14000, vaddr 0x10000 (both 0 mod 0x4000)
+        bytes[phoff + 8..phoff + 16].copy_from_slice(&0x14000_u64.to_le_bytes());
+        bytes[phoff + 16..phoff + 24].copy_from_slice(&0x10000_u64.to_le_bytes());
+        let elf = Elf::parse(&bytes).expect("parses");
+        assert!(elf.check_segment_congruence().is_ok());
+
+        // Case 2: offset 0x14090, vaddr 0x10090 (both 0x90 mod 0x4000)
+        bytes[phoff + 8..phoff + 16].copy_from_slice(&0x14090_u64.to_le_bytes());
+        bytes[phoff + 16..phoff + 24].copy_from_slice(&0x10090_u64.to_le_bytes());
+        let elf = Elf::parse(&bytes).expect("parses");
+        assert!(elf.check_segment_congruence().is_ok());
+
+        // Case 3: SCE_RELRO with offset 0x14090, vaddr 0x10090
+        bytes[phoff..phoff + 4].copy_from_slice(&segment::SCE_RELRO.to_le_bytes());
+        let elf = Elf::parse(&bytes).expect("parses");
+        assert!(elf.check_segment_congruence().is_ok());
+    }
+
+    /// Non-congruent `PT_LOAD` and `SCE_RELRO` segments fail with `NonCongruentSegment` (loader refusal 0x80aa001a).
+    #[test]
+    fn non_congruent_segments_fail_congruence_check() {
+        let mut bytes = sample(ObjectType::EXECUTABLE, 2);
+        let phoff = 64_usize;
+        // PT_LOAD: offset 0x14090 (0x90 mod 0x4000), vaddr 0x10000 (0 mod 0x4000)
+        bytes[phoff + 8..phoff + 16].copy_from_slice(&0x14090_u64.to_le_bytes());
+        bytes[phoff + 16..phoff + 24].copy_from_slice(&0x10000_u64.to_le_bytes());
+        let elf = Elf::parse(&bytes).expect("parses");
+        assert_eq!(
+            elf.check_segment_congruence().unwrap_err(),
+            ElfError::NonCongruentSegment {
+                p_type: segment::LOAD,
+                offset: 0x14090,
+                vaddr: 0x10000,
+            }
+        );
+
+        // SCE_RELRO: offset 0x14090, vaddr 0x10000
+        bytes[phoff..phoff + 4].copy_from_slice(&segment::SCE_RELRO.to_le_bytes());
+        let elf = Elf::parse(&bytes).expect("parses");
+        assert_eq!(
+            elf.check_segment_congruence().unwrap_err(),
+            ElfError::NonCongruentSegment {
+                p_type: segment::SCE_RELRO,
+                offset: 0x14090,
+                vaddr: 0x10000,
+            }
         );
     }
 }
