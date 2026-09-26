@@ -399,6 +399,7 @@ dependencies = [
  "clap",
  "png",
  "selfish-abi",
+ "selfish-bytes",
  "selfish-container",
  "selfish-elf",
  "selfish-nid",

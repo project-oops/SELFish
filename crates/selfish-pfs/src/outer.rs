@@ -1,29 +1,17 @@
 //! The outer filesystem of a package: signed, encrypted, and holding one file.
 //!
-//! A package nests two filesystems, and they are built to different rules. The inner one - the
-//! files a title is actually made of - is plain, and [`crate::write`] builds it. The outer one
-//! holds exactly one file, `pfs_image.dat`, which is the inner image inside a [`crate::pfsc`]
-//! container, and it is the layer that carries signatures and encryption.
-//!
-//! # No key is missing here
-//!
-//! Both the signing key and the encryption keys come from `EKPFS`, and `EKPFS` comes from the
-//! content id and the passcode by the same derivation a package's entry keys use. A caller who
-//! can name the content id and the passcode can build this image; nothing has to be recovered
-//! from anywhere.
+//! The inner filesystem, the files a title is made of, is plain and [`crate::write`] builds it.
+//! The outer one holds exactly one file, `pfs_image.dat`, the inner image inside a
+//! [`crate::pfsc`] container, and carries the signatures and encryption. Every key comes from
+//! `EKPFS`, which comes from the content id and the passcode:
 //!
 //! ```text
 //! sign key  = HMAC-SHA256(EKPFS, LE32(2) || seed)
 //! xts keys  = HMAC-SHA256(EKPFS, LE32(1) || seed)   -> tweak = [0..16], data = [16..32]
 //! ```
 //!
-//! # Signatures, and what they are not
-//!
-//! A signature here is an `HMAC-SHA256` of a block under a key both sides derive - a keyed
-//! digest, not an RSA signature and not a claim of authorship. Every one of them is computed
-//! from a passcode the builder chose. Nothing is forged and nothing could be.
-//!
-//! # Layout
+//! A signature is an `HMAC-SHA256` of a block under the sign key: a keyed digest, not a claim
+//! of authorship.
 //!
 //! ```text
 //! block 0            the header
@@ -39,18 +27,15 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 use crate::write::{dirent, imode, kind};
-use crate::{PfsError, mode, put, superblock};
+use crate::{PfsError, mode, put, put_le, superblock};
 
 /// The name the outer filesystem gives its single file.
 pub const IMAGE_NAME: &str = "pfs_image.dat";
 
 /// Size of a signed inode.
 const INODE_SIZE: usize = 0x2C8;
-/// Where an inode's block signatures begin.
-///
-/// `LibOrbisPkg@6434772` computes it as `0x64 + 36 * n`. The reader in this crate independently
-/// measured the *block number* at `0x84`, which is this plus the 32 bytes of digest in front
-/// of it. Two derivations, one layout.
+/// Where an inode's block signatures begin: `0x64 + 36 * n` in `LibOrbisPkg@6434772`, and the
+/// reader here finds the block number at `0x84`, past the 32-byte digest.
 const INODE_SIG_AT: usize = 0x64;
 /// How much one block signature occupies: a digest and the block it covers.
 const SIG_SIZE: usize = 36;
@@ -62,18 +47,14 @@ const HEADER_SIG_AT: usize = 0x380;
 const HEADER_SIG_LEN: usize = 0x5A0;
 /// Where the embedded inode's block signatures begin.
 const HEADER_INODE_SIG_AT: usize = 0xB8;
-
 /// Where a `PFSC` header records the length its contents decompress to.
-///
-/// Read out of the payload rather than recomputed: `pfs_image.dat` is a `PFSC` container, and the
-/// inode's `size_compressed` holds the *inner* image's length while `size` holds the container's.
 const PFSC_DATA_LENGTH: usize = 0x28;
 /// One XTS sector.
 const SECTOR: usize = 0x1000;
 /// How many sectors at the front are left in the clear: the whole header block.
 const PLAIN_SECTORS: u64 = 16;
 
-/// The four inodes an outer filesystem always has. There is no tree to walk.
+/// The four inodes an outer filesystem always has.
 mod ino {
     /// The super root, which names the path table and the root.
     pub(super) const SUPER_ROOT: u32 = 0;
@@ -89,16 +70,11 @@ const INODE_COUNT: usize = 4;
 
 /// Inode flags.
 mod iflag {
-    /// The flags every inode in a real package's outer filesystem carries, `0x0C`.
-    ///
-    /// This crate wrote `0x10` here, on the reasoning that it was a read-only bit. A console
-    /// mounts the outer image and then opens `pfs_image.dat` from the root of that mount; with
-    /// `0x10` the open fails with `ENOENT` and the launch dies at `mountApp0Dir 0x80020002`,
-    /// while every inode in three real packages carries `0x0C` (measured: super root, path
-    /// table, uroot and the file all agree, and the file adds only [`COMPRESSED`]). The bit's
-    /// meaning is not interpreted - it is reproduced because the console requires it. (measured)
+    /// The flags every inode of a real package's outer filesystem carries. With any other
+    /// value the hardware fails to open `pfs_image.dat` (`ENOENT`, `mountApp0Dir 0x80020002`).
+    /// Reproduced, not interpreted.
     pub(super) const READ_ONLY: u32 = 0x0C;
-    /// The compressed bit, `0x1`. A real package sets it on `pfs_image.dat` and on nothing else.
+    /// The compressed bit. A real package sets it on `pfs_image.dat` and nothing else.
     pub(super) const COMPRESSED: u32 = 0x1;
     /// Internal to the filesystem, which is what the super root and path table are.
     pub(super) const INTERNAL: u32 = 0x2_0000;
@@ -130,7 +106,7 @@ pub fn sign_key(ekpfs: &[u8], seed: &[u8]) -> Result<[u8; 32], PfsError> {
 /// Derive the XTS tweak and data keys.
 ///
 /// The same derivation as [`crate::image_keys`], reached from the key rather than from a
-/// superblock, because a builder has the seed before it has a superblock to read it out of.
+/// superblock, because a builder has the seed before it has a superblock.
 ///
 /// # Errors
 ///
@@ -177,22 +153,101 @@ struct Pending {
     len: usize,
 }
 
+/// Where each part of the image goes, and the signatures each part owes.
+struct Layout {
+    block: usize,
+    inode_blocks: usize,
+    super_root: u32,
+    fpt: u32,
+    /// The one block after the header that is not encrypted.
+    empty: u32,
+    root_start: u32,
+    root_blocks: usize,
+    file_start: u32,
+    payload_blocks: usize,
+    total: u32,
+    /// Signatures over data blocks, computed first.
+    sigs: Vec<Pending>,
+    /// Signatures over blocks that hold other signatures, computed after them in reverse.
+    deferred: Vec<Pending>,
+}
+
+/// The super root's entries, the root's entries, and the path table.
+struct Directories {
+    super_root: Vec<u8>,
+    root: Vec<u8>,
+    fpt: Vec<u8>,
+}
+
 /// Build the outer image.
 ///
 /// # Errors
 ///
 /// If the block size cannot hold an inode, if the payload needs more indirection than a single
 /// indirect block provides, or if the result does not fit the format's 32-bit block numbers.
-#[allow(
-    clippy::too_many_lines,
-    reason = "the layout is one sequence of decisions and splitting it hides the block order, \
-              which is the only thing that makes it correct"
-)]
 pub fn build(options: &Options<'_>) -> Result<Vec<u8>, PfsError> {
     let block = usize::try_from(options.block_size).map_err(|_| PfsError::OutOfRange)?;
     if block == 0 {
         return Err(PfsError::Malformed("block size is zero"));
     }
+    let dirs = directories();
+    let layout = plan(block, options.payload.len(), dirs.root.len())?;
+
+    let total = usize::try_from(layout.total).map_err(|_| PfsError::OutOfRange)?;
+    let mut out = vec![0_u8; total.checked_mul(block).ok_or(PfsError::OutOfRange)?];
+    write_header(&mut out, options, layout.inode_blocks, layout.total)?;
+    write_inodes(&mut out, options.payload, &layout, dirs.fpt.len())?;
+    place(&mut out, layout.super_root, block, &dirs.super_root)?;
+    place(&mut out, layout.fpt, block, &dirs.fpt)?;
+    place(&mut out, layout.root_start, block, &dirs.root)?;
+    place(&mut out, layout.file_start, block, options.payload)?;
+
+    sign(&mut out, &layout, &sign_key(options.ekpfs, &options.seed)?)?;
+    if options.encrypt {
+        let (tweak, data) = encryption_keys(options.ekpfs, &options.seed)?;
+        encrypt(&mut out, &tweak, &data, block, layout.empty)?;
+    }
+    Ok(out)
+}
+
+/// The directory contents, which are fixed before any block is placed.
+fn directories() -> Directories {
+    let mut super_root = Vec::new();
+    dirent(
+        &mut super_root,
+        ino::FPT,
+        kind::FILE,
+        crate::write::FLAT_PATH_TABLE,
+    );
+    dirent(
+        &mut super_root,
+        ino::UROOT,
+        kind::DIRECTORY,
+        crate::write::ROOT_NAME,
+    );
+
+    // The root's parent is itself, as in a real image, not the super root.
+    let mut root = Vec::new();
+    dirent(&mut root, ino::UROOT, kind::DOT, ".");
+    dirent(&mut root, ino::UROOT, kind::DOT_DOT, "..");
+    dirent(&mut root, ino::FILE, kind::FILE, IMAGE_NAME);
+
+    // One path table entry, for the one file; the hardware finds `pfs_image.dat` through it.
+    let fpt = crate::write::path_table_entry(&format!("/{IMAGE_NAME}"), ino::FILE, false);
+    Directories {
+        super_root,
+        root,
+        fpt,
+    }
+}
+
+/// Place every block, in the order of the module layout, and record the signature each owes.
+///
+/// Inode blocks, the super root and the path table are signed into the header's embedded inode
+/// or their own inode. The root and file blocks are signed into their inodes, and file blocks
+/// past the twelfth into the indirect block, which is itself signed into the file inode's
+/// thirteenth slot once full.
+fn plan(block: usize, payload_len: usize, root_len: usize) -> Result<Layout, PfsError> {
     let per_block = block
         .checked_div(INODE_SIZE)
         .filter(|n| *n > 0)
@@ -201,266 +256,218 @@ pub fn build(options: &Options<'_>) -> Result<Vec<u8>, PfsError> {
         .checked_div(SIG_SIZE)
         .filter(|n| *n > 0)
         .ok_or(PfsError::Malformed("a block holds no signatures"))?;
-
-    let inode_count = INODE_COUNT;
-    let inode_blocks = inode_count.div_ceil(per_block);
-
-    // ---- the two directories' contents, which are known before any block is placed --------
-    let mut super_entries = Vec::new();
-    dirent(
-        &mut super_entries,
-        ino::FPT,
-        kind::FILE,
-        crate::write::FLAT_PATH_TABLE,
-    );
-    dirent(
-        &mut super_entries,
-        ino::UROOT,
-        kind::DIRECTORY,
-        crate::write::ROOT_NAME,
-    );
-
-    let mut root_entries = Vec::new();
-    dirent(&mut root_entries, ino::UROOT, kind::DOT, ".");
-    // The root's parent is itself. Pointing it at the super root would be the obvious guess and
-    // is not what a real image does.
-    dirent(&mut root_entries, ino::UROOT, kind::DOT_DOT, "..");
-    dirent(&mut root_entries, ino::FILE, kind::FILE, IMAGE_NAME);
-
-    // The outer filesystem's path table has exactly one entry, for its one file. Built the
-    // same way the inner one is, because a console reads this table to find `pfs_image.dat`
-    // and nothing in this crate ever reads it back.
-    let fpt_body = crate::write::path_table_entry(&format!("/{IMAGE_NAME}"), ino::FILE, false);
-
-    // ---- layout ---------------------------------------------------------------------------
-    let mut sigs: Vec<Pending> = Vec::new();
-    let mut deferred: Vec<Pending> = Vec::new();
-
-    // Block 0 is the header, and the inode table follows it. Each inode block is signed into
-    // the inode embedded in the header.
-    let mut next = u32::try_from(inode_blocks.checked_add(1).ok_or(PfsError::OutOfRange)?)
-        .map_err(|_| PfsError::OutOfRange)?;
-    for index in 0..inode_blocks {
-        deferred.push(Pending {
-            block: u32::try_from(index.checked_add(1).ok_or(PfsError::OutOfRange)?)
-                .map_err(|_| PfsError::OutOfRange)?,
-            at: HEADER_INODE_SIG_AT
-                .checked_add(index.checked_mul(SIG_SIZE).ok_or(PfsError::OutOfRange)?)
-                .ok_or(PfsError::OutOfRange)?,
-            len: block,
-        });
-    }
-
-    let super_root_block = next;
-    deferred.push(Pending {
-        block: super_root_block,
-        at: inode_sig_at(block, ino::SUPER_ROOT, 0)?,
-        len: block,
-    });
-    next = next.checked_add(1).ok_or(PfsError::OutOfRange)?;
-
-    let fpt_block = next;
-    deferred.push(Pending {
-        block: fpt_block,
-        at: inode_sig_at(block, ino::FPT, 0)?,
-        len: block,
-    });
-    next = next.checked_add(1).ok_or(PfsError::OutOfRange)?;
-
-    // An empty block sits after the path table, and it is the one block the encryption skips.
-    // `LibOrbisPkg@6434772` records it as unexplained; it is reproduced rather than tidied away.
-    let empty_block = next;
-    next = next.checked_add(1).ok_or(PfsError::OutOfRange)?;
-
-    // Indirect signature blocks are reserved before the data they describe, because the data
-    // blocks' signatures are written *into* them.
-    let payload_blocks = options.payload.len().div_ceil(block).max(1);
-    let root_blocks = root_entries.len().div_ceil(block).max(1);
+    let inode_blocks = INODE_COUNT.div_ceil(per_block);
+    let payload_blocks = payload_len.div_ceil(block).max(1);
+    let root_blocks = root_len.div_ceil(block).max(1);
     if payload_blocks
         > DIRECT
             .checked_add(sigs_per_block)
             .ok_or(PfsError::OutOfRange)?
     {
-        // Beyond one indirect block the format uses a doubly-indirect one. Refusing is the
-        // honest answer: emitting a plausible layout that has never been checked is how a
-        // wrong offset becomes somebody else's afternoon.
         return Err(PfsError::Malformed(
             "payload needs a doubly-indirect signature block, which is not built yet",
         ));
     }
-    let indirect_block = next;
-    let indirect_used = u32::from(payload_blocks > DIRECT);
-    next = next
-        .checked_add(indirect_used)
-        .ok_or(PfsError::OutOfRange)?;
 
-    // The root directory, then the file. Both sign every block they own.
-    let root_start = next;
-    for index in 0..root_blocks {
-        sigs.push(Pending {
-            block: next,
-            at: inode_sig_at(block, ino::UROOT, index)?,
-            len: block,
-        });
-        next = next.checked_add(1).ok_or(PfsError::OutOfRange)?;
+    let mut blocks = Blocks {
+        next: 0,
+        size: block,
+    };
+    let mut deferred = Vec::new();
+    blocks.take()?;
+    for index in 0..inode_blocks {
+        let at = index
+            .checked_mul(SIG_SIZE)
+            .and_then(|by| HEADER_INODE_SIG_AT.checked_add(by))
+            .ok_or(PfsError::OutOfRange)?;
+        deferred.push(blocks.signed(at)?);
+    }
+    let super_root = blocks.next;
+    deferred.push(blocks.signed(inode_sig_at(block, ino::SUPER_ROOT, 0)?)?);
+    let fpt = blocks.next;
+    deferred.push(blocks.signed(inode_sig_at(block, ino::FPT, 0)?)?);
+    // Reproduced from `LibOrbisPkg@6434772`, which records it as unexplained.
+    let empty = blocks.take()?;
+
+    // The indirect block is placed before the file blocks whose signatures it holds.
+    let indirect = (payload_blocks > DIRECT).then_some(blocks.next);
+    if indirect.is_some() {
+        blocks.take()?;
     }
 
-    let file_start = next;
+    let mut sigs = Vec::new();
+    let root_start = blocks.next;
+    for index in 0..root_blocks {
+        sigs.push(blocks.signed(inode_sig_at(block, ino::UROOT, index)?)?);
+    }
+    let file_start = blocks.next;
     for index in 0..payload_blocks {
-        let at = if index < DIRECT {
-            inode_sig_at(block, ino::FILE, index)?
-        } else {
-            // Past twelve, a block's signature lives in the indirect block instead of the
-            // inode, at the same 36-byte stride.
-            usize::try_from(indirect_block)
+        let at = match indirect {
+            Some(indirect) if index >= DIRECT => usize::try_from(indirect)
                 .map_err(|_| PfsError::OutOfRange)?
                 .checked_mul(block)
                 .and_then(|base| {
-                    index
-                        .checked_sub(DIRECT)
-                        .and_then(|slot| slot.checked_mul(SIG_SIZE))
-                        .and_then(|offset| base.checked_add(offset))
+                    let slot = index.checked_sub(DIRECT)?.checked_mul(SIG_SIZE)?;
+                    base.checked_add(slot)
                 })
-                .ok_or(PfsError::OutOfRange)?
+                .ok_or(PfsError::OutOfRange)?,
+            _ => inode_sig_at(block, ino::FILE, index)?,
         };
-        sigs.push(Pending {
-            block: next,
-            at,
-            len: block,
-        });
-        next = next.checked_add(1).ok_or(PfsError::OutOfRange)?;
+        sigs.push(blocks.signed(at)?);
     }
-    if indirect_used == 1 {
-        // The indirect block is itself signed into the inode's thirteenth slot, and only once
-        // every signature inside it has been written.
+    if let Some(indirect) = indirect {
         deferred.push(Pending {
-            block: indirect_block,
+            block: indirect,
             at: inode_sig_at(block, ino::FILE, DIRECT)?,
             len: block,
         });
     }
 
-    let total = usize::try_from(next).map_err(|_| PfsError::OutOfRange)?;
-    let mut out = vec![0_u8; total.checked_mul(block).ok_or(PfsError::OutOfRange)?];
-
-    // ---- contents ---------------------------------------------------------------------------
-    write_header(&mut out, options, inode_count, inode_blocks, next)?;
-
-    let table = block;
-    write_inode(
-        &mut out,
-        inode_at(table, ino::SUPER_ROOT)?,
-        imode::DIR | imode::RX,
-        iflag::INTERNAL | iflag::READ_ONLY,
+    Ok(Layout {
         block,
-        1,
-        super_root_block,
-    )?;
-    write_inode(
-        &mut out,
-        inode_at(table, ino::FPT)?,
-        imode::FILE | imode::RX,
-        iflag::INTERNAL | iflag::READ_ONLY,
-        fpt_body.len(),
-        1,
-        fpt_block,
-    )?;
-    write_inode(
-        &mut out,
-        inode_at(table, ino::UROOT)?,
-        imode::DIR | imode::RX,
-        iflag::READ_ONLY,
-        root_blocks.checked_mul(block).ok_or(PfsError::OutOfRange)?,
-        root_blocks,
+        inode_blocks,
+        super_root,
+        fpt,
+        empty,
         root_start,
-    )?;
-    // pfs_image.dat carries the compressed bit, and a console reads it to decide the file is a
-    // `PFSC` container to decompress before mounting the inner image. Without it the raw `PFSC`
-    // bytes are handed to `nmount()`, which refuses them `EINVAL` - the failure that stood after
-    // the outer image itself mounted. The file's own byte length goes in `size`; the length it
-    // decompresses to - the inner image's - goes in `size_compressed`, and the `PFSC` header
-    // carries it at `0x28`. (measured against three packages)
-    let file_at = inode_at(table, ino::FILE)?;
-    write_inode(
-        &mut out,
-        file_at,
-        imode::FILE | imode::RX,
-        iflag::READ_ONLY | iflag::COMPRESSED,
-        options.payload.len(),
-        payload_blocks,
+        root_blocks,
         file_start,
-    )?;
-    // A payload too short to hold a `PFSC` header is not one, and its honest length is its own.
-    let inner_size = match selfish_bytes::read_le(options.payload, PFSC_DATA_LENGTH) {
+        payload_blocks,
+        total: blocks.next,
+        sigs,
+        deferred,
+    })
+}
+
+/// The next free block, and the block size.
+struct Blocks {
+    next: u32,
+    size: usize,
+}
+
+impl Blocks {
+    /// Take the next block.
+    fn take(&mut self) -> Result<u32, PfsError> {
+        let taken = self.next;
+        self.next = self.next.checked_add(1).ok_or(PfsError::OutOfRange)?;
+        Ok(taken)
+    }
+
+    /// Take the next block, with its whole-block signature written at `at`.
+    fn signed(&mut self, at: usize) -> Result<Pending, PfsError> {
+        Ok(Pending {
+            block: self.take()?,
+            at,
+            len: self.size,
+        })
+    }
+}
+
+/// Write the four inodes into the table in block one.
+///
+/// `pfs_image.dat` carries the compressed bit, which tells the hardware to decompress the
+/// `PFSC` container before mounting the inner image; without it `nmount()` refuses the raw
+/// container with `EINVAL`. Its `size` is the container's length and its `size_compressed` the
+/// length the container decompresses to, read from the `PFSC` header.
+fn write_inodes(
+    out: &mut [u8],
+    payload: &[u8],
+    layout: &Layout,
+    fpt_len: usize,
+) -> Result<(), PfsError> {
+    let block = layout.block;
+    let root_size = layout
+        .root_blocks
+        .checked_mul(block)
+        .ok_or(PfsError::OutOfRange)?;
+    let inodes = [
+        (
+            ino::SUPER_ROOT,
+            imode::DIR | imode::RX,
+            iflag::INTERNAL | iflag::READ_ONLY,
+            block,
+            1,
+            layout.super_root,
+        ),
+        (
+            ino::FPT,
+            imode::FILE | imode::RX,
+            iflag::INTERNAL | iflag::READ_ONLY,
+            fpt_len,
+            1,
+            layout.fpt,
+        ),
+        (
+            ino::UROOT,
+            imode::DIR | imode::RX,
+            iflag::READ_ONLY,
+            root_size,
+            layout.root_blocks,
+            layout.root_start,
+        ),
+        (
+            ino::FILE,
+            imode::FILE | imode::RX,
+            iflag::READ_ONLY | iflag::COMPRESSED,
+            payload.len(),
+            layout.payload_blocks,
+            layout.file_start,
+        ),
+    ];
+    for (number, mode, flags, size, blocks, start) in inodes {
+        let at = inode_at(block, number)?;
+        write_inode(out, at, mode, flags, (size, blocks), start)?;
+    }
+
+    // A payload too short to hold a `PFSC` header is not one, and its length is its own.
+    let inner_size = match selfish_bytes::read_le(payload, PFSC_DATA_LENGTH) {
         Some(value) => value,
-        None => u64::try_from(options.payload.len()).map_err(|_| PfsError::OutOfRange)?,
+        None => u64::try_from(payload.len()).map_err(|_| PfsError::OutOfRange)?,
     };
-    put(
-        &mut out,
-        file_at
-            .checked_add(field::SIZE_COMPRESSED)
-            .ok_or(PfsError::OutOfRange)?,
-        &inner_size.to_le_bytes(),
-    )?;
+    let file_at = inode_at(block, ino::FILE)?;
+    put_le(out, offset(file_at, field::SIZE_COMPRESSED)?, inner_size)
+}
 
-    place(&mut out, super_root_block, block, &super_entries)?;
-    place(&mut out, fpt_block, block, &fpt_body)?;
-    place(&mut out, root_start, block, &root_entries)?;
-    place(&mut out, file_start, block, options.payload)?;
-
-    // ---- signing ----------------------------------------------------------------------------
-    // Order is the whole correctness argument. Data blocks first, because an indirect block's
-    // content is those signatures. Then the deferred ones in reverse, so the indirect block is
-    // signed after it has been filled, the inode blocks after the inodes are complete, and the
-    // header last of all - its digest covers the region the inode signatures live in.
-    let key = sign_key(options.ekpfs, &options.seed)?;
-    for sig in &sigs {
-        sign_block(&mut out, block, &key, sig)?;
+/// Compute every signature in dependency order.
+///
+/// Data blocks first, because an indirect block's content is their signatures. Then the
+/// deferred ones in reverse, so the indirect block is signed once full and the inode blocks
+/// once complete. The header is last: its digest covers where the inode signatures live.
+fn sign(out: &mut [u8], layout: &Layout, key: &[u8; 32]) -> Result<(), PfsError> {
+    let header = Pending {
+        block: 0,
+        at: HEADER_SIG_AT,
+        len: HEADER_SIG_LEN,
+    };
+    let order = layout
+        .sigs
+        .iter()
+        .chain(layout.deferred.iter().rev())
+        .chain([&header]);
+    for sig in order {
+        sign_block(out, layout.block, key, sig)?;
     }
-    for sig in deferred.iter().rev() {
-        sign_block(&mut out, block, &key, sig)?;
-    }
-    sign_block(
-        &mut out,
-        block,
-        &key,
-        &Pending {
-            block: 0,
-            at: HEADER_SIG_AT,
-            len: HEADER_SIG_LEN,
-        },
-    )?;
-
-    // ---- encryption -------------------------------------------------------------------------
-    if options.encrypt {
-        let (tweak, data) = encryption_keys(options.ekpfs, &options.seed)?;
-        encrypt(&mut out, &tweak, &data, block, empty_block)?;
-    }
-    Ok(out)
+    Ok(())
 }
 
 /// Compute one block signature and write it, followed by the block it covers.
 ///
-/// The digest is taken over the region *before* the digest is written into it, which matters
-/// for the header: its signature sits inside the range it covers. A verifier has to zero the
-/// slot before recomputing, which is what the source this was taken from does.
+/// The digest is taken before it is written, which matters for the header: its signature sits
+/// inside the range it covers, so a verifier zeroes the slot before recomputing.
 fn sign_block(out: &mut [u8], block: usize, key: &[u8; 32], sig: &Pending) -> Result<(), PfsError> {
     let from = usize::try_from(sig.block)
         .map_err(|_| PfsError::OutOfRange)?
         .checked_mul(block)
         .ok_or(PfsError::OutOfRange)?;
     let to = from.checked_add(sig.len).ok_or(PfsError::OutOfRange)?;
-    let body = out.get(from..to).ok_or(PfsError::OutOfRange)?.to_vec();
+    let body = out.get(from..to).ok_or(PfsError::OutOfRange)?;
 
     let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key).map_err(|_| PfsError::BadKey)?;
-    mac.update(&body);
+    mac.update(body);
     let digest = mac.finalize().into_bytes();
 
-    let end = sig.at.checked_add(32).ok_or(PfsError::OutOfRange)?;
-    out.get_mut(sig.at..end)
-        .ok_or(PfsError::OutOfRange)?
-        .copy_from_slice(&digest);
-    put(out, end, &sig.block.to_le_bytes())
+    put(out, sig.at, &digest)?;
+    put_le(out, offset(sig.at, 32)?, sig.block)
 }
 
 /// Encrypt every sector except the header block and the empty block.
@@ -494,13 +501,10 @@ fn encrypt(
         let sector = out.get_mut(at..end).ok_or(PfsError::OutOfRange)?;
 
         // XTS: the sector number, little-endian in sixteen bytes, encrypted under the tweak
-        // key, then advanced through the sector by the usual doubling in GF(2^128).
+        // key, then advanced through the sector by doubling in GF(2^128).
         let mut tweak = [0_u8; 16];
         let number = u64::try_from(index).map_err(|_| PfsError::OutOfRange)?;
-        tweak
-            .get_mut(..8)
-            .ok_or(PfsError::OutOfRange)?
-            .copy_from_slice(&number.to_le_bytes());
+        put_le(&mut tweak, 0, number)?;
         tweak_cipher.encrypt_block(GenericArray::from_mut_slice(&mut tweak));
 
         for chunk in sector.chunks_mut(16) {
@@ -536,15 +540,18 @@ fn advance(tweak: [u8; 16]) -> [u8; 16] {
 }
 
 /// Write the header into block zero.
+///
+/// The header embeds an inode describing the inode table, whose block signatures are the ones
+/// at [`HEADER_INODE_SIG_AT`]. Only the fields a real image sets are written.
 fn write_header(
     out: &mut [u8],
     options: &Options<'_>,
-    inode_count: usize,
     inode_blocks: usize,
     total_blocks: u32,
 ) -> Result<(), PfsError> {
-    put(out, superblock::VERSION, &1_u64.to_le_bytes())?;
-    put(out, superblock::MAGIC, &crate::MAGIC.to_le_bytes())?;
+    let too_large = |_| PfsError::OutOfRange;
+    put_le(out, superblock::VERSION, 1_u64)?;
+    put_le(out, superblock::MAGIC, crate::MAGIC)?;
     if let Some(byte) = out.get_mut(superblock::READ_ONLY) {
         *byte = 1;
     }
@@ -552,135 +559,67 @@ fn write_header(
     if options.encrypt {
         flags |= mode::ENCRYPTED;
     }
-    put(out, superblock::MODE, &flags.to_le_bytes())?;
-    put(
-        out,
-        superblock::BLOCK_SIZE,
-        &options.block_size.to_le_bytes(),
-    )?;
-    put(out, superblock::N_BLOCK, &1_u64.to_le_bytes())?;
-    put(
+    put_le(out, superblock::MODE, flags)?;
+    put_le(out, superblock::BLOCK_SIZE, options.block_size)?;
+    put_le(out, superblock::N_BLOCK, 1_u64)?;
+    put_le(
         out,
         superblock::INODE_COUNT,
-        &u64::try_from(inode_count)
-            .map_err(|_| PfsError::OutOfRange)?
-            .to_le_bytes(),
+        u64::try_from(INODE_COUNT).map_err(too_large)?,
     )?;
-    put(
-        out,
-        superblock::N_DBLOCK,
-        &u64::from(total_blocks).to_le_bytes(),
-    )?;
-    put(
-        out,
-        superblock::INODE_BLOCKS,
-        &u64::try_from(inode_blocks)
-            .map_err(|_| PfsError::OutOfRange)?
-            .to_le_bytes(),
-    )?;
+    put_le(out, superblock::N_DBLOCK, u64::from(total_blocks))?;
+    let inode_blocks_64 = u64::try_from(inode_blocks).map_err(too_large)?;
+    put_le(out, superblock::INODE_BLOCKS, inode_blocks_64)?;
 
-    // The header embeds an inode describing the inode table itself, and its block signatures
-    // are what `INODE_BLOCK_SIG` points at. Only the fields that are set in a real image.
     let embedded = HEADER_INODE_SIG_AT
         .checked_sub(0x68)
         .ok_or(PfsError::OutOfRange)?;
-    put(
-        out,
-        embedded
-            .checked_add(field::NLINK)
-            .ok_or(PfsError::OutOfRange)?,
-        &1_u16.to_le_bytes(),
-    )?;
-    put(
-        out,
-        embedded
-            .checked_add(field::FLAGS)
-            .ok_or(PfsError::OutOfRange)?,
-        &iflag::READ_ONLY.to_le_bytes(),
-    )?;
-    let table_len = u64::try_from(inode_blocks)
-        .map_err(|_| PfsError::OutOfRange)?
+    let table_len = inode_blocks_64
         .checked_mul(u64::from(options.block_size))
         .ok_or(PfsError::OutOfRange)?;
-    put(
+    put_le(out, offset(embedded, field::NLINK)?, 1_u16)?;
+    put_le(out, offset(embedded, field::FLAGS)?, iflag::READ_ONLY)?;
+    put_le(out, offset(embedded, field::SIZE)?, table_len)?;
+    put_le(out, offset(embedded, field::SIZE_COMPRESSED)?, table_len)?;
+    put_le(
         out,
-        embedded
-            .checked_add(field::SIZE)
-            .ok_or(PfsError::OutOfRange)?,
-        &table_len.to_le_bytes(),
-    )?;
-    put(
-        out,
-        embedded
-            .checked_add(field::SIZE_COMPRESSED)
-            .ok_or(PfsError::OutOfRange)?,
-        &table_len.to_le_bytes(),
-    )?;
-    put(
-        out,
-        embedded
-            .checked_add(field::BLOCKS)
-            .ok_or(PfsError::OutOfRange)?,
-        &u32::try_from(inode_blocks)
-            .map_err(|_| PfsError::OutOfRange)?
-            .to_le_bytes(),
+        offset(embedded, field::BLOCKS)?,
+        u32::try_from(inode_blocks).map_err(too_large)?,
     )?;
 
     // A seeded image writes its index here; an unseeded one writes four bytes earlier.
-    put(out, superblock::UNKNOWN_INDEX, &1_u32.to_le_bytes())?;
+    put_le(out, superblock::UNKNOWN_INDEX, 1_u32)?;
     put(out, superblock::SEED, &options.seed)
 }
 
-/// Write one signed inode.
+/// Write one signed inode. `extent` is the size in bytes and the block count.
+///
+/// The first block number also goes in the first signature slot, past its digest, so an
+/// unsigned image is still readable; signing writes the same value again.
 fn write_inode(
     out: &mut [u8],
     at: usize,
     mode: u16,
     flags: u32,
-    size: usize,
-    blocks: usize,
+    (size, blocks): (usize, usize),
     start: u32,
 ) -> Result<(), PfsError> {
     let size = u64::try_from(size).map_err(|_| PfsError::OutOfRange)?;
-    put(out, at, &mode.to_le_bytes())?;
-    put(
+    put_le(out, at, mode)?;
+    put_le(out, offset(at, field::NLINK)?, 1_u16)?;
+    put_le(out, offset(at, field::FLAGS)?, flags)?;
+    put_le(out, offset(at, field::SIZE)?, size)?;
+    put_le(out, offset(at, field::SIZE_COMPRESSED)?, size)?;
+    put_le(
         out,
-        at.checked_add(field::NLINK).ok_or(PfsError::OutOfRange)?,
-        &1_u16.to_le_bytes(),
+        offset(at, field::BLOCKS)?,
+        u32::try_from(blocks).map_err(|_| PfsError::OutOfRange)?,
     )?;
-    put(
-        out,
-        at.checked_add(field::FLAGS).ok_or(PfsError::OutOfRange)?,
-        &flags.to_le_bytes(),
-    )?;
-    put(
-        out,
-        at.checked_add(field::SIZE).ok_or(PfsError::OutOfRange)?,
-        &size.to_le_bytes(),
-    )?;
-    put(
-        out,
-        at.checked_add(field::SIZE_COMPRESSED)
-            .ok_or(PfsError::OutOfRange)?,
-        &size.to_le_bytes(),
-    )?;
-    put(
-        out,
-        at.checked_add(field::BLOCKS).ok_or(PfsError::OutOfRange)?,
-        &u32::try_from(blocks)
-            .map_err(|_| PfsError::OutOfRange)?
-            .to_le_bytes(),
-    )?;
-    // The first block number goes in the first signature slot, past its digest. The signing
-    // pass overwrites it with the same value; writing it here means an unsigned image is still
-    // readable.
-    put(
-        out,
-        at.checked_add(INODE_SIG_AT)
-            .and_then(|slot| slot.checked_add(32))
-            .ok_or(PfsError::OutOfRange)?,
-        &start.to_le_bytes(),
-    )
+    put_le(out, offset(at, INODE_SIG_AT + 32)?, start)
+}
+
+fn offset(base: usize, field: usize) -> Result<usize, PfsError> {
+    base.checked_add(field).ok_or(PfsError::OutOfRange)
 }
 
 /// Where one inode begins.

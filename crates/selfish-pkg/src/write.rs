@@ -337,27 +337,39 @@ impl Builder {
     /// # Errors
     ///
     /// If a computed entry was also supplied, if the content id is too long, or if a required
-    /// entry is missing. The missing-entry error **names every one**, because the answer is
-    /// always to go and find them and a count does not say which.
-    //
-    // Long because it is one linear assembly: validate, lay the bodies out in rank order,
-    // build the entry table, then write the digests that can only be computed once everything
-    // before them is in place. Splitting it would scatter that order across call sites, and the
-    // order is the part that has to be right - several of these digests read bytes that are only
-    // correct after the step before wrote them.
-    #[allow(clippy::too_many_lines)]
+    /// entry is missing. The missing-entry error names every one.
     pub fn build(self) -> Result<Built, WriteError> {
         if self.content_id.len() > CONTENT_ID_LEN {
             return Err(WriteError::ContentIdTooLong(self.content_id.len()));
         }
-        for (id, _) in &self.supplied {
-            if COMPUTED.contains(id) {
-                return Err(WriteError::AlreadyComputed(*id));
-            }
+        if let Some((id, _)) = self.supplied.iter().find(|(id, _)| COMPUTED.contains(id)) {
+            return Err(WriteError::AlreadyComputed(*id));
         }
 
-        // Every entry the samples carry, in ascending id - which is the order they appear in,
-        // and the order the digest table at `0x1` is indexed by.
+        let mut contents = self.contents()?;
+        let count = contents.len();
+        self.size_computed_bodies(&mut contents, count)?;
+        let (entries, table_at) = lay_out(&mut contents)?;
+        encrypt_licences(
+            &mut contents,
+            &entries,
+            &self.content_id,
+            self.passcode_bytes(),
+        )?;
+
+        let mut buffer = vec![0_u8; IMAGE_OFFSET];
+        buffer.extend_from_slice(&self.image);
+        let gaps = self.fill_derived(&mut contents, &entries, &buffer);
+        self.emit(buffer, &contents, &entries, table_at, gaps)
+    }
+
+    /// Every entry the package carries, in ascending id, with the ones this crate derives from
+    /// the others added when the caller did not supply them.
+    ///
+    /// Entry `0x200` is the NUL-separated names of the entries present. Entry `0x1001` is fixed
+    /// for a single-chunk title except for the package and inner filesystem sizes, both known
+    /// here (D099). A supplied one of either wins, so a package can be rebuilt byte for byte.
+    fn contents(&self) -> Result<Vec<(u32, Vec<u8>)>, WriteError> {
         let mut contents: Vec<(u32, Vec<u8>)> = self.supplied.clone();
         contents.push((entry_id::PARAM_SFO_ZEROS, vec![0_u8; ZEROS_LEN]));
         for id in COMPUTED {
@@ -366,28 +378,12 @@ impl Builder {
         contents.sort_by_key(|(id, _)| *id);
         contents.dedup_by_key(|(id, _)| *id);
 
-        // Entry `0x200` is derived, not supplied, when the caller has not given one. It is a
-        // NUL-separated list of the names of the entries actually present, and this crate knows
-        // every one of those names already - so requiring it was asking a caller to hand back a
-        // fact the builder was holding. A supplied one still wins: a package being rebuilt to
-        // match existing material needs its own table byte for byte.
         if !contents.iter().any(|(id, _)| *id == 0x200) {
             let ids: Vec<u32> = contents.iter().map(|(id, _)| *id).collect();
             contents.push((0x200, entry_names_table(&ids)));
             contents.sort_by_key(|(id, _)| *id);
         }
 
-        // Entry `0x1001` is derived too, and for the same reason one step further along: its
-        // structure is fixed for a single-chunk title, and the two values that are not fixed are
-        // the finished package and the inner filesystem, both of which are in hand here.
-        //
-        // It was the last entry a caller had to supply, on the grounds that the inner size was a
-        // number nobody could account for. The source the derivation was already cited to names
-        // it - `ChunkDat.cs` leaves it zero commented *"must update this to inner pfs image
-        // size"* - and [`inner_image_size`] has been reading exactly that out of the outer
-        // filesystem all along, for the cache-size warning. (D099)
-        //
-        // A supplied one still wins, as with `0x200`.
         let has_playgo = contents
             .iter()
             .any(|(id, _)| *id == derive::entry::PLAYGO_CHUNK_DAT);
@@ -412,84 +408,29 @@ impl Builder {
         if !missing.is_empty() {
             return Err(WriteError::Missing(missing));
         }
+        Ok(contents)
+    }
 
-        let count = contents.len();
-        self.size_computed_bodies(&mut contents, count)?;
-
-        // Lay the bodies out from body_offset in body layout rank order.
-        contents.sort_by_key(|(id, _)| layout_rank(*id));
-
-        let mut at = usize::try_from(header_value::BODY_OFFSET).unwrap_or(0x2000);
-        let mut table_at = HEADER_RESERVED;
-        let mut entries = Vec::with_capacity(count);
-        for (id, body) in &contents {
-            let offset = u32::try_from(at).map_err(|_| WriteError::TooLarge)?;
-            let size = u32::try_from(body.len()).map_err(|_| WriteError::TooLarge)?;
-            if *id == derive::entry::TABLE_COPY {
-                table_at = at; // the metas entry IS the entry table
-            }
-            // One arm per entry id, including where two ids carry the same flags. This is a
-            // format table written as code, and the rows are the point: merging `0x10`, `0x80`
-            // and `0x100` because they happen to agree today would hide which ids were measured
-            // and turn a later divergence into a surprise. `data/` states the same rule for the
-            // tables it holds; this is the same table with a `match` around it.
-            #[allow(clippy::match_same_arms)]
-            let (flags1, flags2) = match *id {
-                0x0001 => (0x4000_0000, 0),
-                0x0010 => (0x6000_0000, 0),
-                0x0020 => (0xE000_0000, keys::IMAGE_KEY_INDEX << 12),
-                0x0080 => (0x6000_0000, 0),
-                0x0100 => (0x6000_0000, 0),
-                0x0200 => (0x4000_0000, 0),
-                entry_id::LICENSE_DAT => (keys::FLAG_ENCRYPTED, LICENCE_KEY_INDEX << 12),
-                entry_id::LICENSE_INFO => (keys::FLAG_ENCRYPTED, LICENCE_INFO_KEY_INDEX << 12),
-                _ => (0, 0),
-            };
-            let name_offset = resolve_name_offset(*id, &contents);
-            entries.push(Entry {
-                id: *id,
-                name_offset,
-                flags1,
-                flags2,
-                offset,
-                size,
-            });
-            // Each body follows the last, rounded up to sixteen bytes.
-            at = at
-                .checked_add(body.len())
-                .ok_or(WriteError::TooLarge)?
-                .saturating_add(0xF)
-                & !0xF;
-        }
-
-        // The Entry Table at 0x2A80 (and entry 0x100) MUST have its records sorted by entry ID:
-        entries.sort_by_key(|e| e.id);
-
-        if at > IMAGE_OFFSET {
-            return Err(WriteError::TooLarge);
-        }
-        let image_at = IMAGE_OFFSET;
-
-        encrypt_licences(
-            &mut contents,
-            &entries,
-            &self.content_id,
-            self.passcode_bytes(),
-        )?;
-
-        let mut buffer = vec![0_u8; image_at];
-        buffer.extend_from_slice(&self.image);
-        let playgo = derive::playgo_chunk_sha(&buffer, image_at);
-        set(&mut contents, derive::entry::PLAYGO_CHUNK_SHA, playgo);
-
-        let mut gaps = Vec::new();
+    /// Fill the entries computed from the others: the playgo block digests, the entry table
+    /// copy, the manifest and the digest table, in that order, since each reads the ones
+    /// before. Returns what the manifest could not fill.
+    fn fill_derived(
+        &self,
+        contents: &mut [(u32, Vec<u8>)],
+        entries: &[Entry],
+        buffer: &[u8],
+    ) -> Vec<Gap> {
+        let playgo = derive::playgo_chunk_sha(buffer, IMAGE_OFFSET);
+        set(contents, derive::entry::PLAYGO_CHUNK_SHA, playgo);
         set(
-            &mut contents,
+            contents,
             derive::entry::TABLE_COPY,
-            derive::entry_table_copy(&entries),
+            derive::entry_table_copy(entries),
         );
-        let manifest = self.manifest(&contents, &mut gaps);
-        set(&mut contents, derive::entry::MANIFEST, manifest);
+        let mut gaps = Vec::new();
+        let manifest = self.manifest(contents, &mut gaps);
+        set(contents, derive::entry::MANIFEST, manifest);
+
         let bodies: Vec<&[u8]> = entries
             .iter()
             .map(|e| {
@@ -504,36 +445,22 @@ impl Builder {
             .position(|e| e.id == derive::entry::DIGESTS)
             .unwrap_or(0);
         let digests = derive::digest_table(&bodies, self_slot);
-        set(&mut contents, derive::entry::DIGESTS, digests);
-
-        Self::emit(
-            buffer,
-            &self.content_id,
-            &contents,
-            &entries,
-            table_at,
-            image_at,
-            self.image.len(),
-            (self.drm_type, self.content_type, self.sku_flag),
-            self.cache_size,
-            gaps,
-        )
+        set(contents, derive::entry::DIGESTS, digests);
+        gaps
     }
 
-    /// Give every computed entry the size it will occupy.
-    ///
-    /// Sizes before contents, because the two digest tables are one slot per entry and the
-    /// entry table cannot be laid out until every size is known.
     /// The passcode in force, which is the fake one unless a caller said otherwise.
-    ///
-    /// Named apart from the setter because a builder method and an accessor sharing a name is
-    /// a compile error, and the setter is the one a caller sees.
     fn passcode_bytes(&self) -> &[u8] {
         self.passcode
             .as_deref()
             .unwrap_or(keys::FAKE_PASSCODE.as_slice())
     }
 
+    /// Give every computed entry the size it will occupy, and the contents of those that
+    /// depend only on the content id and passcode.
+    ///
+    /// Sizes come first because the digest tables are one slot per entry, and the entry table
+    /// cannot be laid out until every size is known.
     fn size_computed_bodies(
         &self,
         contents: &mut [(u32, Vec<u8>)],
@@ -589,24 +516,19 @@ impl Builder {
         Ok(())
     }
 
-    /// Write the header, the entry table and every entry body into the prepared buffer.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "the header is one structure and threading it through a struct would only move \
-                  the same fields somewhere else"
-    )]
+    /// Write the header, the entry table and every entry body into the prepared buffer, then
+    /// the digests over them.
     fn emit(
+        &self,
         buffer: Vec<u8>,
-        content_id: &str,
         contents: &[(u32, Vec<u8>)],
         entries: &[Entry],
         table_at: usize,
-        image_at: usize,
-        image_len: usize,
-        kind: (u16, u16, u16),
-        cache_size: Option<u32>,
         gaps: Vec<Gap>,
     ) -> Result<Built, WriteError> {
+        let image_at = IMAGE_OFFSET;
+        let content_id = &self.content_id;
+        let kind = (self.drm_type, self.content_type, self.sku_flag);
         let count = entries.len();
         let mut out = buffer;
         out.get_mut(..MAGIC.len())
@@ -625,7 +547,13 @@ impl Builder {
         write_be(&mut out, IMAGE_AT, image_at.try_into().unwrap_or(u64::MAX));
 
         write_header_fields(
-            &mut out, count, entries, image_at, image_len, kind, cache_size,
+            &mut out,
+            count,
+            entries,
+            image_at,
+            self.image.len(),
+            kind,
+            self.cache_size,
         )?;
 
         let id = content_id.as_bytes();
@@ -744,6 +672,62 @@ impl Builder {
         hasher.update(Sha256::digest(&self.image));
         hasher.update(major_param_digest);
         hasher.finalize().into()
+    }
+}
+
+/// Place each body from the body offset in layout rank order, sixteen-byte aligned, and build
+/// the entry table sorted by id. Returns the entries and where the table goes: the table copy
+/// entry `0x100` is the entry table.
+fn lay_out(contents: &mut [(u32, Vec<u8>)]) -> Result<(Vec<Entry>, usize), WriteError> {
+    contents.sort_by_key(|(id, _)| layout_rank(*id));
+
+    let mut at = usize::try_from(header_value::BODY_OFFSET).unwrap_or(0x2000);
+    let mut table_at = HEADER_RESERVED;
+    let mut entries = Vec::with_capacity(contents.len());
+    for (id, body) in contents.iter() {
+        let offset = u32::try_from(at).map_err(|_| WriteError::TooLarge)?;
+        let size = u32::try_from(body.len()).map_err(|_| WriteError::TooLarge)?;
+        if *id == derive::entry::TABLE_COPY {
+            table_at = at;
+        }
+        let (flags1, flags2) = entry_flags(*id);
+        entries.push(Entry {
+            id: *id,
+            name_offset: resolve_name_offset(*id, contents),
+            flags1,
+            flags2,
+            offset,
+            size,
+        });
+        at = at
+            .checked_add(body.len())
+            .ok_or(WriteError::TooLarge)?
+            .saturating_add(0xF)
+            & !0xF;
+    }
+    entries.sort_by_key(|e| e.id);
+    if at > IMAGE_OFFSET {
+        return Err(WriteError::TooLarge);
+    }
+    Ok((entries, table_at))
+}
+
+/// The two flag words of an entry's table row.
+///
+/// One arm per id even where two agree: this is a format table written as code, and merging
+/// rows that agree today would hide which ids were measured.
+#[allow(clippy::match_same_arms)]
+fn entry_flags(id: u32) -> (u32, u32) {
+    match id {
+        0x0001 => (0x4000_0000, 0),
+        0x0010 => (0x6000_0000, 0),
+        0x0020 => (0xE000_0000, keys::IMAGE_KEY_INDEX << 12),
+        0x0080 => (0x6000_0000, 0),
+        0x0100 => (0x6000_0000, 0),
+        0x0200 => (0x4000_0000, 0),
+        entry_id::LICENSE_DAT => (keys::FLAG_ENCRYPTED, LICENCE_KEY_INDEX << 12),
+        entry_id::LICENSE_INFO => (keys::FLAG_ENCRYPTED, LICENCE_INFO_KEY_INDEX << 12),
+        _ => (0, 0),
     }
 }
 
