@@ -1,109 +1,56 @@
 # Acknowledgements
 
-Every project consulted to establish a format here, with what was taken from each. Recorded
-because a format claim is only worth what its provenance is worth, and because the question
-"where did this come from" should be answerable years later by someone who was not here.
-
-**Reference only. No code was copied from any of these.** Structure was read from published
-source, recorded as data in `data/`, and implemented from that record.
+Every project consulted to establish a format here, and what was taken from each. No code was
+copied from any of them: structure was read from published source, recorded as data in `data/`,
+and implemented from that record. Sources are cited by project and commit; `@vendored` marks a
+copy taken at an unrecorded point, and an entry without a commit is a citation still to be
+completed.
 
 ## Container and executable formats
 
 | project | what it gave | how it was used |
 |---|---|---|
 | **shadPS4**<br/>`shadPS4@be21649` | `src/core/loader/elf.h` - the container header and segment descriptors, as a reader sees them | shape of `self_header` and `self_segment`, and the flag bits |
-| **fpPS4** | `sys/sys_types.pas` - the same structures in Pascal, written independently | the second reading. Confirmed the shape and supplied the header constant `00 01 01 12`, which shadPS4 splits into four unnamed fields |
-| **OpenOrbis PS4 Toolchain** | `scripts/make_fself.py` - a *writer* | everything a reader never looks at: the extended info block, the control block, metadata, the footer, and the entry props layout. No reader could have supplied these |
-| **prosperity**<br/>`prosperity@3475257` | `tools/pkg_extract/pkg_extract.py` | the package container, the nesting, and the crypto chain. Also a fourth independent confirmation of the container layout |
-| **orbistoun** | `crates/orbistoun-elf/src/wrapper.rs`, orbistoun#D049 | **the current generation's magic**, observed from real material. Every other source above describes the previous generation only |
+| **fpPS4** | `sys/sys_types.pas` - the same structures in Pascal, written independently | the second reading; the header constant `00 01 01 12` |
+| **OpenOrbis PS4 Toolchain** | `scripts/make_fself.py` - a writer | the extended info block, the control block, metadata, the footer and the entry props layout, which no reader describes |
+| **prosperity**<br/>`prosperity@3475257` | `tools/pkg_extract/pkg_extract.py` | the package container, the nesting and the key chain; a further confirmation of the container layout |
+| **orbistoun** | `crates/orbistoun-elf/src/wrapper.rs`, `orbistoun#D049` | the current generation's container magic, observed from real material |
 
 ## Title metadata
 
 | project | what it gave | how it was used |
 |---|---|---|
-| **pfd_sfo_tools** (flatz), vendored in `etaHEN` | `sfopatcher/src/sfo.{c,h}` - a `PARAM.SFO` **reader and writer** | the header, the index entries, the three-table layout, and the writing order |
-| **ps5upload** | `engine/crates/ps5upload-{core,pkg}` - a reader and a writer in Rust, GPL-3 | the second, independent reading; the format codes; the `localizedParameters` structure of `param.json` |
+| **pfd_sfo_tools** (flatz), vendored in `etaHEN` | `sfopatcher/src/sfo.{c,h}` - a `PARAM.SFO` reader and writer | the header, the index entries, the three-table layout and the writing order |
+| **ps5upload** | `engine/crates/ps5upload-{core,pkg}` - a reader and a writer in Rust, GPL-3 | the second reading; the format codes; the `localizedParameters` structure of `param.json` |
 
-Both are reference only, as everything above is: structure was read, recorded in
-`data/sfo-format.tsv` with this provenance, and implemented from that record.
-
-**And both were wrong about one rule.** They pad a written file to a sixteen-byte boundary;
-eleven real files across three hardware generations do not. The table records the measured rule
-and the refuted one side by side. See D019 - this is the first time a cited source has been
-overturned by material rather than extended by it.
+Both pad a written `PARAM.SFO` to sixteen bytes; eleven real files pad the key table to four and
+the file not at all. `data/sfo-format.tsv` records the measured rule beside the cited one.
 
 ## Packages
 
 | project | what it gave | how it was used |
 |---|---|---|
-| **LibProsperoPKG** (SvenGDK)<br/>`LibProsperoPKG@main` | `PFS/ProsperoPs5InnerMetadata.cs` - the inner superblock and inode layout as a **current-generation** library states them, including the index at `0xD8`; and the file list itself, which keeps a `Ps5` inner-image builder and flat path table separate from the previous generation's | confirmed `0xD8` is a field rather than padding, and is a second reading that also calls it unexplained. Settled a negative too: its `version = 2`, `mode = 0x18` inner format is **not** what the three real packages here use, so that variant was not chased |
-| **LibOrbisPkg** (maxton)<br/>`LibOrbisPkg@6434772` | `PKG/Enums.cs` - the entry id names; `PKG/PkgBuilder.cs` - how each entry is produced and the assembly order; `Rif/LicenseDat.cs` - the licence structure; `PFS/PfsStructs.cs` - the filesystem superblock, inode and directory-entry layouts; `PFS/PFSBuilder.cs` - the block allocation and the signature ordering; `PFS/PfsProperties.cs` - that the inner filesystem is plain and the outer one holds a single file; `PFS/PFSCWriter.cs` - the container header; `Util/Crypto.cs` - the key derivations; `PlayGo/ChunkDat.cs` - the `playgo-chunk.dat` structure | named all six package entries this project could not, settled `PLAYGO_CHUNK_SHA`, named every superblock field, supplied the whole filesystem-writing layout, and (with shadPS4's `playgo_chunk.h`) settled `playgo-chunk.dat` (D099) |
-| **craziiEmu**<br/>`craziiEmu@8a13647` | `src/CraziiEmu.Libs/Agc/AgcExports.cs` - `sceAgcCreateShader` as an open-source PS5 emulator reads the AGC shader container: the `0x34333231` magic, the `0x18` version, the pointer table at `0x08`-`0x38`, the shader-type and register-count bytes at `0x5A`/`0x5C`, and `RelocatePointerField` - the self-relative pointer scheme a container is built to | with the four below, the citable basis for `selfish-shader`. Also gave the compute program-register offsets (lo `0x20C`, hi `0x20D`) and that a console patches their values from the code pointer. (D103) |
-| **prosper**<br/>`prosper@bb3e189` | `src/hle/graphics/hle_agc.cpp` - `struct AgcShader` with a `static_assert` pinning `user_data 0x08`, `code 0x10`, `specials 0x28`, `type 0x5a`, `num_sh_registers 0x5c`, and every field between; it cites Kyty `Shader.h:974` | pinned the whole header layout and named `0x44` as `shader_size` and `0x4c` as `target` - the two the disassembly draft had wrong. (D103) |
-| **KytyPS5**<br/>`KytyPS5@0b4e78c` | `src/graphics/shader/shader.h` - `struct Shader`, the same layout, plus the sub-table structs `ShaderRegister{offset,value}`, `ShaderSpecialRegs`, `ShaderSemantic`, `ShaderUserData`; and that a non-256-aligned code pointer is rejected | the second full reading of the header, and the sub-table shapes the pointer fields reach. (D103) |
-| **Kyty**<br/>`Kyty` | `source/emulator/include/Emulator/Graphics/Shader.h:974` - `struct Shader`, the upstream prosper and KytyPS5 trace to | the origin of the layout, agreeing field for field. (D103) |
-| **SharpEMU** | `src/SharpEmu.Libs/Agc/AgcExports.cs` - the same `0x34333231` magic and `0x18` version validated, `num_sh_registers` at `0x5C` | a fifth independent reader, confirming the identity fields. (D103) |
+| **LibProsperoPKG** (SvenGDK)<br/>`LibProsperoPKG@main` | `PFS/ProsperoPs5InnerMetadata.cs` - the inner superblock and inode layout as a current-generation library states them, including the index at `0xD8` | confirmed `0xD8` is a field; its `version = 2`, `mode = 0x18` inner format is not the one the sampled packages use |
+| **LibOrbisPkg** (maxton)<br/>`LibOrbisPkg@6434772` | `PKG/Enums.cs` - the entry id names; `PKG/PkgBuilder.cs` - how each entry is produced and the assembly order; `Rif/LicenseDat.cs` - the licence structure; `PFS/PfsStructs.cs` - the superblock, inode and directory-entry layouts; `PFS/PFSBuilder.cs` - block allocation and signature ordering; `PFS/PfsProperties.cs` - that the inner filesystem is plain and the outer one holds one file; `PFS/PFSCWriter.cs` - the container header; `Util/Crypto.cs` - the key derivations; `Util/Keys.cs` - the package moduli, the debug RIF keyset and the licence secret key; `PlayGo/ChunkDat.cs` - `playgo-chunk.dat` | the package entry names and derivations, `PLAYGO_CHUNK_SHA`, every superblock field, the filesystem writer, the licence and the key blobs (D047, D054), and with shadPS4's `playgo_chunk.h` the chunk table (D099). Keys were read from a local clone and checked by reproducing real signatures |
+| **PS4-Store** (LightningMods) | `Store/pkg.gp4` and three `sce_sys/param.sfo` files | an oracle, not a source: confirmed the fake passcode and the previous generation's `CATEGORY` values |
 
-The filesystem writer (D049-D053) came from those four `PFS/` files and `Util/Crypto.cs`. Three
-things in them were not conclusions this project would have reached on its own: that the
-**inner** filesystem is unsigned and unencrypted, that `PFSC` **does not compress**, and the
-order block signatures have to be computed in. Each was checked afterwards against real
-packages, and the key derivation was checked in both directions - computed against recovered -
-on every package to hand.
+The entries `0x1`, `0x100`, `0x80` and `0x1002` were derived from packages and then found under
+the same meaning in `PKG/Enums.cs`; `selfish derive` re-checks them (D035).
 
-`Util/Keys.cs` also carries the debug RIF keyset and the key over a licence's secret, both read
-from a local clone rather than transcribed - a summarising reader returned 519 hex characters
-for a 512-character key, and four reconstructions were rejected by the signature check before
-the file was read directly. (D047)
-
-It is a **writer**, which is the third time that has been the thing that mattered: three readers
-could not supply the container's metadata blocks and OpenOrbis' writer could, and the same
-pattern repeats here. This repository was already relying on it indirectly - the public fake
-keyset in `data/pkg-keys.toml` is published there and reached here by way of prosperity.
-
-**The derivations came first, and the source agreed with them.** `0x1`, `0x100`, `0x80` and
-`0x1002` were established from packages before this was read, and it names them `DIGESTS`,
-`METAS`, `GENERAL_DIGESTS` and `PLAYGO_CHUNK_SHA`. A derivation that survives meeting its
-source is worth more than either alone, and `selfish derive` still re-checks all four against
-whatever packages a reader has.
-
-## The lesson in that table
-
-Three of the five are readers, and between them they could not supply the metadata blocks -
-because a reader walks a container to find the executable and never looks at them. The writer
-did. And the current generation's magic came from none of the four, but from a sibling project
-that had observed it directly.
-
-No single source was sufficient, and the one that mattered most for the actual target was the
-one nobody thought to check.
-
-**PS4-Store** (LightningMods) - `Store/pkg.gp4` and three `sce_sys/param.sfo` files. Homebrew
-that actually ships, used here as an oracle rather than a source: it confirmed the fake passcode
-independently (written out in the project file), and its `param.sfo` files are what made the
-generation split in the metadata table visible. See D061.
-
-## Name vocabularies, consulted but not held
-
-Naming an identifier backwards is a search over a word list, and this repository owns no word
-list - the admission test in `CLAUDE.md` keeps a mined corpus with the project that mined it.
-`name_nid` takes one by path instead, so what follows is a record of what was *pointed at*,
-never of what was taken in.
+## Shader container
 
 | project | what it gave | how it was used |
 |---|---|---|
-| **obSCEne** | `data/mined-names.txt` (166,971 names), `data/nid-corpus.txt`, `data/unnamed-nids.txt` (1,130,757 identifiers observed with no name) - its own mining output, itself citing ChonkyStation4, GPCS4, PS5PCEM, SharpEMU, aerolib, craziiEmu, fpPS4, ps4_module_loader, ps4libdoc and shadPS4 | the vocabulary for REQ-20260909T1250Z-1f74. Named one of three identifiers, and bounded the other two by exhausting it. Nothing was copied here: the findings are in D089 and the worklog, and the corpus stays over there |
+| **craziiEmu**<br/>`craziiEmu@8a13647` | `src/CraziiEmu.Libs/Agc/AgcExports.cs` - `sceAgcCreateShader` reading the container: the `0x34333231` magic, the `0x18` version, the pointer table at `0x08`-`0x38`, the type and register-count bytes at `0x5A`/`0x5C`, and `RelocatePointerField` | the self-relative pointer scheme, and the compute program-register offsets `0x20C`/`0x20D` (D103) |
+| **prosper**<br/>`prosper@bb3e189` | `src/hle/graphics/hle_agc.cpp` - `struct AgcShader`, with a `static_assert` pinning every offset; cites Kyty | the whole header, including `shader_size` at `0x44` and `target` at `0x4c` (D103) |
+| **KytyPS5**<br/>`KytyPS5@0b4e78c` | `src/graphics/shader/shader.h` - `struct Shader` and the sub-table structs; that a code pointer must be 256-aligned | the second full reading, and the sub-table shapes (D103) |
+| **Kyty** | `source/emulator/include/Emulator/Graphics/Shader.h:974` - the upstream `struct Shader` | the origin of the layout (D103) |
+| **SharpEMU** | `src/SharpEmu.Libs/Agc/AgcExports.cs` - the magic, version and `num_sh_registers` checks | a fifth reader of the identity fields (D103) |
 
-The one attribution it produced is recorded as **somebody else's evidence, not a derivation**:
-the name those five sources give does not hash to the identifier they give it against, so it is
-not self-verifying the way a reproduced pair is. D089 says why that distinction is the whole
-value of the answer.
+## Name vocabularies, consulted but not held
 
-## How a source is cited here
+`examples/name_nid` takes a word list by path, and this repository keeps none (D089).
 
-**By project and commit**, so that "where did this come from" has an answer somebody else can
-check. A few entries above read `@vendored` instead: those were read from a copy taken at an
-unrecorded point, and saying so is the honest form - it marks the citation as weaker rather
-than dressing it as a commit nobody can resolve.
-
-Two entries carry no commit at all yet, and that is a gap rather than a decision. Anything
-added from here needs one.
+| project | what it gave | how it was used |
+|---|---|---|
+| **obSCEne** | `data/mined-names.txt`, `data/nid-corpus.txt`, `data/unnamed-nids.txt` - its own mining output, citing its sources | the vocabulary searched for three unnamed identifiers; nothing was copied |

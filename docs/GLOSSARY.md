@@ -1,142 +1,91 @@
-# Glossary: the formats
+# Glossary
 
-What the words mean, for somebody who has not worked with these formats before.
-
-This is the **vendor half** of the collection's vocabulary. The standard-ELF half - what `DT_`
-and `PT_` mean at all, what `.bss` is, what a segment is against a section - is
-[the collection's glossary](https://github.com/project-oops/OOPS/blob/main/docs/GLOSSARY.md),
-and it is worth reading first: everything below is an extension bolted onto that, using the
-same mechanisms with private numbers.
-
-Every entry names where it is established. The `data/*.tsv` tables are the source of truth and
-carry provenance per row; this page is prose over them, not a second copy of them.
+The vendor formats' vocabulary. Standard ELF terms, and words that mean different things in
+different repositories, are in
+[the collection's glossary](https://github.com/project-oops/OOPS/blob/main/docs/GLOSSARY.md).
+The tables in `data/` are the source of truth; each entry names where its format lives.
 
 ## The generation split
 
-**Generation** - which console a file is for. Two generations share one container format and
-differ in four bytes. This is a type here, not a runtime parameter: a builder that does not
-say which one it is targeting does not compile, because the one time it was a parameter with a
-default, the default was wrong and the file was rejected by the machine it was built for.
+**Generation** - which machine a file is for: Orbis-generation or Prospero-generation. The two
+share one container format and differ in its four-byte magic. It is a type with no default
+(D002). *`selfish-abi`, `data/self-format.tsv`.*
 
-*`selfish-abi`, and `data/self-format.tsv`.*
-
-**The four bytes** are the container magic, and the labelling is subtler than it looks.
-`4F 15 3D 1D` is what a real current-generation *app eboot* carries; `54 14 F5 EE` is what a
-title's *bundled modules* carry. Both are current. Calling the second one "the current
-generation's magic" was a hypothesis the table itself flagged, and hardware refuted it - see
-obscene#D293. What makes a title native is `param.json` and native registration, not the
-eboot's magic.
+**The container magic** - `4F 15 3D 1D` or `54 14 F5 EE`. A current-generation app eboot
+carries the first and a title's bundled modules the second (`obscene#D293`); what makes a title
+native is `param.json` and native registration, not the magic.
 
 ## Executables
 
-**NID** - the import hash. A vendor module imports by a hash of the symbol name rather than by
-the name, so a module's import list is a list of numbers until you can reverse them. This is
-the difference between a resolvable module and an opaque blob.
+**NID** - the import hash. A vendor module names an imported symbol by a hash of its name,
+encoded as eleven characters: the first 8 bytes of `SHA-1(name || suffix)`, read little-endian.
+*`selfish-nid`; the mined name corpus is obSCEne's.*
 
-```text
-NID = first 8 bytes of SHA-1(name || suffix), read little-endian
-```
+**SELF** - the signed-executable container an ELF is wrapped in. A retail one is signed with
+keys only the vendor holds.
 
-*`selfish-nid`. The suffix is a fixed constant; the mined corpus of known name-to-NID pairs is
-obSCEne's, not this repository's - it is a measurement product, not a format fact.*
+**fSELF** - a fake SELF: it declares itself fake in the field the format provides, with every
+digest and the signature area zero. *`selfish-container`.*
 
-**SELF** - the signed-executable container. What the platform wraps an ELF in. A retail one is
-signed with keys nobody outside the vendor has.
+**eboot, `eboot.bin`** - a title's main program, in container form; what the system loader
+starts.
 
-**fSELF** - a *fake* SELF. Declares itself fake in the field the format provides for exactly
-that, with every digest and the whole signature area left zero. Nothing here forges a vendor
-signature, and nothing could.
+**Vendor segment** - `PT_SCE_DYNLIBDATA`, which carries the dynamic tables in the platform's
+layout. `DT_SCE_*` tags point into it. *`selfish-elf::dynamic`, `selfish-elf::dynlib`.*
 
-*`selfish-container`, which reads and writes both directions on purpose: the half that writes
-is where the errors are, and keeping them together makes a round trip a test.*
+**`PT_SCE_PROCPARAM`, `PT_SCE_MODULE_PARAM`** - a block a program or module carries that the
+loader reads before running any of its code, including the SDK version it was built against.
 
-**eboot / `eboot.bin`** - the main program of a title, in container form. The thing the system
-loader is pointed at.
-
-**Vendor segment** - a `PT_SCE_*` segment carrying the dynamic tables in the layout the
-platform expects, rather than the standard arrangement. `DT_SCE_*` tags live in it.
-
-**`PT_SCE_PROCPARAM` / `PT_SCE_MODULE_PARAM`** - a small block a program or module carries
-describing itself to the loader before any of its code runs, including the SDK version it was
-built against. `libkernel` reads it first, so a field it expects and does not find faults
-inside a platform library on a stack frame naming nothing of yours.
-
-**`module_start` / `module_stop`** - the conventional names for a module's "you have been
-loaded" and "you are being unloaded" entry points. Exported by NID like anything else, so
-asking whether a module has them means asking whether those three hashes appear in its export
-table.
+**`module_start`, `module_stop`** - a module's load and unload entry points, exported by NID.
 
 ## Titles
 
-**`PARAM.SFO`** - a binary key-value table describing a title. Appears inside every package.
+**`PARAM.SFO`** - a binary key-value table describing a title; every package carries one.
 
-**`param.json`** - what the current generation writes into a title directory. Same job, one per
-generation, both read and written here.
+**`param.json`** - the current generation's title description, written into a title directory.
+*Both in `selfish-title`.*
 
-*`selfish-title`. It depends on nothing else in this repository: it holds what a title says
-about *itself*, which is a different kind of fact from a container layout.*
+**`applicationCategoryType`** - the `param.json` field (`CATEGORY` in `PARAM.SFO`) that decides
+a title's memory budget and whether it owns the display. Independent of the container's `paid`
+privilege tier. The values are in the collection's
+[four-axes table](https://github.com/project-oops/OOPS/blob/main/docs/CONVENTIONS.md#the-four-axes-of-a-build-and-a-run)
+and `selfish_title::category`.
 
-**`applicationCategoryType`** - the integer field in `param.json` (and `CATEGORY` in
-`PARAM.SFO`) that decides an artifact's memory budget and whether it owns the display.
-Orthogonal to the SELF container's `paid` privilege tier, which is a different axis entirely.
+**Title directory** - a title as files: an eboot beside `sce_sys/`, which the install call or
+an auto-mounter registers.
 
-The values and what each one costs are in [the collection's four-axes
-table](https://github.com/project-oops/OOPS/blob/main/docs/CONVENTIONS.md#the-four-axes-of-a-build-and-a-run),
-and in `selfish_title::category`, which is what code reads. Not repeated here: this table
-existed in five places and two of the copies had already drifted.
-
-**Title directory** - a title laid out as directories and files rather than packed into a
-package: an eboot beside `sce_sys/`. What an auto-mounter can register.
-
-**`CONTENT_ID` / `TITLE_ID`** - the identity of a title. The title id is a field *inside* the
-content id, so it is derived rather than written twice.
+**`CONTENT_ID`, `TITLE_ID`** - a title's identity. The title id is the field of the content id
+between the first `-` and the `_`.
 
 ## Packages
 
-**Package (`.pkg`)** - not an archive. Four nested formats:
+**Package (`.pkg`)** - four nested formats:
 
 ```text
-.pkg  ->  header + entry table
-      ->  filesystem image at 0x80000      <- encrypted
-      ->  a compressed image inside that
-      ->  the real filesystem: files, each executable a container
+.pkg  ->  header and entry table
+      ->  filesystem image at 0x80000, encrypted
+      ->  a PFSC image inside it
+      ->  the inner filesystem: the title's files
 ```
 
-**PFS** - the filesystem inside a package. Three layers, each wrapping the one below:
+**PFS** - the filesystem inside a package, read through three layers:
 
 ```text
 raw bytes
-  -> XTS    sector-by-sector decryption, 4KiB sectors
-  -> PFSC   zlib-compressed blocks addressed through a map
-  -> PFS    a superblock, inodes, and directories
+  -> XTS    sector-by-sector decryption, 4 KiB sectors
+  -> PFSC   blocks addressed through a map, zlib-compressed or stored
+  -> PFS    a superblock, inodes and directories
 ```
 
-*`selfish-pfs`. Note that PFSC does not have to actually compress: the block map is a list of
-absolute offsets, and blocks laid end to end at a fixed stride are a valid map.*
+*`selfish-pfs`.*
 
-**Keystone** - a fixed-size blob a package carries. Derived from the passcode rather than
-supplied.
+**Keystone** - `sce_sys/keystone`, 96 bytes derived from the passcode. *`selfish-pkg::keystone`.*
 
-**playgo** - the chunk and scenario descriptor a package carries, describing how a title may be
-played while still installing. Written in full rather than as a header, because a console reads
-the counts and then looks for the records they promise.
+**playgo** - the chunk and scenario descriptors a package carries, saying how a title may run
+while it installs.
 
-**Licence / RIF** - the file that says a package may be installed. Ours are signed under the
-**debug** keyset, a published keypair whose entire purpose is the fake licences a non-retail
-package holds, and the licence says it is a debug licence in its own type field. That is the
-opposite of a forgery: the line is never claim to be the vendor, not never compute a signature.
+**Licence, RIF** - the entry that says a package may be installed. The ones built here are
+signed with the published debug keyset and declare themselves debug licences (D047).
 
-## Keys, and what this repository will not do
-
-**The public fake-package keysets only.** Nothing here works on retail material and nothing
-here should be made to. Real files are used as an **oracle** - to confirm or refute a structure
-taken from a citable source - never to derive one, and the material itself is never committed.
-
-*[CLAUDE.md](../CLAUDE.md) principles 1, 2 and 6.*
-
-## Where the rest is
-
-- [the collection's glossary](https://github.com/project-oops/OOPS/blob/main/docs/GLOSSARY.md) - standard ELF, and words that mean different things in different repositories
-- [obSCEne](https://github.com/project-oops/obSCEne/blob/main/docs/GLOSSARY.md) - checks, the census, execution contexts
-- [orbistoun](https://github.com/project-oops/Orbistoun/blob/main/docs/GLOSSARY.md) - guest execution, thunks, HLE
-- [Prosperous](https://github.com/project-oops/Prosperous/blob/main/docs/GLOSSARY.md) - targets, chains, scan roots
+**Fake keysets** - the published package keysets in `data/pkg-keys.toml`. Nothing here works on
+retail material; real files confirm or refute a structure and are never committed.

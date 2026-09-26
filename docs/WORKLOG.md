@@ -1,85 +1,67 @@
 # Worklog
 
-What was done, in order, and what surprised us. Surprises especially - a format library's
-surprises are its most valuable output, because each one is a thing the next person would
-otherwise rediscover the hard way.
-**This table is generated.** Edit an item under `worklog/`, then run
-`tools/split-doc.sh --index selfish WORKLOG 1 worklog`.
+One entry per milestone. Commit messages hold the rest.
 
-| date | entry |
-|---|---|
-| - | [The repository exists, and the spine is laid](worklog/001-the-repository-exists-and-the-spine-is.md) |
-| - | [The generation split, made unrepresentable rather than tested for](worklog/002-the-generation-split-made.md) |
-| - | [The hash, and an objection that turned out to argue the other way](worklog/003-the-hash-and-an-objection-that-turned.md) |
-| - | [The executable format, and the container in both directions](worklog/004-the-executable-format-and-the-container.md) |
-| - | [The package's outer container](worklog/005-the-package-s-outer-container.md) |
-| - | [The key derivation](worklog/006-the-key-derivation.md) |
-| - | [The filesystem, and the whole chain end to end](worklog/007-the-filesystem-and-the-whole-chain-end.md) |
-| - | [A command-line tool, and an audit that found the real gap](worklog/008-a-command-line-tool-and-an-audit-that.md) |
-| - | [The dynamic table, and the whole stack on genuine material](worklog/009-the-dynamic-table-and-the-whole-stack.md) |
-| - | [The symbol table, and imports resolved to names](worklog/010-the-symbol-table-and-imports-resolved.md) |
-| - | [Relocations, and the check that closed the loop](worklog/011-relocations-and-the-check-that-closed.md) |
-| - | [`PARAM.SFO` and `param.json`, and eleven files that disagreed with the source](worklog/012-param-sfo-and-param-json-and-eleven.md) |
-| - | [Two package magics, and a source that was not the one we needed](worklog/013-two-package-magics-and-a-source-that.md) |
-| - | [Section headers and the link-time symbol table](worklog/014-section-headers-and-the-link-time.md) |
-| - | [The linker script, and a test that actually links](worklog/015-the-linker-script-and-a-test-that.md) |
-| - | [The dynamic-table writer, and the loop closing](worklog/016-the-dynamic-table-writer-and-the-loop.md) |
-| - | [Sizing the filesystem-writing gap instead of starting it](worklog/017-sizing-the-filesystem-writing-gap.md) |
-| - | [Running the finished thing, and finding the last missing field](worklog/018-running-the-finished-thing-and-finding.md) |
-| - | [The first migration](worklog/019-the-first-migration.md) |
-| - | [Closing three gaps the migration opened](worklog/020-closing-three-gaps-the-migration-opened.md) |
-| - | [Crunching the unknown package entries](worklog/021-crunching-the-unknown-package-entries.md) |
-| - | [Package writing, built up to the wall](worklog/022-package-writing-built-up-to-the-wall.md) |
-| - | [The source, and what it did and did not settle](worklog/023-the-source-and-what-it-did-and-did-not.md) |
-| - | [The superblock was never a wall](worklog/024-the-superblock-was-never-a-wall.md) |
-| - | [Licences, built and proven](worklog/025-licences-built-and-proven.md) |
-| - | [`Sections::dynamic_symbols` - reading `.dynsym`](worklog/026-sections-dynamic-symbols-reading-dynsym.md) |
-| - | [The filesystem, written](worklog/027-the-filesystem-written.md) |
-| - | [A package obSCEne can build, and what is still placeholder](worklog/028-a-package-obscene-can-build-and-what-is.md) |
-| - | [The reader's refusals, tested](worklog/029-the-reader-s-refusals-tested.md) |
-| - | [Package header: sensible defaults instead of zeros (found on hardware)](worklog/030-package-header-sensible-defaults.md) |
-| - | [The package header is integrity-protected, and that is the wall (measured on hardware)](worklog/031-the-package-header-is-integrity.md) |
-| - | [A fake package through three console rejection stages (measured on hardware)](worklog/032-a-fake-package-through-three-console.md) |
-| - | [A hardcoded cache size makes a small package unmountable](worklog/033-a-hardcoded-cache-size-makes-a-small.md) |
-| - | [Auditing the other constants found a second one that was never constant](worklog/034-auditing-the-other-constants-found-a.md) |
-| - | [The indirect block looked guilty and is not, which sets up the next test](worklog/035-the-indirect-block-looked-guilty-and-is.md) |
-| - | [The inner filesystem mounts. It was the root's parent all along.](worklog/036-the-inner-filesystem-mounts-it-was-the.md) |
-| - | [An eboot is not the module this project builds, in three separate ways](worklog/037-an-eboot-is-not-the-module-this-project.md) |
-| - | [The eboot executes. It is a process now, and it dies on a syscall.](worklog/038-the-eboot-executes-it-is-a-process-now.md) |
-| - | [Five refusals, each naming the next: an eboot walked into a console's loader](worklog/039-five-refusals-each-naming-the-next-an.md) |
-| - | [A package built here installs, mounts, loads and executes on hardware](worklog/040-a-package-built-here-installs-mounts.md) |
-| - | [A third linker script, and the tag that was named but never written](worklog/041-a-third-linker-script-and-the-tag-that.md) |
-| 2026-08-31 | [`libkernel_vaddrs` example](worklog/042-libkernel-vaddrs-example.md) |
-| 2026-08-31 | [Native PS5 Title Generation & obSCEne Self-Resolver Oracle](worklog/043-native-ps5-title-generation-obscene.md) |
-| 2026-09-09 | [Three unnameable imports, and one of them was never a name](worklog/044-three-unnameable-imports-and-one-was.md) |
-| 2026-09-09 | [`ACCOUNT_ID` was not text, and the reader refused the file rather than the key](worklog/045-account-id-was-not-text-and-the-reader.md) |
-| 2026-09-09 | [The same function twice, written to opposite standards](worklog/046-the-same-function-twice-to-opposite.md) |
-| 2026-09-09 | [The table was right, and the limit was the wrong shape](worklog/047-the-table-was-right-and-the-limit-was.md) |
-| 2026-09-09 | [A label in a candidate list is not provenance](worklog/048-a-label-in-a-candidate-list-is-not.md) |
-| 2026-09-09 | [The confirmation was circular, and the entry that caught it had just written the rule](worklog/049-the-confirmation-was-circular-and-the.md) |
-| 2026-09-09 | [The lesson put in the tool, and the reversal made airtight](worklog/050-the-lesson-put-in-the-tool-and-the.md) |
-| 2026-09-09 | [The tail held, and the instinct about it was wrong the other way](worklog/051-the-tail-held-and-the-instinct-was.md) |
-| 2026-09-09 | [The second reader, and the error that pointed at the wrong thing](worklog/052-the-second-reader-and-the-error-that.md) |
-| 2026-09-09 | [Two readers agree on every field, and the third failure of the day was agreeing](worklog/053-two-readers-agree-on-every-field-and.md) |
-| 2026-09-09 | [Thirty-two containers, a clean split, and a confound I had already glossed](worklog/054-thirty-two-containers-and-a-confound.md) |
-| 2026-09-09 | [The symbol level agreed, and the question about it found something](worklog/055-the-symbol-level-agreed-and-the.md) |
-| 2026-09-09 | [The accusation in the suffix file was made from a label](worklog/056-the-accusation-in-the-suffix-file-was.md) |
-| 2026-09-09 | [A title id in a citation, read as a fact](worklog/057-a-title-id-in-a-citation-read-as-a-fact.md) |
-| 2026-09-09 | [The audit closed, and the test that makes it cheap next time](worklog/058-the-audit-closed-and-the-test-that.md) |
-| 2026-09-09 | [The magic, settled by the row nobody asked for](worklog/059-the-magic-settled-by-the-row-nobody.md) |
-| 2026-09-09 | [Both magics are accepted, and the cross-census already contained our own file](worklog/060-both-magics-are-accepted-and-the.md) |
-| 2026-09-10 | [A green gate that was never checked, and a commit that took somebody else's work](worklog/061-a-green-gate-that-was-never-checked.md) |
-| 2026-09-10 | [One vocabulary, and an attribute that outlived its variant](worklog/062-one-vocabulary-and-the-orphaned.md) |
-| 2026-09-10 | [A guard that covered one of three, and five copies of one table](worklog/063-a-guard-that-covered-one-of-three.md) |
-| 2026-09-10 | [Half of a refusal was never a refusal](worklog/064-half-of-a-refusal-was-never-a-refusal.md) |
-| 2026-09-10 | [The question I filed was answered in a file I had already cited](worklog/065-the-question-i-filed-was-answered-in.md) |
-| 2026-09-10 | [The last two verbs, and a `paid` value nothing wrote](worklog/066-the-last-two-verbs-and-a-paid-value-nothing-wrote.md) |
-| 2026-09-10 | [The pipeline learns what a title carries, and an empty content id that keyed nothing](worklog/067-the-pipeline-learns-what-a-title-carries.md) |
-| 2026-09-10 | [A review caught `--icon` copied, not converted - and my evidence that it was](worklog/068-a-review-caught-icon-copied-not-converted.md) |
-| 2026-09-10 | [The shader container was citable after all, once I looked past the first two emulators](worklog/069-the-shader-container-was-citable-after-all.md) |
-| 2026-09-11 | [A CLI verb, so a C consumer can reach the shader builder](worklog/070-a-cli-verb-so-a-c-consumer-can-reach-the-shader-builder.md) |
-| 2026-09-11 | [Pixel and vertex stages, the hardware that confirmed the header, and the constants I would not ship](worklog/071-pixel-and-vertex-stages-and-the-constants-i-would-not-ship.md) |
-| 2026-09-11 | [selfish-cli stands alone again: the local commit stamp, and the logging that logged nothing](worklog/072-selfish-cli-stands-alone-again.md) |
-| 2026-09-19 | [Rustfmt drift a sibling caught, and the gate is still red underneath it](worklog/073-rustfmt-drift-a-sibling-caught-and-the-gate-still-red.md) |
-| 2026-09-19 | [Splitting title_dir off the too_many_lines ceiling, and a red one layer down](worklog/074-splitting-title_dir-off-the-too_many_lines-ceiling.md) |
-| 2026-09-19 | [A doc link the rename left pointing at a variant it deleted, and the gate finally green](worklog/075-a-doc-link-the-rename-left-pointing-at-a-deleted-variant.md) |
+## 2026-08-29 - Every format read end to end
+
+- The container, ELF with both vendor tag conventions, symbols, imports resolved to library and
+  module, relocations and section headers read from real material.
+- A real package opens through the whole chain: outer container, key derivation, encrypted
+  filesystem, `PFSC`, and the inner filesystem's files.
+- `PARAM.SFO` and `param.json` read and written; eleven real files round-trip byte for byte.
+- The import hash reproduces all 389 externally produced pairs in `known-pairs.txt`.
+- Every current-generation package sampled carries previous-generation containers, and the
+  previous-generation key chain opens all of them.
+
+## 2026-08-29 - Modules and packages written
+
+- `dynlib` writes the vendor dynamic tables into a module linked with `link/module.ld`; a test
+  links a real object and reads it back.
+- The whole filesystem nest is written: the plain inner filesystem, `PFSC`, and the signed and
+  encrypted outer filesystem, checked against the reader.
+- The package builder computes both digest tables, the block digests, the manifest, the header,
+  the licences and the key blobs; licences and key blobs reproduce real packages byte for byte.
+- obSCEne took these crates as dependencies in place of 2,801 lines of its own.
+
+## 2026-08-29 - A package built here runs on hardware
+
+- A package built entirely by this toolchain installs, mounts, loads and executes.
+- A container entry's size is the data's size, not `p_memsz`, which is zero for the unmapped
+  vendor segment.
+- The dynamic table sits at the tail of the vendor segment with no address.
+- The vendor segment starts with a `0x18`-byte fingerprint region, written as zeros.
+- An executable declares no export library, so its first import library is id zero.
+- The inner filesystem's root is its own parent, and its inodes carry the flags the mount reads.
+
+## 2026-09-09 - Real containers audited, and a second reader agrees
+
+- `selfish audit` checks a real container's header and tail rows against the table, printing
+  the container's kind first.
+- 23 genuine containers confirm four header rows the table held as hypotheses; the values that
+  differ are recorded as notes on their rows.
+- orbistoun's reader and `selfish-elf` agree on every field of 29 real modules.
+- `Sfo::bytes` returns non-text values such as `ACCOUNT_ID` exactly, and the module writer
+  refuses names it cannot represent.
+- `examples/name_nid` searches a caller's vocabulary for a hash in both byte orders.
+
+## 2026-09-10 - One build pipeline
+
+- `--input`, `--target`, `--format` and `--output` build every artefact: `elf`, `prx`,
+  `eboot`, `title` and `pkg`. No stamping or wrapping subcommands remain.
+- `--privilege`, `--sdk` and the title metadata options reach the formats that use them and are
+  refused elsewhere.
+- Entries `0x200` and `0x1001` are computed, so a package needs no `--entry`; the playgo chunk
+  table was confirmed on hardware.
+
+## 2026-09-11 - Shader containers
+
+- `selfish-shader` builds the AGC shader container from five agreeing open-source sources, and
+  `selfish shader` exposes it to C consumers.
+- Compute, pixel and vertex stages have citable type values; a hardware sweep perturbing one
+  field at a time confirms the header.
+
+## 2026-09-23 - C++ titles catch exceptions
+
+- `link/native_eboot.ld` keeps `.eh_frame`, so a title linking libunwind has a frame table and
+  its `catch` blocks run on hardware.
+- The check that means something is a non-empty `__eh_frame_start`..`__eh_frame_end` range.

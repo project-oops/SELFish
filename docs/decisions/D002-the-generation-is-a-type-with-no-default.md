@@ -1,18 +1,15 @@
-# D002 - The generation is a type with no `Default`
+# D002 - The generation is a type with no default
 
+**Status:** decided
+**Date:** 2026-09-26
 
-Two generations share one container and differ in four bytes. Everything else at this layer
-is identical, which is what makes it dangerous: the wrong one is structurally perfect and
-refused on the first four bytes, reported by a loader as "not a container".
+`Generation` has no `Default`, and every builder takes the target generation explicitly. The
+container magic is a `[u8; 4]`, not an integer.
 
-It was a runtime parameter with a default once. The default was the previous generation,
-because that is what every published source describes, and the current generation's magic had
-been observed and written down somewhere else entirely.
+**Why:** the two generations' containers differ only in the magic, so a wrong generation is
+structurally perfect and refused by a loader as "not a container". A default hides that
+choice. Held as an integer the magic looks right and serialises in the wrong byte order.
 
-So `Generation` has no `Default` and the magic is returned as `[u8; 4]` rather than a `u32`.
-The second half matters as much as the first: held as an integer the constant looks right and
-serialises backwards, which also happened, and was caught only because a test asserted on the
-written bytes rather than on the constant.
-
-Status: **decided**.
-
+**Rejected:**
+- A default generation: the caller never states the one thing that differs.
+- The magic as a `u32` constant: correct in source, reversed on disk.
